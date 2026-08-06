@@ -449,6 +449,58 @@ class LayoutGudangController extends Controller
         return $this->ok($data);
     }
 
+    public function cekLineLayout(Request $request)
+    {
+        $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi'));
+        $idLokasi = (int) $request->query('id_lokasi', 0);
+        $kodeBlock = strtoupper(trim((string) $request->query('kode_block')));
+        $lineDari = (int) $request->query('line_dari', 0);
+        $lineSampai = (int) $request->query('line_sampai', 0);
+
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('ID lokasi pengguna tidak ditemukan. Silakan login ulang.');
+        }
+
+        if ($idLokasi <= 0 || $kodeBlock === '' || $lineDari <= 0 || $lineSampai <= 0 || $lineSampai < $lineDari) {
+            return response()->json(['success' => true, 'bentrok' => false, 'message' => '']);
+        }
+
+        $block = DB::table('block')
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('id_lokasi', $idLokasi)
+            ->whereRaw('UPPER(kode_block) = ?', [$kodeBlock])
+            ->first();
+
+        if (! $block) {
+            return response()->json(['success' => true, 'bentrok' => false, 'message' => '']);
+        }
+
+        $existing = DB::table('line')
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('id_block', $block->id_block)
+            ->pluck('nomor_line')
+            ->map(fn ($n) => (int) $n)
+            ->all();
+
+        $bentrok = [];
+        for ($l = $lineDari; $l <= $lineSampai; $l++) {
+            if (in_array($l, $existing, true)) {
+                $bentrok[] = $l;
+            }
+        }
+
+        if (! empty($bentrok)) {
+            return response()->json([
+                'success' => true,
+                'bentrok' => true,
+                'line_bentrok' => $bentrok,
+                'message' => 'Line '.implode(', ', $bentrok).' sudah terpakai. Silakan pakai line lain.',
+            ]);
+        }
+
+        return response()->json(['success' => true, 'bentrok' => false, 'message' => '']);
+    }
+
     public function ambilRingkasanDeep(Request $request)
     {
         $idDeep = (int) $request->query('id_deep', 0);
@@ -1059,16 +1111,6 @@ class LayoutGudangController extends Controller
         }
 
         $normalized = [];
-        $nomorBentrok = [];
-        $existingNomor = DB::table('block as b')
-            ->join('line as ln', fn ($j) => $j
-                ->on('ln.id_block', '=', 'b.id_block')
-                ->on('ln.id_pengguna_lokasi', '=', 'b.id_pengguna_lokasi'))
-            ->where('b.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('b.id_lokasi', $idLokasi)
-            ->pluck('ln.nomor_line')
-            ->map(fn ($n) => (int) $n)
-            ->all();
 
         foreach ($lines as $item) {
             if (! is_array($item)) {
@@ -1078,11 +1120,6 @@ class LayoutGudangController extends Controller
             $nomor = (int) ($item['line'] ?? $item['nomor_line'] ?? 0);
             if ($nomor <= 0) {
                 return $this->fail('Setiap line wajib memiliki nomor_line > 0');
-            }
-
-            if (in_array($nomor, $existingNomor, true)) {
-                $nomorBentrok[] = $nomor;
-                continue;
             }
 
             $levels = $item['levels'] ?? [];
@@ -1108,11 +1145,6 @@ class LayoutGudangController extends Controller
 
         if (empty($normalized)) {
             return $this->fail('Tidak ada line valid untuk disimpan');
-        }
-
-        if (! empty($nomorBentrok)) {
-            $list = implode(', ', $nomorBentrok);
-            return $this->fail("Line sudah terpakai di block lain pada lokasi ini: $list. Ganti nomor line tersebut.");
         }
 
         try {

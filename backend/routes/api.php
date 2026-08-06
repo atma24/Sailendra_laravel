@@ -113,6 +113,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard/summary', [DashboardController::class, 'summary']);
 
     Route::get('/layout-gudang/ambil-layout', [LayoutGudangController::class, 'ambilLayout']);
+    Route::get('/layout-gudang/cek-line-layout', [LayoutGudangController::class, 'cekLineLayout']);
     Route::get('/layout-gudang/ambil-plant-line', [LayoutGudangController::class, 'ambilPlantLine']);
     Route::get('/layout-gudang/ambil-ringkasan-deep', [LayoutGudangController::class, 'ambilRingkasanDeep']);
     Route::get('/layout-gudang/cek-kapasitas-deep', [LayoutGudangController::class, 'cekKapasitasDeep']);

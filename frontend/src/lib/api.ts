@@ -1,0 +1,70 @@
+const API_BASE = "/api";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export type ApiEnvelope<T = unknown> = {
+  success: boolean;
+  message: string;
+  data: T;
+};
+
+function authHeaders(): HeadersInit {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem("sailendra_session");
+    if (!raw) return {};
+    const s = JSON.parse(raw);
+    if (s?.token) {
+      return {
+        Accept: "application/json",
+        Authorization: `Bearer ${s.token}`,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { Accept: "application/json" };
+}
+
+export async function api<T = unknown>(
+  path: string,
+  options: RequestInit = {}
+): Promise<ApiEnvelope<T>> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+      ...(options.headers || {}),
+    },
+  });
+
+  let body: ApiEnvelope<T> | null = null;
+  try {
+    body = await res.json();
+  } catch {
+    /* non-json */
+  }
+
+  if (!res.ok || (body && body.success === false)) {
+    const msg = body?.message || "Terjadi kesalahan pada server";
+    throw new ApiError(msg, res.status);
+  }
+
+  if (!body) {
+    throw new ApiError("Respons tidak valid dari server", res.status);
+  }
+
+  return body;
+}
+
+export const apiGet = <T = unknown>(path: string) => api<T>(path);
+
+export const apiPost = <T = unknown>(path: string, data: unknown) =>
+  api<T>(path, { method: "POST", body: JSON.stringify(data) });
