@@ -48,7 +48,6 @@ class AuthController extends Controller
 
             if ($row->status !== 'Aktif') {
                 $adaUserNonaktif = true;
-
                 continue;
             }
 
@@ -74,6 +73,25 @@ class AuthController extends Controller
         $row['perlu_pilih_lokasi'] = (strcasecmp($role, 'Support') === 0 || strcasecmp($role, 'SuperAdmin') === 0);
         $row['akun_lokasi'] = $akunValid;
 
+        // --- GENERATE TOKEN SANCTUM ---
+        $user = Pengguna::find($row['id_pengguna']);
+        
+        // Hapus token lama agar 1 user tidak menumpuk token di database (opsional)
+        $user->tokens()->delete();
+
+        $token = $user->createToken('auth_token')->plainTextToken;
+        
+        // Masukkan token ke response JSON
+        $row['token'] = $token;
+
         return $this->ok($row, 'Login berhasil');
+    }
+
+    public function logout(Request $request)
+    {
+        // Menghapus token yang sedang digunakan
+        $request->user()->currentAccessToken()->delete();
+        
+        return $this->okMessage('Logout berhasil');
     }
 }

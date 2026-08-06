@@ -3,31 +3,29 @@
 namespace App\Models;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
 class Pengguna extends Authenticatable
 {
-    use Notifiable;
+    use HasApiTokens; // Wajib untuk generate Token Sanctum
 
     protected $table = 'pengguna';
-
+    
     protected $primaryKey = 'id_pengguna';
+    
+    public $timestamps = false;
 
-    public const UPDATED_AT = null;
+    protected $fillable = [
+        'id_pengguna_lokasi',
+        'username',
+        'password',
+        'role',
+        'status',
+        'created_at',
+    ];
 
-    protected $fillable = ['id_pengguna_lokasi', 'username', 'password', 'role', 'status', 'created_at'];
-
-    protected $hidden = ['password'];
-
-    protected function casts(): array
-    {
-        return [
-            'password' => 'hashed',
-        ];
-    }
-
-    public function penggunaLokasi()
-    {
-        return $this->belongsTo(PenggunaLokasi::class, 'id_pengguna_lokasi', 'id_pengguna_lokasi');
-    }
+    // Sembunyikan password saat data user dipanggil (Best practice keamanan)
+    protected $hidden = [
+        'password',
+    ];
 }

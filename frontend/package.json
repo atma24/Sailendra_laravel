@@ -9,7 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "chart.js": "^4.5.1",
+    "bootstrap-icons": "^1.13.1",
     "next": "16.3.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -19,6 +19,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",

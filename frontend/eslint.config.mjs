@@ -13,13 +13,6 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
-  {
-    rules: {
-      "@typescript-eslint/no-explicit-any": "off",
-      "react-hooks/set-state-in-effect": "off",
-      "@typescript-eslint/no-unused-expressions": "off",
-    },
-  },
 ]);
 
 export default eslintConfig;
