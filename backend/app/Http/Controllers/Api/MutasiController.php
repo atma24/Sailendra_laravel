@@ -94,7 +94,7 @@ class MutasiController extends Controller
     // =========================================================================
     public function store(Request $request)
     {
-        $mode = strtolower(trim($request->query('mode', '')));
+        $mode = strtolower(trim((string) $request->input('mode', '')));
 
         $id_pengguna_lokasi = trim($request->input('id_pengguna_lokasi', ''));
         $id_pengguna = (int) $request->input('id_pengguna', 0);
@@ -116,8 +116,14 @@ class MutasiController extends Controller
             return $this->fail('id_pengguna_lokasi wajib');
         }
 
-        if ($id_produk <= 0 || $jumlah_sumber <= 0 || $jenis_mutasi === '' || $best_before === '' || $lokasi_sumber === '' || $lokasi_tujuan === '') {
-            return $this->fail('Field wajib: id_produk, jumlah, jenis_mutasi, best_before, lokasi_sumber, lokasi_tujuan');
+        if ($id_produk <= 0 || $jumlah_sumber <= 0 || $jenis_mutasi === '' || $best_before === '') {
+            return $this->fail('Field wajib: id_produk, jumlah, jenis_mutasi, best_before');
+        }
+
+        if ($id_line_sumber <= 0 || $id_line_tujuan <= 0) {
+            if ($lokasi_sumber === '' || $lokasi_tujuan === '') {
+                return $this->fail('Field wajib: lokasi_sumber & lokasi_tujuan (atau id_line_sumber & id_line_tujuan)');
+            }
         }
 
         if ($mode !== 'preview') {

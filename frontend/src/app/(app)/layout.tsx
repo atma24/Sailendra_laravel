@@ -4,9 +4,20 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getSession, clearSession, isMultiRole } from "@/lib/auth";
 
-const MENUS: { title: string; url: string; icon: string }[] = [
+type MenuItem = { title: string; url: string; icon: string };
+type MenuGroup = MenuItem & { children?: MenuItem[] };
+
+const SUB_MENU = [
+  { title: "Layout Gudang", url: "/master-data/layout-gudang", icon: "bi-diagram-3" },
+  { title: "Form Layout Gudang", url: "/master-data/form-layout-gudang", icon: "bi-pencil-square" },
+  { title: "History Layout Gudang", url: "/master-data/history-layout", icon: "bi-clock-history" },
+  { title: "List Produk", url: "/master-data/produk", icon: "bi-box-seam" },
+  { title: "List Plant", url: "/master-data/plant", icon: "bi-factory" },
+];
+
+const MENUS: MenuGroup[] = [
   { title: "Dashboard", url: "/dashboard", icon: "bi-buildings-fill" },
-  { title: "Master Data", url: "/master-data", icon: "bi-folder2-open" },
+  { title: "Master Data", url: "/master-data", icon: "bi-folder2-open", children: SUB_MENU },
   { title: "Inbound", url: "/inbound", icon: "bi-box-arrow-in-down" },
   { title: "Outbound", url: "/outbound", icon: "bi-box-arrow-up" },
   { title: "Traceability", url: "/traceability", icon: "bi-arrow-repeat" },
@@ -14,6 +25,7 @@ const MENUS: { title: string; url: string; icon: string }[] = [
   { title: "Stock", url: "/stock", icon: "bi-box-seam" },
   { title: "Stock Opname", url: "/stock-opname", icon: "bi-clipboard-check" },
   { title: "Report", url: "/report", icon: "bi-file-earmark-text" },
+  { title: "Pengguna", url: "/pengguna", icon: "bi-people" },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -21,6 +33,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const masterActive = pathname.startsWith("/master-data");
+  const [masterOpen, setMasterOpen] = useState(false);
 
   useEffect(() => {
     const s = getSession();
@@ -59,20 +74,50 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         <nav className="flex-1 pt-2.5">
           {MENUS.map((m) => {
+            if (m.children) {
+              const open = masterOpen || masterActive;
+              return (
+                <div key={m.url} className="mb-1">
+                  <button
+                    onClick={() => setMasterOpen((v) => !v)}
+                    className={`flex w-full cursor-pointer items-center gap-2 rounded-[11px] px-2.5 py-2 text-left text-[12px] font-bold transition hover:translate-x-[3px] ${masterActive ? "bg-[#eef0ff] text-[#191970]" : "bg-transparent text-[#172033]"}`}
+                  >
+                    <span className="flex h-[18px] w-[18px] items-center justify-center text-[15px]">
+                      <i className={`bi ${m.icon}`} />
+                    </span>
+                    <span className="min-w-0 flex-1">{m.title}</span>
+                    <i className={`bi ${open ? "bi-chevron-down" : "bi-chevron-right"} text-[10px] text-[#6b7280]`} />
+                  </button>
+                  {open && (
+                    <div className="ml-[13px] mt-0.5 border-l border-[#e7eaf2] pl-2.5">
+                      {m.children.map((c) => {
+                        const cActive = pathname === c.url;
+                        return (
+                          <a
+                            key={c.url}
+                            href={c.url}
+                            onClick={(e) => { e.preventDefault(); router.push(c.url); setSidebarOpen(false); }}
+                            className={`mb-0.5 flex w-full items-center gap-2 rounded-[9px] px-2.5 py-[7px] text-left text-[11px] font-bold no-underline transition hover:translate-x-[3px] ${cActive ? "bg-[#eef0ff] text-[#191970]" : "bg-transparent text-[#172033]"}`}
+                          >
+                            <i className={`bi ${c.icon} text-[11px] text-[#6b7280]`} />
+                            <span className="min-w-0 flex-1">{c.title}</span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
             const active = pathname === m.url || (m.url !== "/dashboard" && pathname.startsWith(m.url));
             return (
               <a
                 key={m.url}
                 href={m.url}
-                onClick={(e) => {
-                  e.preventDefault();
-                  router.push(m.url);
-                  setSidebarOpen(false);
-                }}
+                onClick={(e) => { e.preventDefault(); router.push(m.url); setSidebarOpen(false); }}
                 className={`mb-1 flex w-full items-center gap-2 rounded-[11px] px-2.5 py-2 text-left text-[12px] font-bold no-underline transition hover:translate-x-[3px] ${active ? "bg-[#eef0ff] text-[#191970]" : "bg-transparent text-[#172033]"}`}
               >
                 <span className="flex h-[18px] w-[18px] items-center justify-center text-[15px]">
-                  {/* bootstrap-icons-style glyphs */}
                   <i className={`bi ${m.icon}`} />
                 </span>
                 <span className="min-w-0 flex-1">{m.title}</span>

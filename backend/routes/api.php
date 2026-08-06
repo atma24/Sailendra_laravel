@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BarangKeluarController;
+use App\Http\Controllers\Api\BarangMasukController;
 use App\Http\Controllers\Api\BlockController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DeepController;
@@ -75,6 +76,7 @@ Route::get('/layout-gudang/ambil-plant-line', [LayoutGudangController::class, 'a
 Route::get('/layout-gudang/ambil-ringkasan-deep', [LayoutGudangController::class, 'ambilRingkasanDeep']);
 Route::get('/layout-gudang/cek-kapasitas-deep', [LayoutGudangController::class, 'cekKapasitasDeep']);
 Route::post('/layout-gudang/prioritas-lokasi-produk', [LayoutGudangController::class, 'prioritasLokasiProduk']);
+Route::post('/layout-gudang/simpan-layout', [LayoutGudangController::class, 'simpanLayout']);
 Route::post('/layout-gudang/salin-block', [LayoutGudangController::class, 'salinBlock']);
 Route::post('/layout-gudang/ubah-plant-line', [LayoutGudangController::class, 'ubahPlantLine']);
 Route::post('/layout-gudang/ubah-bb-jumlah-line', [LayoutGudangController::class, 'ubahBbJumlahLine']);
@@ -96,6 +98,12 @@ Route::post('/barang-keluar', [BarangKeluarController::class, 'store']);
 Route::post('/barang-keluar/import', [BarangKeluarController::class, 'importHistorical']);
 Route::post('/barang-keluar/update', [BarangKeluarController::class, 'update']);
 Route::post('/barang-keluar/hapus', [BarangKeluarController::class, 'destroy']);
+
+Route::get('/barang-masuk', [BarangMasukController::class, 'index']);
+Route::post('/barang-masuk', [BarangMasukController::class, 'store']);
+Route::post('/barang-masuk/preview', [BarangMasukController::class, 'preview']);
+Route::post('/barang-masuk/update', [BarangMasukController::class, 'update']);
+Route::post('/barang-masuk/hapus', [BarangMasukController::class, 'destroy']);
 
 Route::get('/laporan/barang-keluar', [LaporanController::class, 'exportBarangKeluar']);
 Route::get('/laporan/barang-masuk', [LaporanController::class, 'exportBarangMasuk']);

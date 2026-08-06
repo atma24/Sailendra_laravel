@@ -1012,6 +1012,176 @@ class LayoutGudangController extends Controller
         }
     }
 
+    public function simpanLayout(Request $request)
+    {
+        if (! $this->isSupervisor($request->all())) {
+            return $this->fail('Hak akses ditolak');
+        }
+
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
+        $idLokasi = (int) $request->input('id_lokasi', 0);
+        $idProduk = (int) $request->input('id_produk', 0);
+        $kodeBlock = strtoupper(trim((string) $request->input('kode_block')));
+        $kodeBlockType = strtoupper(trim((string) $request->input('kode_block_type')));
+
+        if ($kodeBlock === '' && $kodeBlockType !== '') {
+            $kodeBlock = $kodeBlockType;
+        }
+
+        if ($idPenggunaLokasi === '' || $idLokasi <= 0 || $idProduk <= 0 || $kodeBlock === '') {
+            return $this->fail('id_pengguna_lokasi, id_lokasi, id_produk & kode_block wajib');
+        }
+
+        if (! DB::table('produk')->where('id_produk', $idProduk)->exists()) {
+            return $this->fail('Produk tidak ditemukan');
+        }
+
+        if (! DB::table('lokasi')->where('id_lokasi', $idLokasi)->exists()) {
+            return $this->fail('Lokasi tidak ditemukan');
+        }
+
+        if (DB::table('block')
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('id_lokasi', $idLokasi)
+            ->whereRaw('UPPER(kode_block) = ?', [$kodeBlock])
+            ->exists()) {
+            return $this->fail('Kode block sudah digunakan di lokasi ini');
+        }
+
+        $lines = $request->input('lines', $request->input('layout_config', []));
+        if (is_string($lines)) {
+            $lines = json_decode($lines, true);
+        }
+        $lines = is_array($lines) ? $lines : [];
+
+        if (empty($lines)) {
+            return $this->fail('lines/layout_config wajib berisi minimal 1 line');
+        }
+
+        $normalized = [];
+        $nomorBentrok = [];
+        $existingNomor = DB::table('block as b')
+            ->join('line as ln', fn ($j) => $j
+                ->on('ln.id_block', '=', 'b.id_block')
+                ->on('ln.id_pengguna_lokasi', '=', 'b.id_pengguna_lokasi'))
+            ->where('b.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('b.id_lokasi', $idLokasi)
+            ->pluck('ln.nomor_line')
+            ->map(fn ($n) => (int) $n)
+            ->all();
+
+        foreach ($lines as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $nomor = (int) ($item['line'] ?? $item['nomor_line'] ?? 0);
+            if ($nomor <= 0) {
+                return $this->fail('Setiap line wajib memiliki nomor_line > 0');
+            }
+
+            if (in_array($nomor, $existingNomor, true)) {
+                $nomorBentrok[] = $nomor;
+                continue;
+            }
+
+            $levels = $item['levels'] ?? [];
+            if (empty($levels)) {
+                return $this->fail("Line $nomor wajib memiliki minimal 1 level");
+            }
+
+            $cleanLevels = [];
+            foreach ($levels as $lv) {
+                $level = (int) ($lv['level'] ?? 0);
+                $jumlahDeep = (int) ($lv['jumlah_deep'] ?? 0);
+                $kapasitas = (int) ($lv['kapasitas'] ?? 0);
+
+                if ($level <= 0 || $jumlahDeep <= 0 || $kapasitas <= 0) {
+                    return $this->fail("Line $nomor: setiap level wajib level/jumlah_deep/kapasitas > 0");
+                }
+
+                $cleanLevels[] = ['level' => $level, 'jumlah_deep' => $jumlahDeep, 'kapasitas' => $kapasitas];
+            }
+
+            $normalized[] = ['nomor_line' => $nomor, 'levels' => $cleanLevels];
+        }
+
+        if (empty($normalized)) {
+            return $this->fail('Tidak ada line valid untuk disimpan');
+        }
+
+        if (! empty($nomorBentrok)) {
+            $list = implode(', ', $nomorBentrok);
+            return $this->fail("Line sudah terpakai di block lain pada lokasi ini: $list. Ganti nomor line tersebut.");
+        }
+
+        try {
+            return DB::transaction(function () use ($idPenggunaLokasi, $idLokasi, $idProduk, $kodeBlock, $normalized) {
+                $idBlock = DB::table('block')->insertGetId([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'id_lokasi' => $idLokasi,
+                    'kode_block' => $kodeBlock,
+                    'created_at' => now(),
+                ]);
+
+                $idLineByNomor = [];
+                foreach ($normalized as $ln) {
+                    $idLine = DB::table('line')->insertGetId([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_block' => $idBlock,
+                        'nomor_line' => $ln['nomor_line'],
+                        'created_at' => now(),
+                    ]);
+
+                    foreach ($ln['levels'] as $lv) {
+                        $idLevel = DB::table('level')->insertGetId([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_line' => $idLine,
+                            'level' => $lv['level'],
+                            'created_at' => now(),
+                        ]);
+
+                        $deeps = [];
+                        for ($i = 1; $i <= $lv['jumlah_deep']; $i++) {
+                            $deeps[] = [
+                                'id_pengguna_lokasi' => $idPenggunaLokasi,
+                                'id_level' => $idLevel,
+                                'deep' => $i,
+                                'kapasitas' => $lv['kapasitas'],
+                                'created_at' => now(),
+                            ];
+                        }
+                        DB::table('deep')->insert($deeps);
+                    }
+
+                    DB::table('prioritas_lokasi_produk')->insert([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_produk' => $idProduk,
+                        'id_lokasi' => $idLokasi,
+                        'id_block' => $idBlock,
+                        'id_line' => $idLine,
+                        'id_level' => null,
+                        'id_deep' => null,
+                        'created_at' => now(),
+                    ]);
+
+                    $idLineByNomor[$ln['nomor_line']] = $idLine;
+                }
+
+                return $this->okMessage('Layout gudang berhasil disimpan', [
+                    'id_block' => $idBlock,
+                    'kode_block' => $kodeBlock,
+                    'id_lokasi' => $idLokasi,
+                    'id_produk' => $idProduk,
+                    'id_line_by_nomor' => $idLineByNomor,
+                    'jumlah_line' => count($normalized),
+                ]);
+            });
+        } catch (\Throwable $e) {
+            return $this->fail('Gagal menyimpan layout: '.$e->getMessage(), 500);
+        }
+    }
+
     public function ubahBbJumlahLine(Request $request)
     {
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
