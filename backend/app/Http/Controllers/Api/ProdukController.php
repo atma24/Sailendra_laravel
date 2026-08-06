@@ -52,6 +52,10 @@ class ProdukController extends Controller
             return $this->fail('Isi per pcs harus lebih dari 0');
         }
 
+        if (Produk::whereKey($idProduk)->exists()) {
+            return $this->fail('ID produk sudah digunakan');
+        }
+
         try {
             Produk::create([
                 'id_produk' => $idProduk,

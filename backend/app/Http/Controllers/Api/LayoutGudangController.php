@@ -1092,14 +1092,6 @@ class LayoutGudangController extends Controller
             return $this->fail('Lokasi tidak ditemukan');
         }
 
-        if (DB::table('block')
-            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('id_lokasi', $idLokasi)
-            ->whereRaw('UPPER(kode_block) = ?', [$kodeBlock])
-            ->exists()) {
-            return $this->fail('Kode block sudah digunakan di lokasi ini');
-        }
-
         $lines = $request->input('lines', $request->input('layout_config', []));
         if (is_string($lines)) {
             $lines = json_decode($lines, true);
@@ -1149,12 +1141,34 @@ class LayoutGudangController extends Controller
 
         try {
             return DB::transaction(function () use ($idPenggunaLokasi, $idLokasi, $idProduk, $kodeBlock, $normalized) {
-                $idBlock = DB::table('block')->insertGetId([
-                    'id_pengguna_lokasi' => $idPenggunaLokasi,
-                    'id_lokasi' => $idLokasi,
-                    'kode_block' => $kodeBlock,
-                    'created_at' => now(),
-                ]);
+                $existingBlock = DB::table('block')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_lokasi', $idLokasi)
+                    ->whereRaw('UPPER(kode_block) = ?', [$kodeBlock])
+                    ->first();
+
+                if ($existingBlock) {
+                    $idBlock = (int) $existingBlock->id_block;
+                    $lineDiminta = array_column($normalized, 'nomor_line');
+                    $lineTerpakai = DB::table('line')
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->where('id_block', $idBlock)
+                        ->pluck('nomor_line')
+                        ->map(fn ($n) => (int) $n)
+                        ->all();
+
+                    $bentrok = array_values(array_intersect($lineDiminta, $lineTerpakai));
+                    if (! empty($bentrok)) {
+                        throw new \RuntimeException('Line '.implode(', ', $bentrok).' sudah terpakai. Silakan pakai line lain.');
+                    }
+                } else {
+                    $idBlock = DB::table('block')->insertGetId([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_lokasi' => $idLokasi,
+                        'kode_block' => $kodeBlock,
+                        'created_at' => now(),
+                    ]);
+                }
 
                 $idLineByNomor = [];
                 foreach ($normalized as $ln) {
@@ -1210,7 +1224,7 @@ class LayoutGudangController extends Controller
                 ]);
             });
         } catch (\Throwable $e) {
-            return $this->fail('Gagal menyimpan layout: '.$e->getMessage(), 500);
+            return $this->fail($e instanceof \RuntimeException ? $e->getMessage() : 'Gagal menyimpan layout: '.$e->getMessage(), $e instanceof \RuntimeException ? 400 : 500);
         }
     }
 

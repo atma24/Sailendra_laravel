@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { apiGet, apiPost } from "@/lib/api";
+import { api, apiGet, apiPost } from "@/lib/api";
 import { isMultiRole, useSession } from "@/lib/auth";
 
 type LokasiRow = { id_lokasi: number; nama_lokasi?: string; kategori?: string };
@@ -376,7 +376,7 @@ export default function HistoryLayoutGudangPage() {
       message: `Hapus Line <strong>${nomorLine}</strong>?<br><span style="font-size:11px;color:var(--text-soft);font-weight:600;">Line hanya bisa dihapus jika stoknya kosong.</span>`,
       onOk: async () => {
         try {
-          await apiPost(`/line/${idLine}`, { _method: "DELETE", id_line: idLine, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role });
+          await api(`/line/${idLine}`, { method: "DELETE", body: JSON.stringify({ id_line: idLine, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role }) });
           notify("success", "Berhasil", "Selesai");
           reload();
         } catch (e) { notify("error", "Gagal", (e as Error).message || "Gagal menghapus line."); }
@@ -391,7 +391,7 @@ export default function HistoryLayoutGudangPage() {
       message: `Hapus Block <strong>${kodeBlockAktif}</strong>?<br><span style="font-size:11px;color:var(--text-soft);font-weight:600;">Block hanya bisa dihapus jika sudah tidak memiliki line.</span>`,
       onOk: async () => {
         try {
-          await apiPost(`/block/${idBlock}`, { _method: "DELETE", id_block: idBlock, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role });
+          await api(`/block/${idBlock}`, { method: "DELETE", body: JSON.stringify({ id_block: idBlock, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role }) });
           notify("success", "Berhasil", "Selesai");
           setIdBlock(0);
           setLayoutBlocks([]);
@@ -483,12 +483,14 @@ export default function HistoryLayoutGudangPage() {
         id_line: editLine.idLine,
       });
       for (const item of items) {
-        await apiPost(`/deep/${item.id_deep}`, {
-          _method: "PATCH",
-          role: session.user.role,
-          id_pengguna_lokasi: penggunaLokasiFinal,
-          id_deep: item.id_deep,
-          kapasitas: item.kapasitas,
+        await api(`/deep/${item.id_deep}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            role: session.user.role,
+            id_pengguna_lokasi: penggunaLokasiFinal,
+            id_deep: item.id_deep,
+            kapasitas: item.kapasitas,
+          }),
         });
       }
       notify("success", "Berhasil", "Produk & Kapasitas berhasil disimpan.");
@@ -506,7 +508,7 @@ export default function HistoryLayoutGudangPage() {
       message: `Apakah Anda yakin ingin menghapus Level <strong>L${levelNo}</strong>?`,
       onOk: async () => {
         try {
-          await apiPost(`/level/${idLevel}`, { _method: "DELETE", id_level: idLevel, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role });
+          await api(`/level/${idLevel}`, { method: "DELETE", body: JSON.stringify({ id_level: idLevel, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role }) });
           notify("success", "Berhasil", "Selesai");
           reload();
         } catch (e) { notify("error", "Gagal", (e as Error).message || "Gagal menghapus level."); }
@@ -523,7 +525,7 @@ export default function HistoryLayoutGudangPage() {
       message: "Apakah Anda yakin ingin menghapus deep terakhir pada level ini?",
       onOk: async () => {
         try {
-          await apiPost(`/deep/${idDeep}`, { _method: "DELETE", id_deep: idDeep, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role });
+          await api(`/deep/${idDeep}`, { method: "DELETE", body: JSON.stringify({ id_deep: idDeep, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role }) });
           notify("success", "Berhasil", "Selesai");
           reload();
         } catch (e) { notify("error", "Gagal", (e as Error).message || "Gagal menghapus deep."); }
