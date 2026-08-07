@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\ExcelReader;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +11,8 @@ use Throwable;
 
 class BarangKeluarController extends Controller
 {
+    use ExcelReader;
+
     // =========================================================================
     // 1. GET LIST OUTBOUND (Ref: ambil_barang_keluar.php)
     // =========================================================================
@@ -214,9 +217,412 @@ $rowHeader = DB::table('barang_keluar as bk')
     // =========================================================================
     // 4. ADD NEW DRAFT/PENDING OUTBOUND (Ref: tambah_barang_keluar.php)
     // =========================================================================
-    public function store(Request $request)
+public function store(Request $request)
+    {
+        try {
+            $itemsOut = $this->simpanOutbound($request->all());
+        } catch (\Throwable $e) {
+            return $this->fail($e->getMessage(), 500);
+        }
+
+        return $this->ok(['items' => $itemsOut], 'Submit outbound berhasil.');
+    }
+
+    // =========================================================================
+    // 4b. UPLOAD EXCEL BATCH (Ref: tambah_barang_keluar_batch.php)
+    //     Menerima gin_list, tiap GIN disimpan sebagai Draft via simpanOutbound.
+    // =========================================================================
+    public function uploadExcel(Request $request)
     {
         $in = $request->all();
+        $ginList = $in['gin_list'] ?? null;
+        if (! is_array($ginList)) {
+            return $this->fail('gin_list wajib berupa array');
+        }
+
+        $inserted = 0;
+        $updated = 0;
+        $skipped = 0;
+        $failed = 0;
+        $details = [];
+
+        foreach ($ginList as $payload) {
+            if (! is_array($payload) || empty($payload['gin_no']) || empty($payload['items'])) {
+                $failed++;
+                $details[] = 'GIN kosong / tanpa item';
+                continue;
+            }
+
+            $payload['id_pengguna_lokasi'] = trim($payload['id_pengguna_lokasi'] ?? ($in['id_pengguna_lokasi'] ?? ''));
+            $payload['tipe_pengeluaran'] = trim($payload['tipe_pengeluaran'] ?? 'Secondary');
+            $payload['status'] = 'Draft';
+            $payload['catatan'] = trim($payload['catatan'] ?? 'Upload Excel');
+
+            try {
+                $this->simpanOutbound($payload);
+                $inserted++;
+            } catch (\Throwable $e) {
+                $failed++;
+                $details[] = trim($payload['gin_no'] ?? '') . ': ' . $e->getMessage();
+            }
+        }
+
+        $msg = "Upload batch selesai! $inserted GIN berhasil ditambahkan.";
+        if ($updated > 0) {
+            $msg .= " $updated GIN diperbarui (SO Number).";
+        }
+        if ($skipped > 0) {
+            $msg .= " $skipped GIN dilewati (sudah Selesai/Pending).";
+        }
+        if ($failed > 0) {
+            $msg .= " $failed GIN gagal: " . implode('; ', $details);
+        }
+
+        return $this->ok(['inserted' => $inserted, 'updated' => $updated, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
+    }
+
+    // =========================================================================
+    // 4c. UPLOAD FILE EXCEL/CSV (Ref: Outbound::upload_excel)
+    //     Parse file di server, grouping per GIN, simpan sebagai Draft.
+    // =========================================================================
+    public function uploadFile(Request $request)
+    {
+        set_time_limit(0);
+        $idPenggunaLokasi = trim((string) $request->input('upload_lokasi', ''));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
+
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('upload_lokasi wajib');
+        }
+        if ($idPengguna <= 0) {
+            return $this->fail('id_pengguna wajib');
+        }
+
+        $file = $request->file('file_excel');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('Harap pilih file Excel atau CSV yang valid.');
+        }
+
+        $ext = strtolower($file->getClientOriginalExtension());
+        $path = $file->getRealPath();
+
+        try {
+            $parsed = $this->bacaFileSpreadsheet($path, $ext);
+            $headerRow = $parsed['header'];
+            $rowsData = $parsed['rows'];
+        } catch (\Throwable $e) {
+            return $this->fail($e->getMessage());
+        }
+
+        if (empty($rowsData)) {
+            return $this->fail('File Excel kosong atau tidak memiliki data yang bisa dibaca.');
+        }
+
+        $colMap = [];
+        foreach ($headerRow as $index => $colName) {
+            $clean = trim((string) $colName);
+            if ($clean !== '') {
+                $colMap[$clean] = $index;
+            }
+        }
+
+        $idxGin = $colMap['Picking_List_No'] ?? 0;
+        $idxMobil = $colMap['No_Truck'] ?? 1;
+        $idxDriver = $colMap['Driver'] ?? 2;
+        $idxRitase = $colMap['Trip'] ?? 4;
+        $idxDate = $colMap['Delivery_Date'] ?? 6;
+        $idxSap = $colMap['OrderNo_SAP'] ?? 8;
+        $idxDn = $colMap['DN_No'] ?? 10;
+        $idxProduk = $colMap['Material_Desc'] ?? 13;
+        $idxJumlah = $colMap['Quantity_Order_LoadedToTruck'] ?? 14;
+
+        $produkList = DB::table('produk')->get(['id_produk', 'nama_produk', 'satuan']);
+        $mapProduk = [];
+        foreach ($produkList as $p) {
+            $mapProduk[strtoupper(trim((string) $p->nama_produk))] = $p;
+        }
+
+        $grouped = [];
+        $countUnmapped = 0;
+        foreach ($rowsData as $data) {
+            $ginNo = trim((string) ($data[$idxGin] ?? ''));
+            if ($ginNo === '') {
+                continue;
+            }
+
+            $noMobil = trim((string) ($data[$idxMobil] ?? ''));
+            $namaDriverAsli = trim((string) ($data[$idxDriver] ?? ''));
+            $namaDriver = $namaDriverAsli !== '' ? $namaDriverAsli.' - '.$ginNo : $ginNo;
+            $ritase = trim((string) ($data[$idxRitase] ?? ''));
+
+            $rawDate = trim((string) ($data[$idxDate] ?? ''));
+            $tanggalKeluar = date('Y-m-d');
+            if ($rawDate !== '') {
+                $parsed = date('Y-m-d', strtotime(str_replace('/', '-', substr($rawDate, 0, 10))));
+                if ($parsed !== '1970-01-01' && $parsed !== false) {
+                    $tanggalKeluar = $parsed;
+                }
+            }
+
+            $noDn = trim((string) ($data[$idxDn] ?? ''));
+            $soNumber = trim((string) ($data[$idxSap] ?? ''));
+            $namaProdukExcel = strtoupper(trim((string) ($data[$idxProduk] ?? '')));
+            $jumlah = (int) ($data[$idxJumlah] ?? 0);
+
+            if ($jumlah <= 0) {
+                continue;
+            }
+            if (! isset($mapProduk[$namaProdukExcel])) {
+                $countUnmapped++;
+                continue;
+            }
+            $produk = $mapProduk[$namaProdukExcel];
+
+            if (! isset($grouped[$ginNo])) {
+                $grouped[$ginNo] = [
+                    'gin_no' => $ginNo,
+                    'id_pengguna' => $idPengguna,
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'tipe_pengeluaran' => 'Secondary',
+                    'tujuan' => '',
+                    'no_mobil' => $noMobil,
+                    'nama_driver' => $namaDriver,
+                    'tanggal_keluar' => $tanggalKeluar,
+                    'tanggal_pengiriman' => $tanggalKeluar,
+                    'no_dn' => $noDn,
+                    'ritase' => $ritase !== '' ? $ritase : 1,
+                    'catatan' => 'Upload Excel FEFO',
+                    'status' => 'Draft',
+                    'items' => [],
+                    '_seen' => [],
+                ];
+            }
+
+            $dedupKey = (int) $produk->id_produk.'|'.$jumlah;
+            if (isset($grouped[$ginNo]['_seen'][$dedupKey])) {
+                $idxItem = $grouped[$ginNo]['_seen'][$dedupKey];
+                $existingSo = trim((string) ($grouped[$ginNo]['items'][$idxItem]['so_number'] ?? ''));
+                if ($soNumber !== '') {
+                    $arrSo = array_map('trim', explode(',', $existingSo));
+                    if (! in_array(trim($soNumber), $arrSo)) {
+                        $grouped[$ginNo]['items'][$idxItem]['so_number'] = ($existingSo === '' ? '' : $existingSo.', ').trim($soNumber);
+                    }
+                }
+                continue;
+            }
+
+            $grouped[$ginNo]['_seen'][$dedupKey] = count($grouped[$ginNo]['items']);
+            $grouped[$ginNo]['items'][] = [
+                'id_produk' => (int) $produk->id_produk,
+                'jumlah' => $jumlah,
+                'satuan' => trim((string) ($produk->satuan ?? 'PCS')) ?: 'PCS',
+                'so_number' => $soNumber,
+            ];
+        }
+
+        if (empty($grouped)) {
+            $msg = 'Gagal memproses file. ';
+            if ($countUnmapped > 0) {
+                $msg .= "Ada $countUnmapped item produk yang namanya tidak sesuai dengan database (Master Data).";
+            } else {
+                $msg .= 'Pastikan file Excel tidak kosong, format sesuai, dan kuantitas barang wajib > 0.';
+            }
+
+            return $this->fail($msg);
+        }
+
+        $inserted = 0;
+        $updated = 0;
+        $skipped = 0;
+        $failed = 0;
+        $details = [];
+        foreach ($grouped as $payload) {
+            unset($payload['_seen']);
+            try {
+                $this->simpanOutbound($payload);
+                $inserted++;
+            } catch (\Throwable $e) {
+                $failed++;
+                $details[] = trim($payload['gin_no'] ?? '').': '.$e->getMessage();
+            }
+        }
+
+        $msg = "Upload selesai! $inserted GIN ditambahkan.";
+        if ($updated > 0) {
+            $msg .= " $updated GIN diperbarui (SO Number).";
+        }
+        if ($skipped > 0) {
+            $msg .= " $skipped GIN dilewati (sudah Selesai/Pending).";
+        }
+        if ($failed > 0) {
+            $msg .= " $failed GIN gagal: ".implode('; ', $details);
+        }
+        if ($countUnmapped > 0) {
+            $msg .= " Peringatan: $countUnmapped baris diabaikan (produk tak dikenal).";
+        }
+
+        return $this->ok(['inserted' => $inserted, 'updated' => $updated, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
+    }
+
+    // =========================================================================
+    // 4d. IMPORT HISTORICAL VIA FILE (Ref: Outbound::import_historical)
+    //     Parse file (dengan kolom Batch_No), status Selesai, stok tidak dikurangi.
+    // =========================================================================
+    public function importFile(Request $request)
+    {
+        set_time_limit(0);
+        $idPenggunaLokasi = trim((string) $request->input('upload_lokasi', ''));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
+
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('upload_lokasi wajib');
+        }
+        if ($idPengguna <= 0) {
+            return $this->fail('id_pengguna wajib');
+        }
+
+        $file = $request->file('file_excel');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('Harap pilih file Excel atau CSV yang valid.');
+        }
+
+        $ext = strtolower($file->getClientOriginalExtension());
+        $path = $file->getRealPath();
+
+        try {
+            $parsed = $this->bacaFileSpreadsheet($path, $ext);
+            $headerRow = $parsed['header'];
+            $rowsData = $parsed['rows'];
+        } catch (\Throwable $e) {
+            return $this->fail($e->getMessage());
+        }
+
+        if (empty($rowsData)) {
+            return $this->fail('File Excel kosong atau tidak memiliki data yang bisa dibaca.');
+        }
+
+        $colMap = [];
+        foreach ($headerRow as $index => $colName) {
+            $clean = trim((string) $colName);
+            if ($clean !== '') {
+                $colMap[$clean] = $index;
+            }
+        }
+
+        $idxGin = $colMap['Picking_List_No'] ?? 0;
+        $idxMobil = $colMap['No_Truck'] ?? 1;
+        $idxDriver = $colMap['Driver'] ?? 2;
+        $idxRitase = $colMap['Trip'] ?? 4;
+        $idxDate = $colMap['Delivery_Date'] ?? 6;
+        $idxSap = $colMap['OrderNo_SAP'] ?? 8;
+        $idxDn = $colMap['DN_No'] ?? 10;
+        $idxBatch = $colMap['Batch_No'] ?? 12;
+        $idxProduk = $colMap['Material_Desc'] ?? 13;
+        $idxJumlah = $colMap['Quantity_Order_LoadedToTruck'] ?? 14;
+
+        $produkList = DB::table('produk')->get(['id_produk', 'nama_produk', 'satuan']);
+        $mapProduk = [];
+        foreach ($produkList as $p) {
+            $mapProduk[strtoupper(trim((string) $p->nama_produk))] = $p;
+        }
+
+        $grouped = [];
+        $countUnmapped = 0;
+        foreach ($rowsData as $data) {
+            $ginNo = trim((string) ($data[$idxGin] ?? ''));
+            if ($ginNo === '') {
+                continue;
+            }
+
+            $noMobil = trim((string) ($data[$idxMobil] ?? ''));
+            $namaDriverAsli = trim((string) ($data[$idxDriver] ?? ''));
+            $namaDriver = $namaDriverAsli !== '' ? $namaDriverAsli.' - '.$ginNo : $ginNo;
+            $ritase = trim((string) ($data[$idxRitase] ?? ''));
+
+            $rawDate = trim((string) ($data[$idxDate] ?? ''));
+            $tanggalKeluar = date('Y-m-d');
+            if ($rawDate !== '') {
+                $parsed = date('Y-m-d', strtotime(str_replace('/', '-', substr($rawDate, 0, 10))));
+                if ($parsed !== '1970-01-01' && $parsed !== false) {
+                    $tanggalKeluar = $parsed;
+                }
+            }
+
+            $noDn = trim((string) ($data[$idxDn] ?? ''));
+            $soNumber = trim((string) ($data[$idxSap] ?? ''));
+            $batch = trim((string) ($data[$idxBatch] ?? ''));
+            $namaProdukExcel = strtoupper(trim((string) ($data[$idxProduk] ?? '')));
+            $jumlah = (int) ($data[$idxJumlah] ?? 0);
+
+            if ($jumlah <= 0) {
+                continue;
+            }
+            if (! isset($mapProduk[$namaProdukExcel])) {
+                $countUnmapped++;
+                continue;
+            }
+            $produk = $mapProduk[$namaProdukExcel];
+
+            $bestBefore = null;
+            if (strlen($batch) >= 6 && is_numeric(substr($batch, 0, 6))) {
+                $yy = (int) substr($batch, 0, 2);
+                $mm = (int) substr($batch, 2, 2);
+                $dd = (int) substr($batch, 4, 2);
+                $year = $yy > 50 ? 1900 + $yy : 2000 + $yy;
+                if (checkdate($mm, $dd, $year)) {
+                    $bestBefore = sprintf('%04d-%02d-%02d', $year, $mm, $dd);
+                }
+            }
+
+            $grouped[$ginNo][] = [
+                'gin_no' => $ginNo,
+                'nama_driver' => $namaDriver,
+                'no_mobil' => $noMobil,
+                'tanggal_keluar' => $tanggalKeluar,
+                'tipe_pengeluaran' => 'Secondary',
+                'tujuan' => '',
+                'so_number' => $soNumber,
+                'no_dn' => $noDn,
+                'id_produk' => (int) $produk->id_produk,
+                'nama_produk' => trim((string) $produk->nama_produk),
+                'jumlah' => $jumlah,
+                'satuan' => trim((string) ($produk->satuan ?? 'PCS')) ?: 'PCS',
+                'batch' => $batch,
+                'best_before' => $bestBefore,
+                'ritase' => $ritase !== '' ? $ritase : 1,
+            ];
+        }
+
+        if (empty($grouped)) {
+            $msg = 'Gagal memproses file import historical. ';
+            if ($countUnmapped > 0) {
+                $msg .= "Ada $countUnmapped item produk yang namanya tidak sesuai dengan database (Master Data).";
+            } else {
+                $msg .= 'Pastikan file Excel tidak kosong, format sesuai, dan kuantitas barang wajib > 0.';
+            }
+
+            return $this->fail($msg);
+        }
+
+        // Build items for importHistorical; meniru payload asli per-GIN
+        $items = [];
+        foreach ($grouped as $ginNo => $list) {
+            foreach ($list as $row) {
+                $items[] = $row;
+            }
+        }
+
+        $request->merge([
+            'id_pengguna_lokasi' => $idPenggunaLokasi,
+            'id_pengguna' => $idPengguna,
+            'items' => $items,
+        ]);
+
+        return $this->importHistorical($request);
+    }
+
+    private function simpanOutbound(array $in): array
+    {
         $idPenggunaLokasi = trim($in['id_pengguna_lokasi'] ?? '');
         $idPengguna = (int) ($in['id_pengguna'] ?? 0);
         $tipePengeluaran = in_array(trim($in['tipe_pengeluaran'] ?? ''), ['Primary', 'Secondary', 'Pemusnahan']) ? trim($in['tipe_pengeluaran']) : 'Primary';
@@ -225,8 +631,8 @@ $rowHeader = DB::table('barang_keluar as bk')
         $noMobil = trim($in['no_mobil'] ?? '');
         $catatan = trim($in['catatan'] ?? '');
         $tanggalKeluar = ! empty($in['tanggal_keluar']) ? trim($in['tanggal_keluar']) : date('Y-m-d');
-        $tanggalPengiriman = ! empty($in['tanggal_pengiriman']) ? trim($in['tanggal_pengiriman']) : null;
-        $ritase = ! empty($in['ritase']) ? trim($in['ritase']) : null;
+        $tanggalPengiriman = ! empty($in['tanggal_pengiriman']) ? trim($in['tanggal_pengiriman']) : $tanggalKeluar;
+        $ritase = ! empty($in['ritase']) ? trim($in['ritase']) : 1;
         $ginNo = trim($in['gin_no'] ?? '');
         $noDn = trim($in['no_dn'] ?? '');
         $statusInput = in_array(trim($in['status'] ?? ''), ['Draft', 'Pending']) ? trim($in['status']) : 'Pending';
@@ -234,16 +640,16 @@ $rowHeader = DB::table('barang_keluar as bk')
         $durasiDetik = ! empty($in['durasi_detik']) ? (int) $in['durasi_detik'] : null;
 
         if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
+            throw new Exception('id_pengguna_lokasi wajib');
         }
         if ($idPengguna <= 0) {
-            return $this->fail('id_pengguna wajib');
+            throw new Exception('id_pengguna wajib');
         }
         if ($namaDriver === '' || $noMobil === '') {
-            return $this->fail('nama_driver dan no_mobil wajib');
+            throw new Exception('nama_driver dan no_mobil wajib');
         }
         if ($tipePengeluaran === 'Primary' && $tujuan === '') {
-            return $this->fail('Tujuan wajib diisi untuk Primary');
+            throw new Exception('Tujuan wajib diisi untuk Primary');
         }
         if ($tipePengeluaran !== 'Primary') {
             $tujuan = null;
@@ -257,7 +663,7 @@ $rowHeader = DB::table('barang_keluar as bk')
             ]];
         }
         if (empty($items)) {
-            return $this->fail('items wajib diisi');
+            throw new Exception('items wajib diisi');
         }
 
         DB::beginTransaction();
@@ -334,11 +740,11 @@ $rowHeader = DB::table('barang_keluar as bk')
 
             DB::commit();
 
-            return $this->ok(['items' => $itemsOut], 'Submit outbound berhasil.');
+            return $itemsOut;
         } catch (Exception $e) {
             DB::rollBack();
 
-            return $this->fail($e->getMessage(), 500);
+            throw $e;
         }
     }
 

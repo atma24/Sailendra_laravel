@@ -1629,8 +1629,12 @@ class LayoutGudangController extends Controller
                     $isiPerPcs = (int) $isi;
                 }
 
-                $multiplier = $isRejectTarget ? $isiPerPcs : 1;
-                $satuanTujuan = $isRejectTarget ? 'PCS' : $satuan;
+                // Hanya item non-GALLON yang dikonversi ke PCS saat masuk reject.
+                // GALLON tetap dalam satuan asli (GALLON), tidak dipecah ke PCS.
+                $isGallon = strtoupper((string) $satuan) === 'GALLON';
+                $convertToPcs = $isRejectTarget && ! $isGallon;
+                $multiplier = $convertToPcs ? $isiPerPcs : 1;
+                $satuanTujuan = $convertToPcs ? 'PCS' : $satuan;
 
                 $lok = DB::table('line as ln')
                     ->join('block as b', fn ($j) => $j
@@ -1652,7 +1656,7 @@ class LayoutGudangController extends Controller
                     $produkAktifTujuan[$pid] = $qty;
                 }
 
-                if (! empty($produkAktifTujuan)) {
+                if (! empty($produkAktifTujuan) && ! $isSpecialTarget) {
                     $semuaSama = count(array_diff(array_keys($produkAktifTujuan), [$idProduk])) === 0;
                     if (! $semuaSama) {
                         throw new \Exception('Transfer ditolak karena line tujuan masih berisi produk lain.');
@@ -1718,7 +1722,7 @@ class LayoutGudangController extends Controller
                     $terisiBbLain = (int) $row['terisi_bb_lain'];
                     $sisa = $kapasitas - $terisi;
 
-                    if ($terisiBbLain > 0) {
+                    if ($terisiBbLain > 0 && ! $isSpecialTarget) {
                         continue;
                     }
 

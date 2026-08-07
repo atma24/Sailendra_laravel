@@ -127,8 +127,10 @@ class LaporanController extends Controller
                 'bm.tanggal_masuk', 'bm.nama_driver', 'bm.no_mobil', 'bm.no_dn',
                 'bm.tipe_penerimaan', 'bm.asal_pabrik', 'bm.nama_produk', 'bm.jumlah',
                 'bm.best_before', DB::raw('COALESCE(bm.batch_sekarang, bm.batch) AS batch'),
-                'bm.satuan', 'bm.catatan',
-                DB::raw('SEC_TO_TIME(bm.durasi_detik) AS durasi_input')
+'bm.satuan', 'bm.catatan',
+                DB::raw('SEC_TO_TIME(bm.durasi_detik) AS durasi_input'),
+                'bm.diperbarui_oleh', 'bm.catatan_perubahan',
+                DB::raw("DATE_FORMAT(bm.diperbarui_pada, '%Y-%m-%d %H:%i') AS diperbarui_pada")
             );
 
         if ($mode === 'range' && $startDate && $endDate) {
@@ -192,11 +194,12 @@ class LaporanController extends Controller
     // =========================================================================
     // 3. LAPORAN GABUNGAN MASUK & KELUAR (Ref: source 9)
     // =========================================================================
-    public function exportGabungan(Request $request)
+public function exportGabungan(Request $request)
     {
         $from = $request->input('from', date('Y-m-01'));
         $to = $request->input('to', date('Y-m-d'));
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
+        $format = $request->input('format', 'xlsx');
 
         $queryInbound = DB::table('barang_masuk as bm')
             ->leftJoin('pengguna_lokasi as pl', 'pl.id_pengguna_lokasi', '=', 'bm.id_pengguna_lokasi')
@@ -212,7 +215,15 @@ class LaporanController extends Controller
             ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$from, $to])
             ->select('bk.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bk.tanggal_keluar) AS tgl_keluar'), DB::raw('SEC_TO_TIME(bk.durasi_detik) AS durasi_input'));
         $queryOutbound = $this->filterLokasi($queryOutbound, 'bk.id_pengguna_lokasi', $idPenggunaLokasi);
-        $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
+$resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
+
+        if ($format === 'json') {
+            return response()->json([
+                'success' => true, 'is_gabungan' => true,
+                'from' => $from, 'to' => $to,
+                'inbound' => $resInbound, 'outbound' => $resOutbound,
+            ]);
+        }
 
         return $this->renderExcelResponse("Laporan Gabungan {$from} s-d {$to}.xls", function () use ($resInbound, $resOutbound, $from, $to) {
             // Tabel Inbound
@@ -438,6 +449,36 @@ class LaporanController extends Controller
     // =========================================================================
     // PRIVATE HELPER METHODS
     // =========================================================================
+    public function printReadyStockOpname(Request $request)
+    {
+        $id_pengguna_lokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+
+        if ($id_pengguna_lokasi === '') {
+            return response('id_pengguna_lokasi wajib diisi', 400, ['Content-Type' => 'text/plain; charset=utf-8']);
+        }
+
+        $rows = DB::select(
+            "SELECT p.id_produk, p.nama_produk
+             FROM stok_gudang_deep sd
+             JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header AND sg.id_pengguna_lokasi = sd.id_pengguna_lokasi
+             JOIN produk p ON p.id_produk = sg.id_produk
+             WHERE sd.id_pengguna_lokasi = ? AND sd.jumlah > 0
+             GROUP BY p.id_produk, p.nama_produk
+             ORDER BY p.nama_produk ASC",
+            [$id_pengguna_lokasi]
+        );
+
+        $html = view('pdf.stok-opname-form', [
+            'tanggal_opname' => $request->input('tanggal_opname') ?: date('Y-m-d'),
+            'produk_list' => $rows,
+        ])->render();
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadHTML($html);
+
+        return $pdf->download('Form_Stock_Opname_'.str_replace('-', '', date('Y-m-d')).'.pdf');
+    }
+
+
     private function resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year)
     {
         if ($mode === 'range' && $startDate && $endDate) {

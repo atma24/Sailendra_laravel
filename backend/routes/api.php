@@ -123,14 +123,19 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['get', 'post'], '/mutasi/proses', [MutasiController::class, 'store']);
 
     Route::get('/traceability', [TraceabilityController::class, 'index']);
+    Route::get('/traceability/show', [TraceabilityController::class, 'show']);
     Route::get('/traceability/best-before', [TraceabilityController::class, 'getBestBeforeList']);
     Route::post('/traceability/import', [TraceabilityController::class, 'import']);
+    Route::post('/traceability/upload-file', [TraceabilityController::class, 'uploadFile']);
     Route::post('/traceability/backfill', [TraceabilityController::class, 'syncBackfill']);
     Route::post('/traceability/hapus', [TraceabilityController::class, 'destroy']);
 
     Route::get('/barang-keluar', [BarangKeluarController::class, 'index']);
     Route::get('/barang-keluar/detail', [BarangKeluarController::class, 'show']);
     Route::post('/barang-keluar', [BarangKeluarController::class, 'store']);
+    Route::post('/barang-keluar/upload', [BarangKeluarController::class, 'uploadExcel']);
+    Route::post('/barang-keluar/upload-file', [BarangKeluarController::class, 'uploadFile']);
+    Route::post('/barang-keluar/import-file', [BarangKeluarController::class, 'importFile']);
     Route::post('/barang-keluar/import', [BarangKeluarController::class, 'importHistorical']);
     Route::post('/barang-keluar/update', [BarangKeluarController::class, 'update']);
     Route::post('/barang-keluar/hapus', [BarangKeluarController::class, 'destroy']);
@@ -146,4 +151,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/laporan/gabungan', [LaporanController::class, 'exportGabungan']);
     Route::get('/laporan/mutasi', [LaporanController::class, 'exportMutasi']);
     Route::get('/laporan/stok-opname', [LaporanController::class, 'exportStockOpname']);
+    Route::get('/laporan/stok-opname/print-ready', [LaporanController::class, 'printReadyStockOpname']);
 });

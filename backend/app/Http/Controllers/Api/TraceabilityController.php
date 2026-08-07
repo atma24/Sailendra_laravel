@@ -3,12 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\ExcelReader;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class TraceabilityController extends Controller
 {
+    use ExcelReader;
+
     // =========================================================================
     // 1. GET BEST BEFORE LIST (Ref: source 20)
     // =========================================================================
@@ -40,6 +43,8 @@ class TraceabilityController extends Controller
         $idPenggunaLokasi = trim($request->input('id_pengguna_lokasi', ''));
         $q = trim($request->input('q', ''));
 
+        $idTraceability = (int) $request->input('id_traceability', 0);
+
         $bestBefore = $request->input('best_before', []);
         if (! is_array($bestBefore)) {
             $bestBefore = [$bestBefore];
@@ -63,6 +68,10 @@ class TraceabilityController extends Controller
 
         if ($idPenggunaLokasi !== '') {
             $query->where('t.id_pengguna_lokasi', $idPenggunaLokasi);
+        }
+
+        if ($idTraceability > 0) {
+            $query->where('t.id_traceability', $idTraceability);
         }
 
         if (! empty($bestBefore)) {
@@ -121,6 +130,41 @@ class TraceabilityController extends Controller
             'sukses' => true, 'success' => true, 'data' => $data,
             'total' => $total, 'page' => $page, 'limit' => $limit, 'pages' => $pages,
         ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    // =========================================================================
+    // 2b. GET DETAIL SATU TRACEABILITY
+    // =========================================================================
+    public function show(Request $request)
+    {
+        $id = (int) $request->input('id_traceability', 0);
+        if ($id <= 0) {
+            return $this->fail('id_traceability wajib');
+        }
+
+        $row = DB::table('traceability as t')
+            ->leftJoin('barang_keluar as bk', 'bk.id_barang_keluar', '=', 't.id_barang_keluar')
+            ->leftJoin('plant as p', DB::raw('UPPER(RIGHT(t.batch_number, 4))'), '=', DB::raw('UPPER(p.id_plant)'))
+            ->leftJoin('pengguna_lokasi as pl', 'pl.id_pengguna_lokasi', '=', 't.id_pengguna_lokasi')
+            ->where('t.id_traceability', $id)
+            ->select(
+                't.*',
+                'bk.gin_no',
+                'bk.lokasi_block',
+                'bk.status AS status_barang_keluar',
+                'bk.tanggal_keluar AS aktual_kirim_gudang',
+                'bk.nama_driver AS driver_gudang',
+                'bk.no_mobil',
+                'p.nama_plant',
+                'pl.nama_pengguna_lokasi AS nama_depo'
+            )
+            ->first();
+
+        if (! $row) {
+            return $this->fail('Data traceability tidak ditemukan', 404);
+        }
+
+        return $this->ok($row);
     }
 
     // =========================================================================
@@ -288,11 +332,123 @@ class TraceabilityController extends Controller
 
             return $this->ok(['inserted' => $inserted, 'skipped' => $skipped], $msg);
 
-        } catch (Exception $e) {
+} catch (Exception $e) {
             DB::rollBack();
 
             return $this->fail($e->getMessage(), 500);
         }
+    }
+
+    // =========================================================================
+    // 5b. UPLOAD EXCEL TRACEABILITY (Ref: Traceability::upload_excel)
+    //     Parse file, bangun items, delegasi ke import().
+    // =========================================================================
+    public function uploadFile(Request $request)
+    {
+        $file = $request->file('file_excel');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('Harap pilih file Excel atau CSV yang valid.');
+        }
+
+        $ext = strtolower($file->getClientOriginalExtension());
+        $uploadLokasi = trim((string) $request->input('upload_lokasi', ''));
+
+        $produkList = DB::table('produk')->get(['id_produk', 'nama_produk']);
+        $mapProduk = [];
+        foreach ($produkList as $p) {
+            $mapProduk[strtoupper(trim((string) $p->nama_produk))] = (int) $p->id_produk;
+        }
+
+        $parsed = $this->bacaFileSpreadsheet($file->getRealPath(), $ext);
+        $headerRow = $parsed['header'];
+        $rowsData = $parsed['rows'];
+
+        if (empty($rowsData)) {
+            return $this->fail('File Excel kosong atau tidak memiliki data yang bisa dibaca.');
+        }
+
+        $colMap = [];
+        foreach ($headerRow as $index => $colName) {
+            $clean = trim((string) $colName);
+            if ($clean !== '') {
+                $colMap[$clean] = $index;
+            }
+        }
+
+        $idxRoute = $colMap['ID_Route'] ?? 1;
+        $idxDriver = $colMap['Driver_Name'] ?? 3;
+        $idxIdCustomer = $colMap['Cust_ID'] ?? 4;
+        $idxNamaCustomer = $colMap['Cust_Name'] ?? 5;
+        $idxSalesGroup = $colMap['Sales_Group'] ?? 7;
+        $idxSo = $colMap['SO_Number'] ?? 9;
+        $idxDn = $colMap['DN_Number'] ?? 10;
+        $idxNamaProduk = $colMap['Product_Name'] ?? 11;
+        $idxSku = $colMap['SKU'] ?? 12;
+        $idxTanggal = $colMap['Actual_Date'] ?? 14;
+        $idxJumlah = $colMap['Actual_Qty'] ?? 16;
+        $idxStatusDelivery = $colMap['Status_Delivery'] ?? 18;
+
+        $items = [];
+        $countUnmapped = 0;
+        foreach ($rowsData as $data) {
+            $soNumber = trim((string) ($data[$idxSo] ?? ''));
+            if ($soNumber === '') {
+                continue;
+            }
+            $namaProdukExcel = strtoupper(trim((string) ($data[$idxNamaProduk] ?? '')));
+            $jumlah = (int) ($data[$idxJumlah] ?? 0);
+            if ($namaProdukExcel === '' || $jumlah <= 0) {
+                continue;
+            }
+
+            $idProduk = $mapProduk[$namaProdukExcel] ?? 0;
+            if ($idProduk <= 0) {
+                $countUnmapped++;
+            }
+
+            $rawDate = trim((string) ($data[$idxTanggal] ?? ''));
+            $tanggalPengiriman = null;
+            if ($rawDate !== '') {
+                $parsedDate = date('Y-m-d', strtotime(str_replace('/', '-', $rawDate)));
+                if ($parsedDate !== '1970-01-01' && $parsedDate !== false) {
+                    $tanggalPengiriman = $parsedDate;
+                }
+            }
+
+            $items[] = [
+                'id_route' => trim((string) ($data[$idxRoute] ?? '')),
+                'nama_driver' => trim((string) ($data[$idxDriver] ?? '')),
+                'id_customer' => trim((string) ($data[$idxIdCustomer] ?? '')),
+                'nama_customer' => trim((string) ($data[$idxNamaCustomer] ?? '')),
+                'sales_group' => trim((string) ($data[$idxSalesGroup] ?? '')),
+                'so_number' => $soNumber,
+                'no_dn' => trim((string) ($data[$idxDn] ?? '')),
+                'nama_produk' => trim((string) ($data[$idxNamaProduk] ?? '')),
+                'id_produk' => $idProduk,
+                'id_pengguna_lokasi' => $uploadLokasi,
+                'tanggal_pengiriman' => $tanggalPengiriman,
+                'jumlah' => $jumlah,
+                'status_delivery' => trim((string) ($data[$idxStatusDelivery] ?? '')),
+            ];
+        }
+
+        if (empty($items)) {
+            $msg = 'Gagal memproses file. Data tidak sesuai format.';
+            if ($countUnmapped > 0) {
+                $msg .= " Ada $countUnmapped produk tidak dikenal.";
+            }
+
+            return $this->fail($msg);
+        }
+
+        $request->merge(['items' => $items]);
+        $resp = $this->import($request);
+
+        $data = json_decode($resp->getContent(), true);
+        $data['unmapped'] = $countUnmapped;
+        $response = response()->json($data);
+
+        return $response;
     }
 
     // =========================================================================

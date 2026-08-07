@@ -73,7 +73,7 @@ export default function Sidebar({
             <Link
               key={m.title}
               href={m.path!}
-              className={`nav-link-custom ${pathname.startsWith(m.path!) ? "active" : ""}`}
+              className={`nav-link-custom ${pathname === m.path || pathname.startsWith(m.path + "/") ? "active" : ""}`}
             >
               <i className={`${m.icon} nav-icon`}></i>
               <span className="nav-text">{m.title}</span>

@@ -359,6 +359,37 @@ class StokController extends Controller
 
                 return ['sql' => $sql, 'bind' => array_merge([$idProduk], $baseBind)];
 
+            case 'detail':
+                if ($idProduk <= 0) {
+                    return ['error' => 'id_produk wajib untuk mode=detail'];
+                }
+                $sql = "SELECT
+                    MIN(sg.id_stok) AS id_stok,
+                    sg.id_produk,
+                    MIN(sg.id_barang_masuk) AS id_barang_masuk,
+                    COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
+                    SUM(sd.jumlah) AS qty_sisa,
+                    {$satuan} AS satuan,
+                    sd.best_before,
+                    CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block
+                    FROM stok_gudang_deep sd
+                    JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
+                    JOIN deep d ON d.id_deep = sd.id_deep
+                    JOIN level lv ON lv.id_level = d.id_level
+                    JOIN line ln ON ln.id_line = lv.id_line
+                    JOIN block b ON b.id_block = ln.id_block
+                    JOIN lokasi l ON l.id_lokasi = b.id_lokasi
+                    LEFT JOIN produk p ON p.id_produk = sg.id_produk
+                    WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokS}{$lokD}{$zonaWhere}
+                    GROUP BY sg.id_produk,
+                        COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
+                        {$satuan},
+                        sd.best_before,
+                        b.kode_block, ln.nomor_line
+                    ORDER BY b.kode_block ASC, ln.nomor_line ASC, COALESCE(sd.best_before,'9999-12-31') ASC";
+
+                return ['sql' => $sql, 'bind' => array_merge([$idProduk], $baseBind)];
+
             case 'kapasitas':
                 $whereB = $lok !== '' ? ' WHERE b.id_pengguna_lokasi = ?' : '';
                 $sql = "SELECT
