@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { isMultiRole, useSession } from "@/lib/auth";
+import UploadModal from "@/components/UploadModal";
 
 type LokasiRow = { id_lokasi: number; nama_lokasi?: string; kategori?: string };
 type LokProfile = { id_pengguna_lokasi: string; nama_pengguna_lokasi: string };
@@ -38,6 +39,76 @@ const css = `
 }
 .helper-text { font-size: 10px; font-weight: 650; color: var(--text-soft); margin-top: 4px; line-height: 1.3; }
 
+/* === STYLING TOMBOL UPLOAD & MODAL BARU === */
+.page-header-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; margin-top: 4px; }
+.page-title { font-size: 18px; font-weight: 900; color: var(--primary); margin: 0; letter-spacing: -0.5px; }
+.upload-excel-btn {
+  background: #191970; color: #fff; border: none; border-radius: 8px;
+  padding: 0 16px; height: 36px; font-size: 12px; font-weight: 800;
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+}
+.upload-excel-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(25,25,112,0.2); filter: brightness(1.1); }
+
+.upload-modal-overlay {
+  position: fixed; inset: 0; z-index: 1050; background: rgba(15,23,42,0.45);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+  backdrop-filter: blur(2px);
+}
+.upload-modal-content {
+  background: #fff; width: 100%; max-width: 420px; border-radius: 16px;
+  box-shadow: 0 25px 50px rgba(15,23,42,0.2); overflow: hidden;
+  animation: modalFadeIn 0.2s ease-out;
+}
+@keyframes modalFadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+.upload-modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 18px 20px 14px;
+}
+.upload-modal-header h3 { margin: 0; font-size: 16px; font-weight: 900; color: #172033; letter-spacing: -0.3px; }
+.upload-modal-header button {
+  background: transparent; border: none; font-size: 18px; color: #8a93a3; cursor: pointer; transition: color 0.2s;
+}
+.upload-modal-header button:hover { color: #d33b3e; }
+.upload-modal-body { padding: 0 20px 20px; }
+.upload-modal-body label {
+  display: block; font-size: 11px; font-weight: 800; color: #6b7280; margin-bottom: 8px;
+}
+.file-drop-area {
+  border: 1px solid #e2e7f0; border-radius: 8px; padding: 6px 8px; background: #fff;
+  transition: border-color 0.2s;
+}
+.file-drop-area:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25, 25, 112, 0.07); }
+.file-drop-area input[type="file"] {
+  font-size: 11px; color: #172033; width: 100%; cursor: pointer; font-weight: 600;
+}
+.file-drop-area input[type="file"]::file-selector-button {
+  background: #f6f7f9; color: #172033; border: 1px solid #e2e7f0; border-radius: 6px;
+  padding: 6px 12px; font-weight: 800; cursor: pointer; margin-right: 12px; transition: background 0.2s;
+}
+.file-drop-area input[type="file"]::file-selector-button:hover { background: #eef0ff; color: var(--primary); border-color: var(--primary); }
+.upload-modal-note { font-size: 10px; font-weight: 700; color: #8a93a3; margin-top: 8px; }
+.upload-modal-footer {
+  padding: 16px 20px; display: flex; justify-content: flex-end; gap: 10px;
+}
+.btn-batal {
+  background: #fff; border: 1px solid #e2e7f0; border-radius: 8px; padding: 0 16px;
+  height: 36px; font-size: 12px; font-weight: 800; color: #6b7280; cursor: pointer; transition: background 0.2s;
+}
+.btn-batal:hover { background: #f3f4f6; color: #172033; }
+.btn-upload-sekarang {
+  background: #191970; border: none; border-radius: 8px; padding: 0 20px;
+  height: 36px; font-size: 12px; font-weight: 800; color: #fff; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; transition: filter 0.2s, transform 0.2s;
+}
+.btn-upload-sekarang:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-upload-sekarang:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+.download-template-link {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 800; 
+  color: var(--primary); margin-top: 12px; text-decoration: none; cursor: pointer;
+}
+.download-template-link:hover { text-decoration: underline; }
+
 .line-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .line-config-card { border: 1px solid #e9edf5; border-radius: 10px; background: #fcfdff; padding: 8px; }
 .line-config-title { font-size: 11px; font-weight: 900; color: var(--text-main); margin-bottom: 7px; }
@@ -47,7 +118,7 @@ const css = `
 .layout-submit-wrap { padding-top: 0; }
 .submit-layout-btn {
   width: 100%; border: 0; outline: 0; border-radius: 9px; background: var(--primary); color: #FFFFFF;
-  min-height: 33px; padding: 7px 11px; font-size: 11px; font-weight: 900;
+  min-height: 36px; padding: 7px 11px; font-size: 12px; font-weight: 900;
   display: flex; align-items: center; justify-content: center; gap: 6px;
   transition: transform .18s ease, box-shadow .18s ease; cursor: pointer;
 }
@@ -157,6 +228,11 @@ export default function FormLayoutGudangPage() {
   const [configs, setConfigs] = useState<Record<number, LineCfg>>({});
 
   const [busy, setBusy] = useState(false);
+  
+  // State Modal & Upload
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+
   const [alert, setAlert] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const cekTimer = useRef<number | null>(null);
@@ -358,6 +434,55 @@ export default function FormLayoutGudangPage() {
     }
   };
 
+  const downloadTemplate = async () => {
+    try {
+      const res = await fetch("/api/layout-gudang/download-template", {
+        headers: { Authorization: `Bearer ${session?.token || ""}` },
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "template-layout-gudang.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setAlert({ type: "error", msg: "Gagal mengunduh template." });
+    }
+  };
+
+  const importFile = async (importFileState: File) => {
+    const fd = new FormData();
+    fd.append("file", importFileState);
+    fd.append("role", session?.user.role || "");
+    fd.append("id_pengguna_lokasi", penggunaLokasiFinal);
+
+    setImporting(true);
+    try {
+      const res = await fetch("/api/layout-gudang/import-layout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.token || ""}` },
+        body: fd,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.success === false) {
+        setAlert({ type: "error", msg: body?.message || "Gagal mengimpor file." });
+        throw new Error("upload failed");
+      }
+      setAlert({
+        type: "success",
+        msg: `Impor berhasil: ${body?.data?.jumlah_block ?? 0} block. Buka menu Layout Gudang untuk verifikasi.`,
+      });
+      setUploadModalOpen(false); // Tutup modal setelah sukses
+    } catch (e) {
+      if ((e as Error).message !== "upload failed") {
+        setAlert({ type: "error", msg: "Gagal mengimpor file." });
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
   if (!session) return null;
 
   const labelLokasi = (r: LokasiRow) =>
@@ -374,7 +499,7 @@ export default function FormLayoutGudangPage() {
       <style>{css}</style>
 
       {isMulti && !!semuaLokasi.length && (
-        <div className="layout-form-card pick-card">
+        <div className="layout-form-card pick-card" style={{ marginBottom: "8px" }}>
           <form onSubmit={(e) => e.preventDefault()}>
             <label>Pilih Lokasi/Depo:</label>
             <select
@@ -390,6 +515,19 @@ export default function FormLayoutGudangPage() {
           </form>
         </div>
       )}
+
+      {/* HEADER PAGE + UPLOAD EXCEL BUTTON */}
+      <div className="page-header-actions">
+        <h2 className="page-title">Buat Layout Gudang</h2>
+        <button 
+          type="button" 
+          className="upload-excel-btn" 
+          onClick={() => setUploadModalOpen(true)}
+        >
+          <i className="bi bi-file-earmark-excel"></i>
+          <span>Upload Excel</span>
+        </button>
+      </div>
 
       <div className="layout-form-page">
         {alert && (
@@ -649,6 +787,18 @@ export default function FormLayoutGudangPage() {
         </form>
       </div>
 
+      {/* MODAL UPLOAD EXCEL */}
+      <UploadModal
+        open={uploadModalOpen}
+        title="Upload Layout Gudang"
+        note="*Mendukung format file .xlsx dan .csv."
+        onClose={() => setUploadModalOpen(false)}
+        onDownload={downloadTemplate}
+        onSubmit={importFile}
+        busy={importing}
+      />
+
+      {/* MODAL LOADING */}
       {busy && (
         <div className="modal-loading">
           <div className="modal-loading-inner">

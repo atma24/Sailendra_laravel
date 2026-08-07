@@ -3,15 +3,23 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\Concerns\ApiResponse;
+use App\Http\Controllers\Api\Concerns\ExcelReader;
 use App\Http\Controllers\Controller;
 use App\Models\Deep;
 use App\Models\Plant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Models\Lokasi;
+use App\Models\Produk;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 class LayoutGudangController extends Controller
 {
     use ApiResponse;
+    use ExcelReader;
 
     public function ambilLayout(Request $request)
     {
@@ -2023,5 +2031,322 @@ class LayoutGudangController extends Controller
             ->get()
             ->map(fn ($r) => (array) $r)
             ->all();
+    }
+    public function downloadTemplate()
+    {
+        // 1. Ambil data dari database
+        $lokasiList = Lokasi::pluck('nama_lokasi')->toArray();
+        $produkList = Produk::selectRaw("CONCAT(id_produk, ' - ', nama_produk) as label_produk")->pluck('label_produk')->toArray();
+
+        $spreadsheet = new Spreadsheet();
+
+        // ---------------------------------------------------------
+        // SHEET 1: TEMPLATE UTAMA
+        // ---------------------------------------------------------
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Template');
+
+        // Set Header
+        $headers = ['kode_block', 'nama_lokasi', 'nama_produk', 'nomor_line', 'level', 'jumlah_deep', 'jumlah_kapasitas'];
+        $sheet->fromArray($headers, NULL, 'A1');
+
+        // Styling Header (Background Biru Gelap, Teks Putih, Bold)
+        $headerStyle = $sheet->getStyle('A1:G1');
+        $headerStyle->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
+        $headerStyle->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF191970');
+
+        // ---------------------------------------------------------
+        // SHEET 2: DATA REFERENSI DROPDOWN (Disembunyikan)
+        // ---------------------------------------------------------
+        $dataSheet = $spreadsheet->createSheet();
+        $dataSheet->setTitle('DataRef');
+
+        // Isi Kolom A dengan Lokasi
+        foreach ($lokasiList as $index => $lokasi) {
+            $dataSheet->setCellValue('A' . ($index + 1), $lokasi);
+        }
+        
+        // Isi Kolom B dengan Produk
+        foreach ($produkList as $index => $produk) {
+            $dataSheet->setCellValue('B' . ($index + 1), $produk);
+        }
+
+        // Sembunyikan Sheet DataRef agar rapi
+        $dataSheet->setSheetState(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet::SHEETSTATE_HIDDEN);
+
+        // ---------------------------------------------------------
+        // APLIKASIKAN DROPDOWN (DATA VALIDATION) KE SHEET TEMPLATE
+        // ---------------------------------------------------------
+        $lokasiRowCount = count($lokasiList);
+        $produkRowCount = count($produkList);
+
+        // Pasang dropdown sampai baris ke-500 (bisa disesuaikan)
+        for ($row = 2; $row <= 500; $row++) {
+            // Dropdown Lokasi (Kolom B)
+            if ($lokasiRowCount > 0) {
+                $validation = $sheet->getCell('B' . $row)->getDataValidation();
+                $validation->setType(DataValidation::TYPE_LIST);
+                $validation->setErrorStyle(DataValidation::STYLE_STOP);
+                $validation->setAllowBlank(true);
+                $validation->setShowDropDown(true);
+                $validation->setErrorTitle('Input Error');
+                $validation->setError('Lokasi tidak valid. Silakan pilih dari dropdown.');
+                // Mengambil referensi range dari Sheet DataRef
+                $validation->setFormula1('DataRef!$A$1:$A$' . $lokasiRowCount);
+            }
+
+            // Dropdown Produk (Kolom C)
+            if ($produkRowCount > 0) {
+                $validation = $sheet->getCell('C' . $row)->getDataValidation();
+                $validation->setType(DataValidation::TYPE_LIST);
+                $validation->setErrorStyle(DataValidation::STYLE_STOP);
+                $validation->setAllowBlank(true);
+                $validation->setShowDropDown(true);
+                $validation->setErrorTitle('Input Error');
+                $validation->setError('Produk tidak valid. Silakan pilih dari dropdown.');
+                // Mengambil referensi range dari Sheet DataRef
+                $validation->setFormula1('DataRef!$B$1:$B$' . $produkRowCount);
+            }
+        }
+
+        // Auto-size lebar kolom agar rapi
+        foreach (range('A', 'G') as $columnID) {
+            $sheet->getColumnDimension($columnID)->setAutoSize(true);
+        }
+
+        // Aktifkan kembali Sheet 1 saat file dibuka
+        $spreadsheet->setActiveSheetIndex(0);
+
+        // ---------------------------------------------------------
+        // PROSES DOWNLOAD FILE XLSX
+        // ---------------------------------------------------------
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'template-layout-gudang.xlsx';
+
+        // Bersihkan output buffer untuk mencegah file corrupt
+        if (ob_get_length()) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+
+        $writer->save('php://output');
+        exit;
+    }
+
+    public function importLayout(Request $request)
+    {
+        if (! $this->isSupervisor($request->all())) {
+            return $this->fail('Hak akses ditolak');
+        }
+
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
+        $file = $request->file('file');
+
+        if ($idPenggunaLokasi === '' || ! $file || ! $file->isValid()) {
+            return $this->fail('id_pengguna_lokasi & file wajib diisi');
+        }
+
+        $lookup = ['kode_block', 'nama_lokasi', 'nama_produk', 'nomor_line', 'level', 'jumlah_deep', 'jumlah_kapasitas'];
+        $col = [];
+        $parsed = $this->bacaFileSpreadsheet($file->getRealPath(), strtolower($file->getClientOriginalExtension()));
+
+        if (empty($parsed['header'])) {
+            return $this->fail('File kosong atau header tidak ditemukan');
+        }
+
+        foreach ($parsed['header'] as $i => $h) {
+            $name = strtolower(trim((string) $h));
+            if (in_array($name, $lookup, true)) {
+                $col[$name] = $i;
+            }
+        }
+
+        $missing = array_values(array_diff($lookup, array_keys($col)));
+        if (! empty($missing)) {
+            return $this->fail('Kolom wajib tidak ditemukan di file: '.implode(', ', $missing));
+        }
+
+        $errors = [];
+        $blocks = [];
+
+        foreach ($parsed['rows'] as $idx => $row) {
+            $lineNo = $idx + 1;
+            $cell = fn ($name) => trim((string) ($row[$col[$name]] ?? ''));
+
+            $kodeBlock = strtoupper($cell('kode_block'));
+            $namaLokasi = $cell('nama_lokasi');
+            $namaProduk = $cell('nama_produk');
+            $nomorLine = (int) $cell('nomor_line');
+            $level = (int) $cell('level');
+            $jumlahDeep = (int) $cell('jumlah_deep');
+            $kapasitas = (int) $cell('jumlah_kapasitas');
+
+            $emptyRow = $kodeBlock === '' && $namaLokasi === '' && $namaProduk === ''
+                && $nomorLine <= 0 && $level <= 0 && $jumlahDeep <= 0 && $kapasitas <= 0;
+            if ($emptyRow) {
+                continue;
+            }
+
+            if ($kodeBlock === '') {
+                $errors[] = "Baris $lineNo: kode_block wajib";
+                continue;
+            }
+            if ($namaLokasi === '' || $namaProduk === '') {
+                $errors[] = "Baris $lineNo: nama_lokasi & nama_produk wajib";
+                continue;
+            }
+            if ($nomorLine <= 0 || $level <= 0 || $jumlahDeep <= 0 || $kapasitas <= 0) {
+                $errors[] = "Baris $lineNo: nomor_line / level / jumlah_deep / jumlah_kapasitas harus > 0";
+                continue;
+            }
+
+            $idLokasi = DB::table('lokasi')->where('nama_lokasi', $namaLokasi)->value('id_lokasi');
+            if (! $idLokasi) {
+                $errors[] = "Baris $lineNo: lokasi '$namaLokasi' tidak ditemukan";
+                continue;
+            }
+
+            // Format dropdown template: "150 - Aqua 330ml". Ambil ID di depannya,
+            // fallback cari berdasarkan nama bila format bukan "id - nama".
+            $idProduk = null;
+            if (preg_match('/^\s*(\d+)\s*-/', $namaProduk, $m)) {
+                $idProduk = (int) $m[1];
+                if (! DB::table('produk')->where('id_produk', $idProduk)->exists()) {
+                    $idProduk = null;
+                }
+            }
+            if (! $idProduk) {
+                $idProduk = DB::table('produk')->where('nama_produk', $namaProduk)->value('id_produk');
+            }
+            if (! $idProduk) {
+                $errors[] = "Baris $lineNo: produk '$namaProduk' tidak ditemukan";
+                continue;
+            }
+
+            if (! isset($blocks[$kodeBlock])) {
+                $blocks[$kodeBlock] = ['lokasi' => $idLokasi, 'lines' => []];
+            }
+            $blk = &$blocks[$kodeBlock];
+
+            if ($blk['lokasi'] !== $idLokasi) {
+                $errors[] = "Baris $lineNo: block $kodeBlock sudah memakai lokasi lain";
+                continue;
+            }
+            if (isset($blk['lines'][$nomorLine]) && $blk['lines'][$nomorLine]['produk'] !== $idProduk) {
+                $errors[] = "Baris $lineNo: block $kodeBlock line $nomorLine sudah memakai produk lain";
+                continue;
+            }
+
+            $blk['lines'][$nomorLine]['produk'] = $idProduk;
+            $blk['lines'][$nomorLine]['levels'][$level] = ['jumlah_deep' => $jumlahDeep, 'kapasitas' => $kapasitas];
+        }
+        unset($blk);
+
+        if (! empty($errors)) {
+            return $this->fail('Terdapat kesalahan di file (tidak ada data yang disimpan):'."\n".implode("\n", array_slice($errors, 0, 20)));
+        }
+
+        if (empty($blocks)) {
+            return $this->fail('Tidak ada baris data yang valid di file');
+        }
+
+        $precheck = [];
+        foreach ($blocks as $kodeBlock => $blk) {
+            $idBlock = DB::table('block')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('id_lokasi', $blk['lokasi'])
+                ->whereRaw('UPPER(kode_block) = ?', [$kodeBlock])
+                ->value('id_block');
+
+            if ($idBlock) {
+                $terpakai = DB::table('line')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_block', $idBlock)
+                    ->pluck('nomor_line')
+                    ->map(fn ($n) => (int) $n)
+                    ->all();
+                $bentrok = array_values(array_intersect(array_keys($blk['lines']), $terpakai));
+                if (! empty($bentrok)) {
+                    return $this->fail("Block $kodeBlock: line ".implode(', ', $bentrok).' sudah terpakai. Perbaiki file lalu upload ulang.');
+                }
+                $precheck[$kodeBlock] = $idBlock;
+            } else {
+                $precheck[$kodeBlock] = null;
+            }
+        }
+
+        try {
+            $stats = DB::transaction(function () use ($idPenggunaLokasi, $blocks, $precheck) {
+                $res = [];
+                foreach ($blocks as $kodeBlock => $blk) {
+                    $idBlock = $precheck[$kodeBlock];
+
+                    if ($idBlock === null) {
+                        $idBlock = DB::table('block')->insertGetId([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_lokasi' => $blk['lokasi'],
+                            'kode_block' => $kodeBlock,
+                            'created_at' => now(),
+                        ]);
+                    }
+
+                    ksort($blk['lines']);
+                    foreach ($blk['lines'] as $nomorLine => $line) {
+                        $idLine = DB::table('line')->insertGetId([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_block' => $idBlock,
+                            'nomor_line' => $nomorLine,
+                            'created_at' => now(),
+                        ]);
+
+                        ksort($line['levels']);
+                        foreach ($line['levels'] as $level => $lv) {
+                            $idLevel = DB::table('level')->insertGetId([
+                                'id_pengguna_lokasi' => $idPenggunaLokasi,
+                                'id_line' => $idLine,
+                                'level' => $level,
+                                'created_at' => now(),
+                            ]);
+
+                            $deeps = [];
+                            for ($i = 1; $i <= $lv['jumlah_deep']; $i++) {
+                                $deeps[] = [
+                                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                                    'id_level' => $idLevel,
+                                    'deep' => $i,
+                                    'kapasitas' => $lv['kapasitas'],
+                                    'created_at' => now(),
+                                ];
+                            }
+                            DB::table('deep')->insert($deeps);
+                        }
+
+                        DB::table('prioritas_lokasi_produk')->insert([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_produk' => $line['produk'],
+                            'id_lokasi' => $blk['lokasi'],
+                            'id_block' => $idBlock,
+                            'id_line' => $idLine,
+                            'id_level' => null,
+                            'id_deep' => null,
+                            'created_at' => now(),
+                        ]);
+                    }
+
+                    $res[] = ['kode_block' => $kodeBlock, 'line' => count($blk['lines'])];
+                }
+                return $res;
+            });
+
+            return $this->okMessage('Layout gudang berhasil diimpor', [
+                'block' => $stats,
+                'jumlah_block' => count($stats),
+            ]);
+        } catch (\Throwable $e) {
+            return $this->fail('Gagal mengimpor layout: '.$e->getMessage(), 500);
+        }
     }
 }

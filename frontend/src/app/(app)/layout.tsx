@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
 import { clearSession, getSession, isMultiRole, type Session } from "@/lib/auth";
 import "../app-shell.css";
 
 function pageTitleFromPath(pathname: string): string {
   if (pathname === "/dashboard" || pathname === "/") return "Dashboard";
+  if (pathname === "/profile") return "Profile";
   const base = pathname.split("/").pop() || "";
   const map: Record<string, string> = {
     "layout-gudang": "Layout Gudang",
@@ -63,7 +65,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="topbar-card">
             <h1 className="page-title">{pageTitleFromPath(pathname)}</h1>
 
-            <div className="user-box">
+            <Link href="/profile" className="user-box">
               <div>
                 <div className="user-name">{auth.session.user.username}</div>
                 <div className="user-role">{auth.session.user.role}</div>
@@ -71,7 +73,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <div className="user-avatar">
                 {auth.session.user.username.slice(0, 1).toUpperCase()}
               </div>
-            </div>
+            </Link>
           </div>
 
           {children}

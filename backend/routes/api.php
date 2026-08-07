@@ -71,6 +71,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Layout Gudang (Aksi Edit/Ubah)
         Route::post('/layout-gudang/simpan-layout', [LayoutGudangController::class, 'simpanLayout']);
+        Route::get('/layout-gudang/download-template', [LayoutGudangController::class, 'downloadTemplate']);
+        Route::post('/layout-gudang/import-layout', [LayoutGudangController::class, 'importLayout']);
         Route::post('/layout-gudang/salin-block', [LayoutGudangController::class, 'salinBlock']);
         Route::post('/layout-gudang/ubah-plant-line', [LayoutGudangController::class, 'ubahPlantLine']);
         Route::post('/layout-gudang/ubah-bb-jumlah-line', [LayoutGudangController::class, 'ubahBbJumlahLine']);
@@ -141,6 +143,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/barang-keluar/hapus', [BarangKeluarController::class, 'destroy']);
 
     Route::get('/barang-masuk', [BarangMasukController::class, 'index']);
+    Route::get('/barang-masuk/download-template', [BarangMasukController::class, 'downloadStockTemplate']);
+    Route::post('/barang-masuk/import-stock', [BarangMasukController::class, 'importStock']);
     Route::post('/barang-masuk', [BarangMasukController::class, 'store']);
     Route::post('/barang-masuk/preview', [BarangMasukController::class, 'preview']);
     Route::post('/barang-masuk/update', [BarangMasukController::class, 'update']);

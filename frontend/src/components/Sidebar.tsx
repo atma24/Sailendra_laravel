@@ -27,7 +27,8 @@ export default function Sidebar({
     <aside className="sidebar">
       <div className="brand-area">
         <div className="brand-logo">
-          <i className="bi bi-droplet-half"></i>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logosailendra.png" alt="Logo Sailendra" />
         </div>
       </div>
 

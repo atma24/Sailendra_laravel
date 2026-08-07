@@ -5,6 +5,9 @@ import 'bootstrap-icons/font/bootstrap-icons.css';
 export const metadata: Metadata = {
   title: "Sailendra",
   description: "Sailendra WMS",
+  icons: {
+    icon: "/faviconlogo.jpg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

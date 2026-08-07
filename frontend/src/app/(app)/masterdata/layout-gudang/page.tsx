@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, SUPERVISOR_ROLES, useSession } from "@/lib/auth";
 import LineEditModal, { type BbItem, type EditLine } from "@/components/LineEditModal";
+import UploadModal from "@/components/UploadModal";
 
 type LokasiRow = { id_lokasi: number; nama_lokasi?: string; kategori?: string };
 type BlockRow = { id_block: number; kode_block: string };
@@ -108,6 +109,13 @@ const css = `
   background: var(--primary); color: #FFFFFF; border-color: var(--primary);
   box-shadow: 0 6px 14px rgba(25, 25, 112, 0.13); transform: translateY(-1px);
 }
+
+.warehouse-upload-btn {
+  border: 0; border-radius: 8px; height: 31px; padding: 0 12px; background: var(--primary);
+  color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center;
+  gap: 6px; cursor: pointer; white-space: nowrap;
+}
+.warehouse-upload-btn:hover { transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
 
 .warehouse-lines { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .warehouse-line-card { padding: 8px; }
@@ -346,6 +354,8 @@ export default function LayoutGudangPage() {
   }>(null);
   const [edit, setEdit] = useState<EditLine | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [showUpload, setShowUpload] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     if (!session || !isMulti) return;
@@ -368,6 +378,50 @@ export default function LayoutGudangPage() {
   const penggunaLokasiFinal = isMulti
     ? penggunaLokasi
     : String(session?.user.id_pengguna_lokasi || "");
+
+  const downloadTemplate = async () => {
+    try {
+      const res = await fetch("/api/barang-masuk/download-template", {
+        headers: { Authorization: `Bearer ${session?.token || ""}` },
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "template-stok-gudang.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* silent */
+    }
+  };
+
+  const importStock = async (file: File) => {
+    const lok = isMulti ? penggunaLokasi : String(session?.user.id_pengguna_lokasi || "");
+    if (!lok) {
+      throw new Error("Pilih lokasi terlebih dahulu.");
+    }
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("id_pengguna_lokasi", lok);
+    fd.append("id_pengguna", String(session?.user.id_pengguna || ""));
+    setImporting(true);
+    try {
+      const res = await fetch("/api/barang-masuk/import-stock", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.token || ""}` },
+        body: fd,
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || body?.success === false) {
+        throw new Error(body?.message || "Gagal mengimpor stock.");
+      }
+      setShowUpload(false);
+      setTimeout(() => window.location.reload(), 800);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -512,6 +566,14 @@ export default function LayoutGudangPage() {
             </form>
           </div>
         )}
+
+        <div className="warehouse-card" style={{ padding: "8px", display: "flex", justifyContent: "flex-end" }}>
+          <button type="button" className="warehouse-upload-btn" style={{ border: "none", cursor: "pointer" }}
+            onClick={() => setShowUpload(true)}>
+            <i className="bi bi-file-earmark-excel"></i>
+            Upload Stock
+          </button>
+        </div>
 
         <div className="warehouse-card warehouse-tabs-card">
           {!lokasiList.length ? (
@@ -751,6 +813,16 @@ export default function LayoutGudangPage() {
           }}
         />
       )}
+
+      <UploadModal
+        open={showUpload}
+        title="Upload Stock ke Layout"
+        note="Kolom: nama_produk, jenis_produk, kuantiti, lokasi_block, lokasi_line, batch, best_before. Stock otomatis masuk ke line layout sesuai lokasi_block-lokasi_line."
+        onClose={() => setShowUpload(false)}
+        onDownload={downloadTemplate}
+        onSubmit={importStock}
+        busy={importing}
+      />
     </>
   );
 }

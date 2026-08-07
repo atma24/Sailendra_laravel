@@ -4,15 +4,21 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ApiResponse;
+use App\Http\Controllers\Api\Concerns\ExcelReader;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Throwable;
 
 class BarangMasukController extends Controller
 {
     use ApiResponse;
+    use ExcelReader;
 
     private const PRODUK_TANPA_BATCH = [10516938, 10516939];
 
@@ -495,6 +501,305 @@ class BarangMasukController extends Controller
             'alokasi' => $alokasi,
             'lokasi_akhir' => $ringkasanList,
             'lokasi_akhir_str' => $lokasiAkhirStr,
+        ]);
+    }
+
+    public function downloadStockTemplate()
+    {
+        $produkList = DB::table('produk')->selectRaw("CONCAT(id_produk, ' - ', nama_produk) AS label_produk")->pluck('label_produk')->toArray();
+        $kategoriList = DB::table('lokasi')->distinct()->orderBy('kategori')->pluck('kategori')->toArray();
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Template');
+
+        $headers = ['nama_produk', 'jenis_produk', 'kuantiti', 'lokasi_block', 'lokasi_line', 'batch', 'best_before'];
+        $sheet->fromArray($headers, NULL, 'A1');
+
+        $headerStyle = $sheet->getStyle('A1:G1');
+        $headerStyle->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
+        $headerStyle->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF191970');
+
+        $dataSheet = $spreadsheet->createSheet();
+        $dataSheet->setTitle('DataRef');
+        foreach ($produkList as $index => $produk) {
+            $dataSheet->setCellValue('A'.($index + 1), $produk);
+        }
+        foreach ($kategoriList as $index => $kategori) {
+            $dataSheet->setCellValue('B'.($index + 1), $kategori);
+        }
+        $dataSheet->setSheetState(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet::SHEETSTATE_HIDDEN);
+
+        $produkRowCount = count($produkList);
+        $kategoriRowCount = count($kategoriList);
+
+        for ($row = 2; $row <= 500; $row++) {
+            if ($produkRowCount > 0) {
+                $validation = $sheet->getCell('A'.$row)->getDataValidation();
+                $validation->setType(DataValidation::TYPE_LIST);
+                $validation->setErrorStyle(DataValidation::STYLE_STOP);
+                $validation->setAllowBlank(true);
+                $validation->setShowDropDown(true);
+                $validation->setErrorTitle('Input Error');
+                $validation->setError('Produk tidak valid. Silakan pilih dari dropdown.');
+                $validation->setFormula1('DataRef!$A$1:$A$'.$produkRowCount);
+            }
+            if ($kategoriRowCount > 0) {
+                $validation = $sheet->getCell('B'.$row)->getDataValidation();
+                $validation->setType(DataValidation::TYPE_LIST);
+                $validation->setErrorStyle(DataValidation::STYLE_STOP);
+                $validation->setAllowBlank(true);
+                $validation->setShowDropDown(true);
+                $validation->setErrorTitle('Input Error');
+                $validation->setError('Jenis produk tidak valid. Silakan pilih dari dropdown.');
+                $validation->setFormula1('DataRef!$B$1:$B$'.$kategoriRowCount);
+            }
+        }
+
+        foreach (range('A', 'G') as $columnID) {
+            $sheet->getColumnDimension($columnID)->setAutoSize(true);
+        }
+
+        $spreadsheet->setActiveSheetIndex(0);
+
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'template-stok-gudang.xlsx';
+
+        if (ob_get_length()) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="'.$filename.'"');
+        header('Cache-Control: max-age=0');
+
+        $writer->save('php://output');
+        exit;
+    }
+
+    public function importStock(Request $request)
+    {
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
+        $file = $request->file('file');
+
+        if ($idPenggunaLokasi === '' || $idPengguna <= 0 || ! $file || ! $file->isValid()) {
+            return $this->fail('id_pengguna_lokasi, id_pengguna & file wajib diisi');
+        }
+
+        $lookup = ['nama_produk', 'jenis_produk', 'kuantiti', 'lokasi_block', 'lokasi_line', 'batch', 'best_before'];
+        $col = [];
+        $parsed = $this->bacaFileSpreadsheet($file->getRealPath(), strtolower($file->getClientOriginalExtension()));
+
+        if (empty($parsed['header'])) {
+            return $this->fail('File kosong atau header tidak ditemukan');
+        }
+
+        foreach ($parsed['header'] as $i => $h) {
+            $name = strtolower(trim((string) $h));
+            if (in_array($name, $lookup, true)) {
+                $col[$name] = $i;
+            }
+        }
+
+        $missing = array_values(array_diff($lookup, array_keys($col)));
+        if (! empty($missing)) {
+            return $this->fail('Kolom wajib tidak ditemukan di file: '.implode(', ', $missing));
+        }
+
+        $errors = [];
+        $rows = [];
+
+        foreach ($parsed['rows'] as $idx => $row) {
+            $lineNo = $idx + 1;
+            $cell = fn ($name) => trim((string) ($row[$col[$name]] ?? ''));
+
+            $namaProduk = $cell('nama_produk');
+            $kategori = strtoupper($cell('jenis_produk'));
+            $jumlah = (int) $cell('kuantiti');
+            $kodeBlock = strtoupper($cell('lokasi_block'));
+            $noLine = (int) $cell('lokasi_line');
+            $batch = $cell('batch');
+            $bestBefore = $cell('best_before');
+
+            $emptyRow = $namaProduk === '' && $kategori === '' && $jumlah <= 0
+                && $kodeBlock === '' && $noLine <= 0 && $batch === '' && $bestBefore === '';
+            if ($emptyRow) {
+                continue;
+            }
+
+            if ($namaProduk === '') {
+                $errors[] = "Baris $lineNo: nama_produk wajib";
+                continue;
+            }
+            if ($jumlah <= 0) {
+                $errors[] = "Baris $lineNo: kuantiti harus > 0";
+                continue;
+            }
+            if ($kodeBlock === '' || $noLine <= 0) {
+                $errors[] = "Baris $lineNo: lokasi_block & lokasi_line wajib (contoh: A | 1)";
+                continue;
+            }
+
+            $idProduk = null;
+            if (preg_match('/^\s*(\d+)\s*-/', $namaProduk, $m)) {
+                $idProduk = (int) $m[1];
+                if (! DB::table('produk')->where('id_produk', $idProduk)->exists()) {
+                    $idProduk = null;
+                }
+            }
+            if (! $idProduk) {
+                $idProduk = DB::table('produk')->where('nama_produk', $namaProduk)->value('id_produk');
+            }
+            if (! $idProduk) {
+                $errors[] = "Baris $lineNo: produk '$namaProduk' tidak ditemukan";
+                continue;
+            }
+
+            $rows[] = [
+                'id_produk' => $idProduk,
+                'kategori' => $kategori,
+                'jumlah' => $jumlah,
+                'kode_block' => $kodeBlock,
+                'no_line' => $noLine,
+                'batch' => $batch,
+                'best_before' => $bestBefore,
+                'line_no' => $lineNo,
+            ];
+        }
+
+        if (! empty($errors)) {
+            return $this->fail('Terdapat kesalahan di file (tidak ada data yang disimpan):'."\n".implode("\n", array_slice($errors, 0, 20)));
+        }
+
+        if (empty($rows)) {
+            return $this->fail('Tidak ada baris data yang valid di file');
+        }
+
+        // Batch + best before diselesaikan sebelum transaksi agar konsisten.
+        $final = [];
+        foreach ($rows as $r) {
+            $namaProdukRow = DB::table('produk')->where('id_produk', $r['id_produk'])->value('nama_produk');
+            $satuan = DB::table('produk')->where('id_produk', $r['id_produk'])->value('satuan');
+
+            $bestBefore = $this->normalizeBestBefore($r['best_before']);
+            $batch = $r['batch'];
+
+            if (in_array($r['id_produk'], self::PRODUK_TANPA_BATCH, true)) {
+                $bestBefore = '9999-12-31';
+                $batch = '-';
+            }
+
+            $tanggalMasuk = date('Y-m-d');
+
+            if ($bestBefore === '') {
+                $errors[] = "Baris {$r['line_no']}: format/isi best_before tidak valid";
+                continue;
+            }
+
+            $final[] = array_merge($r, [
+                'nama_produk' => $namaProdukRow,
+                'satuan' => $satuan,
+                'best_before' => $bestBefore,
+                'batch' => $batch,
+                'tanggal_masuk' => $tanggalMasuk,
+            ]);
+        }
+
+        if (! empty($errors)) {
+            return $this->fail('Terdapat kesalahan di file (tidak ada data yang disimpan):'."\n".implode("\n", array_slice($errors, 0, 20)));
+        }
+
+        $stat = [];
+        try {
+            DB::transaction(function () use ($final, $idPenggunaLokasi, $idPengguna, &$stat) {
+                foreach ($final as $r) {
+                    $bestBefore = $r['best_before'] === '' ? null : $r['best_before'];
+                    $lineLabel = $r['kode_block'].'-'.$r['no_line'];
+
+                    $deeps = $this->deepsLine($idPenggunaLokasi, $r['kode_block'], $r['no_line']);
+                    if (empty($deeps)) {
+                        throw new Exception("Baris {$r['line_no']}: line $lineLabel tidak ditemukan di layout");
+                    }
+
+                    $need = $r['jumlah'];
+                    $alokasi = [];
+                    foreach ($deeps as $dp) {
+                        if ($need <= 0) {
+                            break;
+                        }
+                        $free = (int) $dp->kapasitas - (int) $dp->terisi;
+                        if ($free <= 0) {
+                            continue;
+                        }
+                        $take = min($free, $need);
+                        $alokasi[] = ['id_deep' => (int) $dp->id_deep, 'jumlah' => $take];
+                        $need -= $take;
+                    }
+
+                    if ($need > 0) {
+                        throw new Exception("Baris {$r['line_no']}: kapasitas line $lineLabel tidak cukup (sisa $need)");
+                    }
+
+                    $jumlahLine = $r['jumlah'];
+
+                    $idBm = DB::table('barang_masuk')->insertGetId([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_pengguna' => $idPengguna,
+                        'id_produk' => $r['id_produk'],
+                        'nama_produk' => $r['nama_produk'],
+                        'jumlah' => $jumlahLine,
+                        'satuan' => $r['satuan'],
+                        'tanggal_masuk' => $r['tanggal_masuk'],
+                        'tipe_penerimaan' => $r['kategori'] === 'XWH' ? 'Primary XWH' : 'Primary',
+                        'best_before' => $bestBefore,
+                        'batch' => $r['batch'],
+                        'batch_sekarang' => $r['batch'],
+                        'asal_pabrik' => '-',
+                        'no_dn' => '',
+                        'nama_driver' => null,
+                        'no_mobil' => '-',
+                        'catatan' => 'Import template stock',
+                        'lokasi_block' => $lineLabel,
+                        'created_at' => DB::raw('NOW()'),
+                    ]);
+
+                    $idStok = DB::table('stok_gudang')->insertGetId([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_produk' => $r['id_produk'],
+                        'nama_produk' => $r['nama_produk'],
+                        'id_barang_masuk' => $idBm,
+                        'jumlah_sisa' => $jumlahLine,
+                        'batch' => $r['batch'],
+                        'satuan' => $r['satuan'],
+                        'best_before' => $bestBefore,
+                        'lokasi_block' => $lineLabel,
+                        'created_at' => DB::raw('NOW()'),
+                    ]);
+
+                    foreach ($alokasi as $det) {
+                        DB::table('stok_gudang_deep')->insert([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_stok_header' => $idStok,
+                            'id_deep' => $det['id_deep'],
+                            'jumlah' => $det['jumlah'],
+                            'best_before' => $bestBefore,
+                            'batch' => $r['batch'],
+                            'lokasi_block' => $lineLabel,
+                            'created_at' => DB::raw('NOW()'),
+                        ]);
+                    }
+
+                    $stat[] = ['line' => $lineLabel, 'qty' => $jumlahLine];
+                }
+            });
+        } catch (Throwable $e) {
+            return $this->fail('Gagal mengimpor stock: '.$e->getMessage(), 500);
+        }
+
+        return $this->okMessage('Stock berhasil diimpor ke layout', [
+            'detail' => $stat,
+            'jumlah_line' => count($stat),
         ]);
     }
 
@@ -2000,5 +2305,42 @@ class BarangMasukController extends Controller
             return '';
         }
         return $dt->format('ymd').$idPlant;
+    }
+
+    private function normalizeBestBefore(string $raw): string
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return '';
+        }
+
+        // Serial Excel (jumlah hari sejak 1899-12-30).
+        if (is_numeric($raw)) {
+            $days = (int) $raw;
+            if ($days <= 0 || $days > 100000) {
+                return '';
+            }
+            return (new DateTime('1899-12-30'))->modify("+{$days} days")->format('Y-m-d');
+        }
+
+        // dd/mm/yyyy atau yyyy/mm/dd atau yyyy-mm-dd (+ waktu opsional).
+        $txt = str_replace('/', '-', $raw);
+        foreach (['Y-m-d H:i:s', 'Y-m-d', 'd-m-Y H:i:s', 'd-m-Y'] as $fmt) {
+            $dt = DateTime::createFromFormat($fmt, $txt);
+            if ($dt !== false) {
+                $err = DateTime::getLastErrors();
+                if (is_array($err) && ($err['warning_count'] ?? 0) === 0 && ($err['error_count'] ?? 0) === 0) {
+                    return $dt->format('Y-m-d');
+                }
+            }
+        }
+
+        // Cadangan terakhir via strtotime (mis. "May 9, 2026").
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return '';
+        }
+
+        return date('Y-m-d', $ts);
     }
 }
