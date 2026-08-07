@@ -51,10 +51,4 @@ Legend: ✓ = bisa mengakses, ✓(R) = hanya lihat/read-only, ✗ = tidak bisa.
 ## Catatan Enforcements
 
 - **Frontend:** menu disembunyikan sesuai `get_menus_by_role()`.
-- **Backend API** (`sailendra_backend/`): aksi tulis master data dicek `role` — hanya `Supervisor` & `SuperAdmin` yang lolos (`Hak akses ditolak`).
-- **Controller:** endpoint sensitif menolak role lain via `show_error(403)`.
-  - Edit/hapus/transfer inbound → `Supervisor`/`SuperAdmin` (`Inbound.php`).
-  - Stock opname approve → `Supervisor`/`SuperAdmin` (`Stock_opname.php:248`).
-  - Import outbound historical → `SuperAdmin` saja (`Outbound.php:1600`).
-  - Manajemen pengguna → `Supervisor`/`SuperAdmin` (`Dashboard.php:134`).
-- **Upload data layout gudang & upload data stok:** fitur tersedia di aplikasi Laravel; **belum** diimplementasikan di arsitektur CodeIgniter ini. Hak aksesnya: **SuperAdmin only**.
+

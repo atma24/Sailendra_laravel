@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { isMultiRole, useSession } from "@/lib/auth";
+import { isMultiRole, SUPERADMIN_ROLES, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 
 type LokasiRow = { id_lokasi: number; nama_lokasi?: string; kategori?: string };
@@ -519,14 +519,16 @@ export default function FormLayoutGudangPage() {
       {/* HEADER PAGE + UPLOAD EXCEL BUTTON */}
       <div className="page-header-actions">
         <h2 className="page-title">Buat Layout Gudang</h2>
-        <button 
-          type="button" 
-          className="upload-excel-btn" 
-          onClick={() => setUploadModalOpen(true)}
-        >
-          <i className="bi bi-file-earmark-excel"></i>
-          <span>Upload Excel</span>
-        </button>
+        {SUPERADMIN_ROLES.includes(session?.user.role || "") && (
+          <button 
+            type="button" 
+            className="upload-excel-btn" 
+            onClick={() => setUploadModalOpen(true)}
+          >
+            <i className="bi bi-file-earmark-excel"></i>
+            <span>Upload Excel</span>
+          </button>
+        )}
       </div>
 
       <div className="layout-form-page">

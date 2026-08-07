@@ -65,6 +65,7 @@ export function isMultiRole(role: string) {
 }
 
 export const SUPERVISOR_ROLES = ["Supervisor", "SuperAdmin"];
+export const SUPERADMIN_ROLES = ["SuperAdmin"];
 export const MASTER_DATA_ROLES = ["Supervisor", "Support", "SuperAdmin"];
 
 // Parameter lokasi untuk panggilan API.

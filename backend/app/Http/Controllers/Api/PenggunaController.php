@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Pengguna;
 use App\Models\PenggunaLokasi;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 
 class PenggunaController extends Controller
 {
@@ -82,7 +83,7 @@ class PenggunaController extends Controller
         $pengguna = Pengguna::create([
             'id_pengguna_lokasi' => $idPenggunaLokasi,
             'username' => $username,
-            'password' => $pass,
+            'password' => Hash::make($pass),
             'role' => $role,
             'status' => $status,
             'created_at' => now(),
@@ -165,7 +166,7 @@ class PenggunaController extends Controller
         }
 
         if ($pass !== null && $pass !== '') {
-            $pengguna->password = $pass;
+            $pengguna->password = Hash::make($pass);
             $dirty = true;
         }
 

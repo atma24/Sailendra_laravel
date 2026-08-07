@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { isMultiRole, SUPERVISOR_ROLES, useSession } from "@/lib/auth";
+import { isMultiRole, SUPERADMIN_ROLES, SUPERVISOR_ROLES, useSession } from "@/lib/auth";
 import LineEditModal, { type BbItem, type EditLine } from "@/components/LineEditModal";
 import UploadModal from "@/components/UploadModal";
 
@@ -567,13 +567,15 @@ export default function LayoutGudangPage() {
           </div>
         )}
 
-        <div className="warehouse-card" style={{ padding: "8px", display: "flex", justifyContent: "flex-end" }}>
-          <button type="button" className="warehouse-upload-btn" style={{ border: "none", cursor: "pointer" }}
-            onClick={() => setShowUpload(true)}>
-            <i className="bi bi-file-earmark-excel"></i>
-            Upload Stock
-          </button>
-        </div>
+        {SUPERADMIN_ROLES.includes(session?.user.role || "") && (
+          <div className="warehouse-card" style={{ padding: "8px", display: "flex", justifyContent: "flex-end" }}>
+            <button type="button" className="warehouse-upload-btn" style={{ border: "none", cursor: "pointer" }}
+              onClick={() => setShowUpload(true)}>
+              <i className="bi bi-file-earmark-excel"></i>
+              Upload Stock
+            </button>
+          </div>
+        )}
 
         <div className="warehouse-card warehouse-tabs-card">
           {!lokasiList.length ? (
