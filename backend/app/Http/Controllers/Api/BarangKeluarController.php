@@ -990,6 +990,11 @@ $in = $request->all();
             return $this->konfirmasiOutbound($idBarangKeluar, $idPenggunaLokasi, $in['waktu_mulai_input'] ?? null, $in['durasi_detik'] ?? null);
         }
 
+        // 6c1. TAMBAH ITEM PRODUK BARU (STATUS DRAFT)
+        if ($aksi === 'tambah_item_draft') {
+            return $this->tambahItemBaruDraft($idBarangKeluar, $idPenggunaLokasi, (int) ($in['id_pengguna'] ?? 0), (int) ($in['id_produk'] ?? 0), (int) ($in['jumlah'] ?? 0), trim($in['satuan'] ?? ''), trim($in['so_number'] ?? ''));
+        }
+
         // 6c1. TAMBAH ITEM PRODUK BARU (STATUS SELESAI)
         if ($modeTambahItemSelesai) {
             $idRef = (int) ($in['id_barang_keluar_ref'] ?? 0);
@@ -1443,6 +1448,40 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
                 : 'Berhasil mengurangi '.abs($selisih).' item. Stok telah dikembalikan ke blok asal.';
 
             return $this->ok(['id_barang_keluar_baru' => $idBarangKeluarBaru, 'selisih' => $selisih], $msg);
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            return $this->fail($e->getMessage(), 500);
+        }
+    }
+
+    private function tambahItemBaruDraft($idRef, $idLokasi, $idPengguna, $idProduk, $jumlah, $satuan, $soNumber)
+    {
+        $old = DB::table('barang_keluar')->where('id_barang_keluar', $idRef)->where('id_pengguna_lokasi', $idLokasi)->first();
+        if (! $old) {
+            return $this->fail('Referensi outbound tidak ditemukan.');
+        }
+        $namaProduk = DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk');
+        if (! $namaProduk) {
+            return $this->fail('Produk tidak ditemukan di database.');
+        }
+
+        DB::beginTransaction();
+        try {
+            $idBaru = DB::table('barang_keluar')->insertGetId([
+                'gin_no' => $old->gin_no, 'id_pengguna_lokasi' => $idLokasi, 'id_pengguna' => $idPengguna,
+                'id_produk' => $idProduk, 'nama_produk' => $namaProduk,
+                'tipe_pengeluaran' => $old->tipe_pengeluaran, 'tujuan' => $old->tujuan, 'nama_driver' => $old->nama_driver,
+                'no_mobil' => $old->no_mobil, 'jumlah' => $jumlah,
+                'satuan' => $satuan,
+                'tanggal_keluar' => $old->tanggal_keluar, 'tanggal_pengiriman' => $old->tanggal_pengiriman,
+                'no_dn' => $old->no_dn, 'so_number' => $soNumber ?: null, 'ritase' => $old->ritase,
+                'status' => 'Draft',
+            ]);
+
+            DB::commit();
+
+            return $this->ok(['id_barang_keluar' => $idBaru], 'Item draft berhasil ditambahkan.');
         } catch (Exception $e) {
             DB::rollBack();
 

@@ -94,4 +94,29 @@ class AuthController extends Controller
         
         return $this->okMessage('Logout berhasil');
     }
+
+    public function me(Request $request)
+    {
+        $user = $request->user();
+
+        $row = Pengguna::query()
+            ->leftJoin('pengguna_lokasi as pl', 'pl.id_pengguna_lokasi', '=', 'pengguna.id_pengguna_lokasi')
+            ->select(
+                'pengguna.id_pengguna',
+                'pengguna.id_pengguna_lokasi',
+                'pengguna.username',
+                'pengguna.role',
+                'pengguna.status',
+                'pengguna.created_at',
+                'pl.nama_pengguna_lokasi'
+            )
+            ->where('pengguna.id_pengguna', $user->id_pengguna)
+            ->first();
+
+        if (! $row || $row->status !== 'Aktif') {
+            return $this->fail('Sesi tidak valid.', 401);
+        }
+
+        return $this->ok($row->toArray(), 'Sesi valid');
+    }
 }

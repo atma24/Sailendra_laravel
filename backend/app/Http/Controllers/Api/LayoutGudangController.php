@@ -932,6 +932,20 @@ class LayoutGudangController extends Controller
         return $row ? (array) $row : null;
     }
 
+    private function lokasiDariDeep(string $idPenggunaLokasi, int $idDeep): ?array
+    {
+        $row = DB::table('deep as d')
+            ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+            ->join('line as ln', 'ln.id_line', '=', 'lv.id_line')
+            ->join('block as b', 'b.id_block', '=', 'ln.id_block')
+            ->where('d.id_deep', $idDeep)
+            ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->select('d.id_deep', 'lv.id_level', 'ln.id_line', 'b.id_block', 'b.id_lokasi')
+            ->first();
+
+        return $row ? (array) $row : null;
+    }
+
     private function upsertPrioritas(string $idPenggunaLokasi, int $idProduk, array $loc, int $idDeep): void
     {
         DB::table('prioritas_lokasi_produk')->insertOrIgnore([

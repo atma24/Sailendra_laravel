@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 
@@ -85,7 +85,7 @@ const css = `
 .od-add-item-btn { min-height: 30px; border-radius: 8px; padding: 0 10px; background: var(--primary); color: #fff; border: none; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .od-modal-note { background: #f4f6ff; border: 1px solid #d7dcff; color: #191970; border-radius: 9px; padding: 8px 9px; font-size: 11px; font-weight: 800; margin-bottom: 10px; }
 .od-item-card hr { margin: 9px 0 0; border-color: #dfe3ee; }
-.inbound-dialog { border: 0; border-radius: 12px; padding: 0; width: min(440px, calc(100% - 30px)); max-height: 85vh; overflow: hidden; box-shadow: 0 10px 30px rgba(15,23,42,0.15); background: #FFFFFF; }
+.inbound-dialog { border: 0; border-radius: 12px; padding: 0; width: min(440px, calc(100% - 30px)); max-height: 85vh; overflow: hidden; box-shadow: 0 10px 30px rgba(15,23,42,0.15); background: #FFFFFF; position: fixed; inset: 0; margin: auto; }
 .dialog-box { padding: 20px 24px; max-height: 85vh; overflow-y: auto; }
 .dialog-title { font-size: 16px; font-weight: 700; margin: 0 0 8px; color: var(--text-main); }
 .dialog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -135,6 +135,7 @@ export default function OutboundDetailPage() {
   const params = useParams<{ tanggal: string }>();
   const searchParams = useSearchParams();
   const session = useSession();
+  const router = useRouter();
   const multi = !!session && isMultiRole(session.user.role);
 
   const tanggal = decodeURIComponent(params.tanggal || "");
@@ -303,7 +304,6 @@ export default function OutboundDetailPage() {
         id_pengguna_lokasi: String(showItem.id_pengguna_lokasi || idPenggunaLokasi()),
         jumlah: j,
         jumlah_item: j,
-        status,
         mode_lokasi: iMode,
       };
       if (isSelesai) {
@@ -403,6 +403,8 @@ export default function OutboundDetailPage() {
         payload.catatan_perubahan = aCatatan;
         payload.diperbarui_oleh = session.user.username;
       } else {
+        payload.aksi = "tambah_item_draft";
+        payload.id_barang_keluar = firstId;
         payload.status = "Draft";
       }
       await apiPost("/barang-keluar/update", payload);
@@ -441,7 +443,7 @@ export default function OutboundDetailPage() {
       }
       notify("success", "Semua item outbound berhasil dihapus.");
       setConfirmAll(false);
-      window.location.href = backHref;
+      router.push(backHref);
     } catch (e) {
       notify("error", (e as Error).message || "Gagal menghapus semua item.");
     } finally { setBusy(false); }
@@ -706,7 +708,7 @@ export default function OutboundDetailPage() {
             </div>
             {isSelesai && (
               <div className="od-modal-note">
-                Outbound sudah selesai. Sistem akan menghitung selisih jumlah baru dengan jumlah saat ini, lalu membuat "Card Penyesuaian" otomatis.
+                Outbound sudah selesai. Sistem akan menghitung selisih jumlah baru dengan jumlah saat ini, lalu membuat &quot;Card Penyesuaian&quot; otomatis.
               </div>
             )}
             <div className="dialog-grid">

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import { apiGet } from "@/lib/api";
 import { clearSession, getSession, isMultiRole, type Session } from "@/lib/auth";
 import "../app-shell.css";
 
@@ -41,12 +42,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace("/login");
       return;
     }
-    if (
-      isMultiRole(auth.session.user.role) &&
-      (auth.session.lokasi === "all" || auth.session.lokasi.length === 0)
-    ) {
-      router.replace("/pilih-lokasi");
-    }
+    apiGet("/me").then(
+      () => {
+        if (
+          isMultiRole(auth.session!.user.role) &&
+          (auth.session!.lokasi === "all" || auth.session!.lokasi.length === 0)
+        ) {
+          router.replace("/pilih-lokasi");
+        }
+      },
+      () => {
+        clearSession();
+        router.replace("/login");
+      }
+    );
   }, [router, auth]);
 
   if (!auth.loaded || !auth.session) return null;

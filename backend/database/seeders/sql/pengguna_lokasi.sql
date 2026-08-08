@@ -1,16 +1,2 @@
-INSERT IGNORE INTO `pengguna_lokasi` (`id_pengguna_lokasi`, `nama_pengguna_lokasi`, `created_at`) VALUES
-('9019', 'LAMPUNG DC TIV', '2026-04-08 09:15:14'),
-('9021', 'KAWASAN DC TIV', '2026-04-08 09:15:14'),
-('9024', 'CIKARANG DC TIV', '2026-04-08 09:15:14'),
-('9025', 'PALAPA DC TIV', '2026-04-08 09:15:14'),
-('9026', 'CIPUTAT DC TIV', '2026-04-08 09:15:14'),
-('9027', 'CIBINONG DC TIV', '2026-04-08 09:15:14'),
-('9028', 'BANDUNG DC TIV', '2026-04-08 09:15:14'),
-('9029', 'SEMARANG DC TIV', '2026-04-08 09:15:14'),
-('9030', 'YOGYAKARTA DC TIV', '2026-04-08 09:15:14'),
-('9031', 'SOLO DC TIV', '2026-04-08 09:15:14'),
-('9032', 'RUNGKUT DC TIV', '2026-04-08 09:15:14'),
-('9033', 'BALI DC TIV', '2026-04-08 09:15:14'),
-('9034', 'MANADO DC TIV', '2026-04-08 09:15:14'),
-('9035', 'MEDAN DC TIV', '2026-04-08 09:15:14'),
+INSERT INTO `pengguna_lokasi` (`id_pengguna_lokasi`, `nama_pengguna_lokasi`, `created_at`) VALUES
 ('9061', 'JATIASIH DC TIV', '2026-04-08 09:15:14');

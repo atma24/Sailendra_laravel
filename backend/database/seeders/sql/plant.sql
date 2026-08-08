@@ -1,4 +1,4 @@
-INSERT IGNORE INTO `plant` (`id_plant`, `nama_plant`, `created_at`) VALUES
+INSERT INTO `plant` (`id_plant`, `nama_plant`, `created_at`) VALUES
 ('9007', '9000 ID AIRMADIDI Plant TIV', '2026-04-20 20:06:25'),
 ('9008', '9000 ID LAMPUNG Plant TIV', '2026-04-20 20:06:25'),
 ('9009', '9000 ID SUBANG Plant TIV', '2026-04-20 20:06:25'),

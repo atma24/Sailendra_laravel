@@ -39,7 +39,7 @@ type ManualRow = {
   nama_produk: string;
   lokasi_block: string;
   best_before: string;
-  stok_fisik: number;
+  stok_fisik: number | "";
 };
 
 const angka = (v: unknown) => {
@@ -52,17 +52,12 @@ const fmtPlus = (n: number) => (n >= 0 ? "+" : "") + nf(n);
 const opKey = (x: { id_produk?: number; lokasi_block?: string; best_before?: string }) =>
   `${x.id_produk}|${x.lokasi_block}|${x.best_before}`;
 const opx = (x: { id_produk?: number; lokasi_block?: string; best_before?: string }) => opKey(x);
-const fullTotal = (rows: DetailRow[]) => rows.reduce(
-  (acc, r) => ({ s: acc.s + r.stok_sistem, f: acc.f + r.stok_fisik, se: acc.se + r.selisih }),
-  { s: 0, f: 0, se: 0 }
-);
 const blockOf = (loc: string) => {
   const l = norm(loc);
   if (l === "" || l === "-") return "Lainnya";
   return l.replace(/\s*-\s*\d+\s*$/, "");
 };
 const clsSelisih = (n: number) => (n < 0 ? "so-min" : n > 0 ? "so-pls" : "so-nol");
-const cacheB = (s: string) => s === " " ? " " : s;
 
 type Group = { name: string; rows: DetailRow[] };
 const groupRows = (rows: DetailRow[]) => {
@@ -177,7 +172,29 @@ export default function StockOpnamePage() {
         .then((r) => setProdukList(r.data || []))
         .catch((e) => setErr(e.message || "Gagal memuat produk."))
         .finally(() => setLoading(false));
-      setManualRows([{ id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 }]);
+      apiGet<CatalogRow[]>(`/stok-opname?mode=stok_catalog&${paramsOf().toString()}`)
+        .then((r) => {
+          const rows = r.data || [];
+          if (rows.length) {
+            const seen = new Set<number>();
+            const uniq: ManualRow[] = [];
+            rows.forEach((x) => {
+              if (seen.has(x.id_produk)) return;
+              seen.add(x.id_produk);
+              uniq.push({
+                id_produk: x.id_produk,
+                nama_produk: x.nama_produk,
+                lokasi_block: "",
+                best_before: "",
+                stok_fisik: "",
+              });
+            });
+            setManualRows(uniq);
+          } else {
+            setManualRows([{ id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]);
+          }
+        })
+        .catch(() => setManualRows([{ id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]));
     } else {
       setLoading(true);
       apiGet<CatalogRow[]>(`/stok-opname?mode=stok_catalog&${paramsOf().toString()}`)
@@ -317,7 +334,6 @@ export default function StockOpnamePage() {
 
   if (!session) return null;
 
-  const detailGroups = groupRows(detail);
   const canEdit = isEditable;
 
   const downloadForm = async () => {
@@ -553,33 +569,35 @@ export default function StockOpnamePage() {
 }
 
 function PreviewTable({ rows }: { rows: DetailRow[] }) {
-  const groups = groupRows(rows);
-  let gs = 0, gf = 0, gse = 0;
+  const groups = groupRows(rows).map((g) => ({
+    ...g,
+    s: g.rows.reduce((a, r) => a + r.stok_sistem, 0),
+    f: g.rows.reduce((a, r) => a + r.stok_fisik, 0),
+    se: g.rows.reduce((a, r) => a + r.selisih, 0),
+  }));
+  const gs = groups.reduce((a, g) => a + g.s, 0);
+  const gf = groups.reduce((a, g) => a + g.f, 0);
+  const gse = groups.reduce((a, g) => a + g.se, 0);
   return (
     <div className="so-table-wrap">
       <table className="so-table">
         <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th><th>Stok Online</th><th>Stok Fisik</th><th>Selisih</th></tr></thead>
         <tbody>
-          {groups.map((g) => {
-            let bs = 0, bf = 0, bse = 0;
-            g.rows.forEach((r) => { bs += r.stok_sistem; bf += r.stok_fisik; bse += r.selisih; });
-            gs += bs; gf += bf; gse += bse;
-            return (
-              <>
-                {g.rows.map((r, i) => (
-                  <tr key={i}>
-                    <td>{r.nama_produk}</td><td>{r.lokasi_block}</td><td>{r.best_before}</td>
-                    <td>{nf(r.stok_sistem)}</td><td>{nf(r.stok_fisik)}</td>
-                    <td className={clsSelisih(r.selisih)}>{fmtPlus(r.selisih)}</td>
-                  </tr>
-                ))}
-                <tr className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
-                  <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
-                  <td>{nf(bs)}</td><td>{nf(bf)}</td><td className={clsSelisih(bse)}>{fmtPlus(bse)}</td>
+          {groups.map((g) => (
+            <>
+              {g.rows.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.nama_produk}</td><td>{r.lokasi_block}</td><td>{r.best_before}</td>
+                  <td>{nf(r.stok_sistem)}</td><td>{nf(r.stok_fisik)}</td>
+                  <td className={clsSelisih(r.selisih)}>{fmtPlus(r.selisih)}</td>
                 </tr>
-              </>
-            );
-          })}
+              ))}
+              <tr className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
+                <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
+                <td>{nf(g.s)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
+              </tr>
+            </>
+          ))}
           <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
             <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gs)}</td><td>{nf(gf)}</td><td className={clsSelisih(gse)}>{fmtPlus(gse)}</td>
           </tr>
@@ -596,8 +614,15 @@ function DetailTable({ rows, editable, vals, setVals, onSave }: {
   setVals: (v: Record<string, { fisik: string; alasan: string }>) => void;
   onSave: (d: DetailRow) => void;
 }) {
-  const groups = groupRows(rows);
-  let gs = 0, gf = 0, gse = 0;
+  const groups = groupRows(rows).map((g) => ({
+    ...g,
+    s: g.rows.reduce((a, r) => a + r.stok_sistem, 0),
+    f: g.rows.reduce((a, r) => a + r.stok_fisik, 0),
+    se: g.rows.reduce((a, r) => a + r.selisih, 0),
+  }));
+  const gs = groups.reduce((a, g) => a + g.s, 0);
+  const gf = groups.reduce((a, g) => a + g.f, 0);
+  const gse = groups.reduce((a, g) => a + g.se, 0);
   return (
     <div className="so-table-wrap">
       <table className="so-table">
@@ -610,49 +635,44 @@ function DetailTable({ rows, editable, vals, setVals, onSave }: {
           </tr>
         </thead>
         <tbody>
-          {groups.map((g) => {
-            let bs = 0, bf = 0, bse = 0;
-            g.rows.forEach((r) => { bs += r.stok_sistem; bf += r.stok_fisik; bse += r.selisih; });
-            gs += bs; gf += bf; gse += bse;
-            return (
-              <>
-                {g.rows.map((d, i) => {
-                  const ev = vals[d.id_opname] ?? { fisik: String(d.stok_fisik), alasan: d.alasan ?? "" };
-                  return (
-                    <tr key={d.id_opname}>
-                      <td>{d.nama_produk}</td><td>{d.lokasi_block}</td><td>{d.best_before}</td>
-                      <td>{nf(d.stok_sistem)}</td>
-                      <td style={{ width: 70 }}>
-                        {editable ? (
-                          <input type="number" className="so-input" value={ev.fisik}
-                            onChange={(e) => setVals({ ...vals, [d.id_opname]: { ...ev, fisik: e.target.value } })} />
-                        ) : (
-                          <span style={{ fontWeight: 700 }}>{nf(d.stok_fisik)}</span>
-                        )}
-                      </td>
-                      <td className={clsSelisih(d.selisih)}>{fmtPlus(d.selisih)}</td>
-                      <td style={{ width: 140 }}>
-                        {editable ? (
-                          <input type="text" className="so-input" value={ev.alasan} placeholder="Isi catatan..."
-                            onChange={(e) => setVals({ ...vals, [d.id_opname]: { ...ev, alasan: e.target.value } })} />
-                        ) : (
-                          <span style={{ color: "#8a93a3" }}>{norm(d.alasan) || "-"}</span>
-                        )}
-                      </td>
-                      <td>{d.stok_sebelumnya !== null ? nf(d.stok_sebelumnya) : "-"}</td>
-                      <td><div style={{ maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }}>{norm(d.dirubah_oleh) || "-"}</div></td>
-                      {editable && <td><button type="button" className="btn-aksi" onClick={() => onSave(d)}><i className="bi bi-save"></i></button></td>}
-                    </tr>
-                  );
-                })}
-                <tr className="so-block" style={{ background: "#eef0ff", fontWeight: 900 }}>
-                  <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
-                  <td>{nf(bs)}</td><td>{nf(bf)}</td><td className={clsSelisih(bse)}>{fmtPlus(bse)}</td>
-                  <td colSpan={editable ? 4 : 3}></td>
-                </tr>
-              </>
-            );
-          })}
+          {groups.map((g) => (
+            <>
+              {g.rows.map((d) => {
+                const ev = vals[d.id_opname] ?? { fisik: String(d.stok_fisik), alasan: d.alasan ?? "" };
+                return (
+                  <tr key={d.id_opname}>
+                    <td>{d.nama_produk}</td><td>{d.lokasi_block}</td><td>{d.best_before}</td>
+                    <td>{nf(d.stok_sistem)}</td>
+                    <td style={{ width: 70 }}>
+                      {editable ? (
+                        <input type="number" className="so-input" value={ev.fisik}
+                          onChange={(e) => setVals({ ...vals, [d.id_opname]: { ...ev, fisik: e.target.value } })} />
+                      ) : (
+                        <span style={{ fontWeight: 700 }}>{nf(d.stok_fisik)}</span>
+                      )}
+                    </td>
+                    <td className={clsSelisih(d.selisih)}>{fmtPlus(d.selisih)}</td>
+                    <td style={{ width: 140 }}>
+                      {editable ? (
+                        <input type="text" className="so-input" value={ev.alasan} placeholder="Isi catatan..."
+                          onChange={(e) => setVals({ ...vals, [d.id_opname]: { ...ev, alasan: e.target.value } })} />
+                      ) : (
+                        <span style={{ color: "#8a93a3" }}>{norm(d.alasan) || "-"}</span>
+                      )}
+                    </td>
+                    <td>{d.stok_sebelumnya !== null ? nf(d.stok_sebelumnya) : "-"}</td>
+                    <td><div style={{ maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }}>{norm(d.dirubah_oleh) || "-"}</div></td>
+                    {editable && <td><button type="button" className="btn-aksi" onClick={() => onSave(d)}><i className="bi bi-save"></i></button></td>}
+                  </tr>
+                );
+              })}
+              <tr className="so-block" style={{ background: "#eef0ff", fontWeight: 900 }}>
+                <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
+                <td>{nf(g.s)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
+                <td colSpan={editable ? 4 : 3}></td>
+              </tr>
+            </>
+          ))}
           <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
             <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gs)}</td><td>{nf(gf)}</td>
             <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td><td colSpan={editable ? 4 : 3}></td>

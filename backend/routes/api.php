@@ -34,6 +34,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Logout endpoint (menghapus token)
     Route::post('/logout', [AuthController::class, 'logout']);
 
+    // Validasi sesi (token masih valid?)
+    Route::get('/me', [AuthController::class, 'me']);
+
     // ---------------------------------------------------------------------
     // RESTRICTED ACCESS (Hanya SuperAdmin & Supervisor)
     // ---------------------------------------------------------------------
