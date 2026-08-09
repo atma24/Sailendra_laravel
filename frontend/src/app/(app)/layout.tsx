@@ -46,7 +46,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       () => {
         if (
           isMultiRole(auth.session!.user.role) &&
-          (auth.session!.lokasi === "all" || auth.session!.lokasi.length === 0)
+          Array.isArray(auth.session!.lokasi) &&
+          auth.session!.lokasi.length === 0
         ) {
           router.replace("/pilih-lokasi");
         }
