@@ -1474,8 +1474,30 @@ class BarangMasukController extends Controller
         // Kandidat staging untuk Secondary (block RECEH / TRANSIT)
         $stagingCandidates = [];
         if ($isSecondary) {
-            $stagingCandidates = $this->baseDeep($idPenggunaLokasi)
-                ->whereRaw("(UPPER(TRIM(b.kode_block)) = 'RECEH' OR UPPER(TRIM(b.kode_block)) = 'TRANSIT')")
+            
+            // FIX BUG 3: Cari tau produk ini ada di lokasi mana (Gallon / SPS) 
+            // berdasarkan layout prioritasnya agar tidak nyasar ke transit area lain.
+            $lokasiPrioritasProduk = DB::table('prioritas_lokasi_produk as p')
+                ->leftJoin('block as b', 'b.id_block', '=', 'p.id_block')
+                ->leftJoin('line as ln', 'ln.id_line', '=', 'p.id_line')
+                ->leftJoin('block as b2', 'b2.id_block', '=', 'ln.id_block')
+                ->where('p.id_produk', $idProduk)
+                ->where('p.id_pengguna_lokasi', $idPenggunaLokasi)
+                ->selectRaw('COALESCE(p.id_lokasi, b.id_lokasi, b2.id_lokasi) as id_lokasi')
+                ->pluck('id_lokasi')
+                ->filter(fn($v) => !is_null($v) && $v > 0)
+                ->unique()
+                ->toArray();
+
+            $qStaging = $this->baseDeep($idPenggunaLokasi)
+                ->whereRaw("(UPPER(TRIM(b.kode_block)) = 'RECEH' OR UPPER(TRIM(b.kode_block)) = 'TRANSIT')");
+
+            // Filter block RECEH/TRANSIT agar HANYA di lokasi yang sesuai dengan area produk
+            if (!empty($lokasiPrioritasProduk)) {
+                $qStaging->whereIn('l.id_lokasi', $lokasiPrioritasProduk);
+            }
+
+            $stagingCandidates = $qStaging
                 ->orderByRaw("CASE WHEN UPPER(TRIM(b.kode_block)) = 'RECEH' THEN 0 WHEN UPPER(TRIM(b.kode_block)) = 'TRANSIT' THEN 1 ELSE 2 END ASC, b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC")
                 ->get()->map(fn ($r) => (array) $r)->all();
         }

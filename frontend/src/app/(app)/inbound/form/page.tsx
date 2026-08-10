@@ -44,6 +44,7 @@ const css = `
 .inbound-label { display: block; font-size: 10px; font-weight: 850; color: var(--text-main); margin-bottom: 4px; }
 .inbound-input, .inbound-select, .inbound-textarea { width: 100%; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; color: var(--text-main); font-size: 11px; font-weight: 750; outline: none; box-sizing: border-box; }
 .inbound-input, .inbound-select { height: 31px; padding: 0 10px; }
+.inbound-select { appearance: none; -webkit-appearance: none; -moz-appearance: none; }
 .inbound-textarea { min-height: 58px; padding: 7px 9px; resize: vertical; }
 .inbound-input:focus, .inbound-select:focus, .inbound-textarea:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
 .inbound-input:disabled, .inbound-input[readonly] { background: #f1f3f7; color: #777; }
@@ -217,7 +218,7 @@ export default function InboundFormPage() {
     return bb && kodePlant ? bb + kodePlant : "";
   };
 
-  const simpan = async () => {
+const simpan = async () => {
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
     if (tipe !== "Secondary" && tipe !== "REJECT" && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     if (norm(noMobil) === "") { notify("error", "No Mobil wajib diisi."); return; }
@@ -228,9 +229,16 @@ export default function InboundFormPage() {
     const failed: ResultItem[] = [];
     const waktuMulai = `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`;
 
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      const no = i + 1;
+    // FIX BUG 1: Urutkan proses simpan dari expired paling lama (terjauh) ke paling dekat.
+    // Yang paling lama akan diproses duluan dan masuk ke deep paling belakang.
+    const processingOrder = items.map((it, idx) => ({ it, idx })).sort((a, b) => {
+      const tA = new Date(a.it.best_before && a.it.best_before !== "-" ? a.it.best_before : "9999-12-31").getTime();
+      const tB = new Date(b.it.best_before && b.it.best_before !== "-" ? b.it.best_before : "9999-12-31").getTime();
+      return tB - tA; 
+    });
+
+    for (let { it, idx } of processingOrder) {
+      const no = idx + 1;
       if (it.id_produk <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Produk pada item ke-${no} belum dipilih.` }); continue; }
       if (angka(it.jumlah) <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Jumlah pada item ke-${no} belum benar.` }); continue; }
       if (!it.no_batch && norm(it.best_before) === "") { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Best before pada item ke-${no} belum diisi.` }); continue; }
@@ -241,12 +249,30 @@ export default function InboundFormPage() {
       const batch = batchPreview(it);
 
       try {
-        if (!it.alokasi.length) await autoBlock(i);
-        const refreshed = items[i];
-        if (!refreshed.alokasi.length) {
-          failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "Line produk tidak tersedia. Silakan buat layout baru atau tunggu line kembali." });
+        // FIX BUG 2: Jangan pakai state it.alokasi yang usang. 
+        // Selalu tarik ulang rekomendasi terbaru dari backend di tiap iterasi.
+        const rRec = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; message?: string }>(
+          "/barang-masuk/preview",
+          {
+            id_pengguna_lokasi: idPenggunaLokasi,
+            id_produk: it.id_produk,
+            qty: angka(it.jumlah),
+            best_before: bb,
+            tipe_penerimaan: tipe,
+          }
+        );
+
+        const recs = rRec.data?.rekomendasi || [];
+        const freshAlokasi = recs
+          .filter((x) => angka(x.id_deep) > 0 && angka(x.alokasi) > 0)
+          .map((x) => ({ id_deep: x.id_deep, jumlah: angka(x.alokasi) }));
+        const freshLokasiLine = rRec.data?.lokasi_line || (recs.length ? `${recs[0].kode_block}-${recs[0].nomor_line}` : "");
+
+        if (!freshAlokasi.length) {
+          failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "Line produk tidak tersedia atau kapasitas penuh. Silakan buat layout baru." });
           continue;
         }
+
         const r = await apiPost<{ lokasi_akhir?: { line: string; qty: number }[]; lokasi_akhir_str?: string }>("/barang-masuk", {
           id_pengguna: session.user.id_pengguna,
           id_pengguna_lokasi: idPenggunaLokasi,
@@ -262,11 +288,12 @@ export default function InboundFormPage() {
           no_mobil: noMobil,
           nama_driver: namaDriver || "Tanpa nama driver",
           catatan: catatan,
-          lokasi_line: refreshed.lokasi_line,
-          alokasi: refreshed.alokasi,
+          lokasi_line: freshLokasiLine,
+          alokasi: freshAlokasi,
           waktu_mulai_input: waktuMulai,
           durasi_detik: timer,
         });
+        
         const lokasi = r.data?.lokasi_akhir_str || r.data?.lokasi_akhir?.map((l) => l.line).join(", ") || "-";
         success.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "OK", lokasi, slot: lokasi });
       } catch (e) {
@@ -326,7 +353,13 @@ export default function InboundFormPage() {
         <div className="inbound-stack">
           <div>
             <label className="inbound-label">Tanggal Masuk</label>
-            <input type="date" className="inbound-input" value={tanggal} onChange={(e) => setTanggal(e.target.value)} />
+            <input 
+              type="date" 
+              className="inbound-input" 
+              value={tanggal} 
+              onChange={(e) => setTanggal(e.target.value)} 
+              onClick={(e) => e.currentTarget.showPicker && e.currentTarget.showPicker()} 
+            />
           </div>
           <div>
             <label className="inbound-label">Tipe Penerimaan</label>
@@ -364,11 +397,19 @@ export default function InboundFormPage() {
             <input type="number" min={1} className="inbound-input" placeholder="Jumlah" value={it.jumlah}
               onChange={(e) => updateItem(idx, { jumlah: e.target.value })} onBlur={() => autoBlock(idx)} />
 
-            <input type={isReject || it.no_batch ? "text" : "date"} className="inbound-input"
+            <input 
+              type={isReject || it.no_batch ? "text" : "date"} 
+              className="inbound-input"
               value={isReject ? "9999/99/99" : it.best_before}
               readOnly={isReject || it.no_batch}
               onChange={(e) => updateItem(idx, { best_before: e.target.value })}
-              placeholder={it.no_batch ? "Best Before" : "Best Before"} />
+              onClick={(e) => {
+                if (!isReject && !it.no_batch && e.currentTarget.showPicker) {
+                  e.currentTarget.showPicker();
+                }
+              }}
+              placeholder={it.no_batch ? "Best Before" : "Best Before"} 
+            />
 
             <PlantPicker plantList={plantList} value={it.asal_pabrik}
               disabled={it.no_batch}
