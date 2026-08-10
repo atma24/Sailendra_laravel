@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Block;
 use App\Models\Lokasi;
 use App\Models\PrioritasLokasiProduk;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -44,16 +45,16 @@ class BlockController extends Controller
 
     public function store(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
         $idLokasi = (int) $request->input('id_lokasi', 0);
         $kode = trim((string) $request->input('kode_block'));
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
 
-        if ($idPenggunaLokasi === '' || $idLokasi <= 0 || $kode === '') {
-            return $this->fail('id_pengguna_lokasi, id_lokasi & kode_block wajib');
+        if ($idLokasi <= 0 || $kode === '') {
+            return $this->fail('id_lokasi & kode_block wajib');
         }
 
         if (! Lokasi::whereKey($idLokasi)->exists()) {
@@ -76,10 +77,6 @@ class BlockController extends Controller
 
     public function update(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $idBlock = (int) ($request->input('id_block') ?? $id);
         $kode = $request->has('kode_block') ? trim((string) $request->input('kode_block')) : null;
 
@@ -102,16 +99,12 @@ class BlockController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idBlock = (int) ($request->input('id_block') ?? $id);
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
-        }
 
         if ($idBlock <= 0) {
             return $this->fail('id_block wajib');

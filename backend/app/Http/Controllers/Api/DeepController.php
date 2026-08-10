@@ -6,6 +6,8 @@ use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Models\Deep;
 use App\Models\Level;
+use App\Models\StokGudangDeep;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -16,14 +18,14 @@ class DeepController extends Controller
     public function index(Request $request)
     {
         $idLevel = (int) $request->query('id_level', 0);
-        $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi'));
+
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
+        }
 
         if ($idLevel <= 0) {
             return $this->fail('id_level wajib');
-        }
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
         }
 
         $data = DB::table('deep as d')
@@ -53,17 +55,17 @@ class DeepController extends Controller
 
     public function store(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idLevel = (int) $request->input('id_level', 0);
         $jumlahDeep = (int) $request->input('jumlah_deep', 0);
         $kapasitas = (int) $request->input('kapasitas', 0);
 
-        if ($idPenggunaLokasi === '' || $idLevel <= 0 || $jumlahDeep <= 0 || $kapasitas <= 0) {
-            return $this->fail('id_pengguna_lokasi, id_level, jumlah_deep, kapasitas wajib > 0');
+        if ($idLevel <= 0 || $jumlahDeep <= 0 || $kapasitas <= 0) {
+            return $this->fail('id_level, jumlah_deep, kapasitas wajib > 0');
         }
 
         $level = Level::where('id_pengguna_lokasi', $idPenggunaLokasi)
@@ -74,7 +76,7 @@ class DeepController extends Controller
             return $this->fail('id_level tidak ditemukan pada lokasi aktif');
         }
 
-        if ($this->totalStokLine($idPenggunaLokasi, (int) $level->id_line) > 0) {
+        if (StokGudangDeep::totalStokLine($idPenggunaLokasi, (int) $level->id_line) > 0) {
             return $this->fail('Line masih memiliki stok, kosongkan stok terlebih dahulu sebelum menambah deep.');
         }
 
@@ -103,16 +105,12 @@ class DeepController extends Controller
 
     public function update(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idDeep = (int) ($request->input('id_deep') ?? $id);
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
-        }
 
         if ($idDeep <= 0) {
             return $this->fail('id_deep wajib');
@@ -145,7 +143,7 @@ class DeepController extends Controller
             ->whereKey($deep->id_level)
             ->value('id_line');
 
-        if ($this->totalStokLine($idPenggunaLokasi, $idLine) > 0) {
+        if (StokGudangDeep::totalStokLine($idPenggunaLokasi, $idLine) > 0) {
             return $this->fail('Line masih memiliki stok. Kosongkan stok terlebih dahulu sebelum mengubah deep atau kapasitas.');
         }
 
@@ -189,16 +187,12 @@ class DeepController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idDeep = (int) ($request->input('id_deep') ?? $id);
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
-        }
 
         if ($idDeep <= 0) {
             return $this->fail('id_deep wajib');
@@ -216,7 +210,7 @@ class DeepController extends Controller
             ->whereKey($deep->id_level)
             ->value('id_line');
 
-        if ($this->totalStokLine($idPenggunaLokasi, $idLine) > 0) {
+        if (StokGudangDeep::totalStokLine($idPenggunaLokasi, $idLine) > 0) {
             return $this->fail('Line masih memiliki stok, kosongkan stok terlebih dahulu sebelum menghapus deep.');
         }
 
@@ -238,19 +232,5 @@ class DeepController extends Controller
         } catch (\Throwable $e) {
             return $this->fail('Gagal menghapus deep');
         }
-    }
-
-    private function totalStokLine(string $idPenggunaLokasi, int $idLine): int
-    {
-        return (int) DB::table('stok_gudang_deep as sd')
-            ->join('deep as d', fn ($j) => $j
-                ->on('sd.id_deep', '=', 'd.id_deep')
-                ->on('sd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
-            ->join('level as lv', fn ($j) => $j
-                ->on('d.id_level', '=', 'lv.id_level')
-                ->on('d.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi'))
-            ->where('lv.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('lv.id_line', $idLine)
-            ->sum('sd.jumlah');
     }
 }

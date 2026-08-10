@@ -27,10 +27,6 @@ class LokasiController extends Controller
 
     public function store(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $nama = trim((string) $request->input('nama_lokasi'));
         $kategori = trim((string) $request->input('kategori'));
 
@@ -53,10 +49,6 @@ class LokasiController extends Controller
 
     public function update(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $idLokasi = (int) ($request->input('id_lokasi') ?? $id);
 
         if ($idLokasi <= 0) {
@@ -89,10 +81,6 @@ class LokasiController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $idLokasi = (int) ($request->input('id_lokasi') ?? $id);
 
         if ($idLokasi <= 0) {
