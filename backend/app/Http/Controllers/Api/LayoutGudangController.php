@@ -570,9 +570,7 @@ class LayoutGudangController extends Controller
 
         return response()->json([
             'success' => true,
-            'sukses' => true,
             'message' => 'OK',
-            'pesan' => 'OK',
             'data' => [
                 'id_deep' => $idDeep,
                 'id_pengguna_lokasi' => $idPenggunaLokasi,

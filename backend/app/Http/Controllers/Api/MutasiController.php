@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Models\Mutasi;
 use Exception;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 
 class MutasiController extends Controller
 {
+    use ApiResponse;
     public function getBestBefore(Request $request)
     {
         $id_pengguna_lokasi = trim($request->input('id_pengguna_lokasi', ''));
@@ -381,27 +383,6 @@ class MutasiController extends Controller
     // =========================================================================
     // PRIVATE HELPER FUNCTIONS
     // =========================================================================
-
-    private function ok($data = [], $message = 'OK')
-    {
-        return response()->json([
-            'success' => true,
-            'sukses' => true,
-            'message' => $message,
-            'pesan' => $message,
-            'data' => $data,
-        ]);
-    }
-
-    private function fail($message, $code = 400)
-    {
-        return response()->json([
-            'success' => false,
-            'sukses' => false,
-            'message' => $message,
-            'pesan' => $message,
-        ], $code);
-    }
 
     private function normalize_line_label($label)
     {

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use Exception;
@@ -11,6 +12,7 @@ use Throwable;
 
 class BarangKeluarController extends Controller
 {
+    use ApiResponse;
     use ExcelReader;
 
     // =========================================================================
@@ -221,7 +223,7 @@ public function store(Request $request)
     {
         try {
             $itemsOut = $this->simpanOutbound($request->all());
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             return $this->fail($e->getMessage(), 500);
         }
 
@@ -261,7 +263,7 @@ public function store(Request $request)
             try {
                 $this->simpanOutbound($payload);
                 $inserted++;
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 $failed++;
                 $details[] = trim($payload['gin_no'] ?? '') . ': ' . $e->getMessage();
             }
@@ -310,7 +312,7 @@ public function store(Request $request)
             $parsed = $this->bacaFileSpreadsheet($path, $ext);
             $headerRow = $parsed['header'];
             $rowsData = $parsed['rows'];
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             return $this->fail($e->getMessage());
         }
 
@@ -441,7 +443,7 @@ public function store(Request $request)
             try {
                 $this->simpanOutbound($payload);
                 $inserted++;
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 $failed++;
                 $details[] = trim($payload['gin_no'] ?? '').': '.$e->getMessage();
             }
@@ -493,7 +495,7 @@ public function store(Request $request)
             $parsed = $this->bacaFileSpreadsheet($path, $ext);
             $headerRow = $parsed['header'];
             $rowsData = $parsed['rows'];
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             return $this->fail($e->getMessage());
         }
 
@@ -1591,15 +1593,5 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         ", [$idBarangKeluar]);
 
         return $this->formatRencanaUntukResponse(array_map(fn ($r) => (array) $r, $rows));
-    }
-
-    private function ok($data = [], $message = 'OK')
-    {
-        return response()->json(['success' => true, 'sukses' => true, 'pesan' => $message, 'message' => $message, 'data' => $data]);
-    }
-
-    private function fail($message, $code = 400)
-    {
-        return response()->json(['success' => false, 'sukses' => false, 'pesan' => $message, 'message' => $message], $code);
     }
 }

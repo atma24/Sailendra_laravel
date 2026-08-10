@@ -8,7 +8,7 @@ use Illuminate\Support\Collection;
 
 trait ApiResponse
 {
-    protected function ok(Collection|array $data = [], string $message = ''): JsonResponse
+    protected function ok(Collection|array|null $data = [], string $message = ''): JsonResponse
     {
         return response()->json([
             'success' => true,
