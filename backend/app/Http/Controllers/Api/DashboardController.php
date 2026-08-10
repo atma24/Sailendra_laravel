@@ -4,8 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
-use App\Models\Plant;
-use App\Models\Produk;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -31,9 +29,6 @@ class DashboardController extends Controller
             $dates[] = $bulan.'-'.str_pad((string) $i, 2, '0', STR_PAD_LEFT);
         }
 
-        $produkTotal = Produk::count();
-        $plantTotal = Plant::count();
-
         $mutasiTotal = $this->withLokasiFilter(
             DB::table('mutasi as m')->selectRaw('COUNT(*) AS c'),
             'm.id_pengguna_lokasi',
@@ -43,15 +38,15 @@ class DashboardController extends Controller
         $inbound = $this->inboundStats($filter, $monthStart, $monthEnd, $today, $dates);
         $outbound = $this->outboundStats($filter, $monthStart, $monthEnd, $today, $dates);
         $stock = $this->ringkasanStok($filter);
+        $stokList = $this->stokList($filter);
 
         return response()->json([
             'success' => true,
-            'produk_total' => $produkTotal,
-            'plant_total' => $plantTotal,
             'inbound' => $inbound,
             'outbound' => $outbound,
             'mutasi_total' => $mutasiTotal,
             'stock' => $stock,
+            'stok_list' => $stokList,
         ]);
     }
 
@@ -89,9 +84,9 @@ class DashboardController extends Controller
     private function inboundStats(?array $filter, string $monthStart, string $monthEnd, string $today, array $dates): array
     {
         $base = DB::table('barang_masuk as bm')
-            ->selectRaw('COUNT(*) AS total')
+            ->selectRaw('COUNT(DISTINCT bm.no_dn) AS total')
             ->selectRaw('COALESCE(SUM(bm.jumlah),0) AS total_qty')
-            ->selectRaw('SUM(CASE WHEN DATE(bm.tanggal_masuk) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS bulan_ini', [$monthStart, $monthEnd])
+            ->selectRaw('COUNT(DISTINCT CASE WHEN DATE(bm.tanggal_masuk) BETWEEN ? AND ? THEN bm.no_dn END) AS bulan_ini', [$monthStart, $monthEnd])
             ->selectRaw('SUM(CASE WHEN DATE(bm.tanggal_masuk) BETWEEN ? AND ? THEN bm.jumlah ELSE 0 END) AS qty_bulan_ini', [$monthStart, $monthEnd])
             ->selectRaw('SUM(CASE WHEN DATE(bm.tanggal_masuk) = ? THEN bm.jumlah ELSE 0 END) AS qty_today', [$today]);
 
@@ -122,12 +117,12 @@ class DashboardController extends Controller
     private function outboundStats(?array $filter, string $monthStart, string $monthEnd, string $today, array $dates): array
     {
         $base = DB::table('barang_keluar as bk')
-            ->selectRaw('COUNT(*) AS total')
+            ->selectRaw('COUNT(DISTINCT bk.gin_no) AS total')
             ->selectRaw('COALESCE(SUM(bk.jumlah),0) AS total_qty')
-            ->selectRaw('SUM(CASE WHEN DATE(bk.tanggal_keluar) BETWEEN ? AND ? THEN 1 ELSE 0 END) AS bulan_ini', [$monthStart, $monthEnd])
+            ->selectRaw('COUNT(DISTINCT CASE WHEN DATE(bk.tanggal_keluar) BETWEEN ? AND ? THEN bk.gin_no END) AS bulan_ini', [$monthStart, $monthEnd])
             ->selectRaw('SUM(CASE WHEN DATE(bk.tanggal_keluar) BETWEEN ? AND ? THEN bk.jumlah ELSE 0 END) AS qty_bulan_ini', [$monthStart, $monthEnd])
             ->selectRaw('SUM(CASE WHEN DATE(bk.tanggal_keluar) = ? THEN bk.jumlah ELSE 0 END) AS qty_today', [$today])
-            ->selectRaw("SUM(CASE WHEN LOWER(COALESCE(bk.status,'')) NOT IN ('confirmed','selesai') THEN 1 ELSE 0 END) AS pending");
+            ->selectRaw("COUNT(DISTINCT CASE WHEN LOWER(COALESCE(bk.status,'')) NOT IN ('confirmed','selesai') THEN bk.gin_no END) AS pending");
 
         $base = $this->withLokasiFilter($base, 'bk.id_pengguna_lokasi', $filter);
         $r = (array) $base->first();
@@ -143,20 +138,6 @@ class DashboardController extends Controller
             $series[] = ['tanggal' => $d, 'qty' => (int) ($smap[$d] ?? 0)];
         }
 
-        $topQuery = DB::table('barang_keluar as bk')
-            ->selectRaw('bk.nama_produk AS nama_produk, SUM(bk.jumlah) AS qty')
-            ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$monthStart, $monthEnd])
-            ->groupBy('bk.nama_produk')
-            ->orderByDesc('qty')
-            ->limit(10);
-
-        $topQuery = $this->withLokasiFilter($topQuery, 'bk.id_pengguna_lokasi', $filter);
-
-        $top = [];
-        foreach ($topQuery->get() as $row) {
-            $top[] = ['nama_produk' => $row->nama_produk, 'qty' => (int) $row->qty];
-        }
-
         return [
             'total' => (int) ($r['total'] ?? 0),
             'total_qty' => (int) ($r['total_qty'] ?? 0),
@@ -164,9 +145,27 @@ class DashboardController extends Controller
             'qty_bulan_ini' => (int) ($r['qty_bulan_ini'] ?? 0),
             'qty_today' => (int) ($r['qty_today'] ?? 0),
             'pending' => (int) ($r['pending'] ?? 0),
-            'top10' => $top,
             'series' => $series,
         ];
+    }
+
+    private function stokList(?array $filter): array
+    {
+        $query = DB::table('stok_gudang_deep as sd')
+            ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sd.id_stok_header')
+            ->where('sd.jumlah', '>', 0)
+            ->selectRaw('sg.nama_produk AS nama_produk, SUM(sd.jumlah) AS stok')
+            ->groupBy('sg.nama_produk')
+            ->orderByDesc('stok');
+
+        $query = $this->withLokasiFilter($query, 'sg.id_pengguna_lokasi', $filter);
+
+        $list = [];
+        foreach ($query->get() as $row) {
+            $list[] = ['nama_produk' => $row->nama_produk, 'stok' => (int) $row->stok];
+        }
+
+        return $list;
     }
 
     private function ringkasanStok(?array $filter): array
