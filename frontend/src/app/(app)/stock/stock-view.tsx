@@ -92,6 +92,8 @@ const css = `
 .stock-product-muted { color: #8a93a3; font-weight: 750; white-space: nowrap; }
 
 .stock-empty { padding: 12px; text-align: center; color: #8a93a3; font-size: 11px; font-weight: 750; }
+.stock-loader { display: inline-block; margin-right: 6px; animation: stock-spin .8s linear infinite; }
+@keyframes stock-spin { to { transform: rotate(360deg); } }
 
 .stock-modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.45); z-index: 9999; align-items: center; justify-content: center; padding: 24px; backdrop-filter: blur(2px); }
 .stock-modal-overlay.active { display: flex; }
@@ -215,7 +217,14 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
 
   const grandTotal = detail.reduce((s, d) => s + angka(d.qty_sisa), 0);
 
-  if (!session || !loaded) return null;
+  if (!session || !loaded) {
+    return (
+      <div className="stock-page">
+        <style>{css}</style>
+        <div className="stock-card stock-empty"><i className="bi bi-arrow-clockwise stock-loader"></i> Memuat data stock...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="stock-page">
@@ -310,7 +319,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
           </div>
           <div className="stock-modal-body">
             {detailLoading ? (
-              <div className="stock-detail-loading"><i className="bi bi-arrow-clockwise"></i> Memuat rincian stock...</div>
+              <div className="stock-detail-loading"><i className="bi bi-arrow-clockwise stock-loader"></i> Memuat rincian stock...</div>
             ) : detail.length === 0 ? (
               <div className="stock-detail-loading">Tidak ada stok untuk produk ini.</div>
             ) : (

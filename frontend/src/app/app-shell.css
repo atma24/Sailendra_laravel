@@ -19,12 +19,30 @@
 }
 
 .brand-area {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 4px 6px 14px 6px;
   margin-bottom: 6px;
   border-bottom: 1px solid var(--line);
+}
+
+.sidebar-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 16px;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.sidebar-close:hover {
+  color: var(--primary);
 }
 
 .brand-logo {
@@ -212,6 +230,31 @@
   align-items: center;
 }
 
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.burger-btn {
+  display: none;
+  border: 0;
+  background: var(--primary-soft);
+  color: var(--primary);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 22px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+.burger-btn:hover {
+  background: var(--primary);
+  color: #FFFFFF;
+}
+
 .page-title {
   margin: 0;
   font-size: 18px;
@@ -261,6 +304,7 @@
 
 @media (max-width: 992px) {
   .app-shell { display: block; height: auto; }
+  .burger-btn { display: flex; }
   .sidebar {
     position: fixed;
     top: 0;

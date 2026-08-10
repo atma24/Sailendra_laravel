@@ -13,9 +13,13 @@ function isChildOpen(item: MenuItem, pathname: string) {
 export default function Sidebar({
   session,
   onLogout,
+  open = false,
+  onClose,
 }: {
   session: Session;
   onLogout: () => void;
+  open?: boolean;
+  onClose?: () => void;
 }) {
   const pathname = usePathname();
   const menus = menusForRole(session.user.role);
@@ -24,17 +28,28 @@ export default function Sidebar({
   );
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${open ? "show" : ""}`}>
       <div className="brand-area">
         <div className="brand-logo">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logosailendra.png" alt="Logo Sailendra" />
         </div>
+        {onClose && (
+          <button
+            type="button"
+            className="sidebar-close"
+            onClick={onClose}
+            aria-label="Tutup menu"
+          >
+            <i className="bi bi-x-lg"></i>
+          </button>
+        )}
       </div>
 
       <nav className="sidebar-nav">
         <Link
           href="/dashboard"
+          onClick={onClose}
           className={`nav-link-custom ${pathname === "/dashboard" || pathname === "/" ? "active" : ""}`}
         >
           <i className="bi bi-buildings-fill nav-icon"></i>
@@ -61,6 +76,7 @@ export default function Sidebar({
                     <Link
                       key={c.path}
                       href={c.path}
+                      onClick={onClose}
                       className={`submenu-link ${pathname.startsWith(c.path) ? "active" : ""}`}
                     >
                       {c.title}
@@ -74,6 +90,7 @@ export default function Sidebar({
             <Link
               key={m.title}
               href={m.path!}
+              onClick={onClose}
               className={`nav-link-custom ${pathname === m.path || pathname.startsWith(m.path + "/") ? "active" : ""}`}
             >
               <i className={`${m.icon} nav-icon`}></i>

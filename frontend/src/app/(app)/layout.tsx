@@ -26,6 +26,7 @@ function pageTitleFromPath(pathname: string): string {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [auth, setAuth] = useState<{ loaded: boolean; session: Session | null }>({
     loaded: false,
     session: null,
@@ -63,17 +64,33 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   function logout() {
     clearSession();
+    setSidebarOpen(false);
     router.replace("/login");
   }
 
   return (
     <div className="app-shell">
-      <Sidebar session={auth.session} onLogout={logout} />
+      <Sidebar
+        session={auth.session}
+        onLogout={logout}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
       <main className="main-content">
         <div className="page-wrap">
           <div className="topbar-card">
-            <h1 className="page-title">{pageTitleFromPath(pathname)}</h1>
+            <div className="topbar-left">
+              <button
+                type="button"
+                className="burger-btn"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Buka menu"
+              >
+                <i className="bi bi-list"></i>
+              </button>
+              <h1 className="page-title">{pageTitleFromPath(pathname)}</h1>
+            </div>
 
             <Link href="/profile" className="user-box">
               <div>
