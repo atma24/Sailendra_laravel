@@ -6,17 +6,15 @@ import { apiGet } from "@/lib/api";
 import { useSession, lokasiParam, type Session } from "@/lib/auth";
 
 type Summary = {
-  produk_total: number;
-  plant_total: number;
   mutasi_total: number;
   inbound: { bulan_ini: number; series: { tanggal: string; qty: number }[] };
   outbound: {
     bulan_ini: number;
     pending: number;
-    top10: { nama_produk: string; qty: number }[];
     series: { tanggal: string; qty: number }[];
   };
   stock: { zona: Record<string, number>; total_qty: number };
+  stok_list: { nama_produk: string; stok: number }[];
 };
 
 const dashCss = `
@@ -61,19 +59,19 @@ const dashCss = `
 .alert-btn:hover { background: #B91C1C; color: white; }
 
 .dash-charts { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
-.chart-card, .top10-card { background: var(--card-bg); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+.chart-card, .stok-card { background: var(--card-bg); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
 .dash-card-head { margin-bottom: 16px; }
 .dash-card-title { font-size: 16px; font-weight: 800; color: var(--text-main); }
 .dash-card-sub { font-size: 12px; color: var(--text-soft); margin-top: 4px; }
 
 .canvas-container { position: relative; height: 280px; width: 100%; }
 
-.top10-wrap { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; padding-right: 5px; }
-.top10-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 8px; background: #F8FAFC; }
-.top10-rank { width: 22px; height: 22px; flex-shrink: 0; border-radius: 6px; background: var(--primary); color: white; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
-.top10-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.top10-name { font-size: 13px; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.top10-qty { font-size: 12px; font-weight: 800; color: var(--success); flex-shrink: 0; }
+.stok-wrap { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; padding-right: 5px; }
+.stok-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 8px; background: #F8FAFC; }
+.stok-rank { width: 22px; height: 22px; flex-shrink: 0; border-radius: 6px; background: var(--primary); color: white; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+.stok-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.stok-name { font-size: 13px; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stok-qty { font-size: 12px; font-weight: 800; color: var(--success); flex-shrink: 0; }
 
 .dash-empty { text-align: center; padding: 30px; font-size: 14px; font-weight: 600; color: var(--text-soft); }
 
@@ -102,8 +100,10 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const lineRef = useRef<HTMLCanvasElement>(null);
   const pieRef = useRef<HTMLCanvasElement>(null);
+  const barRef = useRef<HTMLCanvasElement>(null);
   const lineChartRef = useRef<unknown>(null);
   const pieChartRef = useRef<unknown>(null);
+  const barChartRef = useRef<unknown>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -199,6 +199,42 @@ export default function DashboardPage() {
         },
       });
     }
+
+    const bar = barRef.current;
+    if (bar) {
+      (barChartRef.current as { destroy?: () => void } | null)?.destroy?.();
+      const ctx = bar.getContext("2d");
+      if (!ctx) return;
+      const sales = (summary.outbound?.series || []).map((s) => s.qty);
+      barChartRef.current = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: (summary.outbound?.series || []).map((s) => s.tanggal.slice(8, 10) + "/" + s.tanggal.slice(5, 7)),
+          datasets: [
+            {
+              label: "Penjualan",
+              data: sales,
+              backgroundColor: "rgba(124, 58, 237, 0.7)",
+              borderColor: "#7C3AED",
+              borderWidth: 1,
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "top", labels: { usePointStyle: true, font: { size: 12 } } },
+            tooltip: { backgroundColor: "rgba(15, 23, 42, 0.9)" },
+          },
+          scales: {
+            y: { beginAtZero: true, grid: { color: "#F1F5F9" }, ticks: { font: { size: 11 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    }
   }, [summary]);
 
   useEffect(() => {
@@ -209,6 +245,7 @@ export default function DashboardPage() {
     return () => {
       (lineChartRef.current as { destroy?: () => void } | null)?.destroy?.();
       (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
+      (barChartRef.current as { destroy?: () => void } | null)?.destroy?.();
     };
   }, []);
 
@@ -238,20 +275,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="dash-cards">
-        <div className="dash-card">
-          <div className="dash-icon dash-icon-primary"><i className="bi bi-box-seam"></i></div>
-          <div className="dash-info">
-            <div className="dash-value">{fmt(summary?.produk_total ?? 0)}</div>
-            <div className="dash-label">Total Produk (SKU)</div>
-          </div>
-        </div>
-        <div className="dash-card">
-          <div className="dash-icon dash-icon-primary"><i className="bi bi-factory"></i></div>
-          <div className="dash-info">
-            <div className="dash-value">{fmt(summary?.plant_total ?? 0)}</div>
-            <div className="dash-label">Total Plant</div>
-          </div>
-        </div>
         <div className="dash-card">
           <div className="dash-icon dash-icon-blue"><i className="bi bi-box-arrow-in-down"></i></div>
           <div className="dash-info">
@@ -317,26 +340,40 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-3">
-        <div className="top10-card">
+        <div className="chart-card">
           <div className="dash-card-head">
-            <div className="dash-card-title">Top 10 Barang Terlaris</div>
-            <div className="dash-card-sub">Bulan {bulanLabelFull}</div>
+            <div className="dash-card-title">Penjualan Barang (Harian)</div>
+            <div className="dash-card-sub">
+              Kuantitas barang keluar per hari selama bulan {bulanLabelFull}
+            </div>
           </div>
-          {!summary?.outbound?.top10?.length ? (
+          <div className="canvas-container">
+            <canvas id="barChart" ref={barRef}></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="stok-card">
+          <div className="dash-card-head">
+            <div className="dash-card-title">Daftar Stok Produk Tersedia</div>
+            <div className="dash-card-sub">Produk dengan stok fisik aktif</div>
+          </div>
+          {!summary?.stok_list?.length ? (
             <div className="dash-empty">
               <i className="bi bi-inbox text-muted" style={{ fontSize: "2rem" }}></i>
               <br />
-              Belum ada data transaksi.
+              Belum ada data stok.
             </div>
           ) : (
-            <div className="top10-wrap">
-              {summary.outbound.top10.map((t, i) => (
-                <div className="top10-row" key={i}>
-                  <span className="top10-main">
-                    <span className="top10-rank">{i + 1}</span>
-                    <span className="top10-name">{t.nama_produk}</span>
+            <div className="stok-wrap">
+              {summary.stok_list.map((t, i) => (
+                <div className="stok-row" key={i}>
+                  <span className="stok-main">
+                    <span className="stok-rank">{i + 1}</span>
+                    <span className="stok-name">{t.nama_produk}</span>
                   </span>
-                  <span className="top10-qty">{fmt(t.qty)} Qty</span>
+                  <span className="stok-qty">{fmt(t.stok)} Stok</span>
                 </div>
               ))}
             </div>
