@@ -29,6 +29,7 @@
 }
 
 .sidebar-close {
+  display: none;
   position: absolute;
   top: 4px;
   right: 4px;
@@ -305,6 +306,7 @@
 @media (max-width: 992px) {
   .app-shell { display: block; height: auto; }
   .burger-btn { display: flex; }
+  .sidebar-close { display: block; }
   .sidebar {
     position: fixed;
     top: 0;
