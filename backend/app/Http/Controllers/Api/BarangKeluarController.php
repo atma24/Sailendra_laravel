@@ -310,7 +310,13 @@ public function store(Request $request)
                                     $updateData['so_number'] = $mergedSo;
                                 }
                             }
-                            
+
+                            // 3. Fill Up No DN (hanya jika kosong)
+                            $dnBaru = trim($payload['no_dn'] ?? '');
+                            if ($dnBaru !== '' && (is_null($ex->no_dn) || trim((string) $ex->no_dn) === '')) {
+                                $updateData['no_dn'] = $dnBaru;
+                            }
+
                             if (!empty($updateData)) {
                                 DB::table('barang_keluar')
                                     ->where('id_barang_keluar', $ex->id_barang_keluar)
@@ -319,6 +325,8 @@ public function store(Request $request)
                             }
                         }
                         DB::commit();
+
+                        $this->betulkanRelasiTraceability($ginNo);
                         
                         if ($adaUpdate) {
                             $updated++;
@@ -350,7 +358,7 @@ public function store(Request $request)
 
         $msg = "Upload batch selesai! $inserted GIN berhasil ditambahkan.";
         if ($updated > 0) {
-            $msg .= " $updated GIN diperbarui (SO Number / Driver).";
+            $msg .= " $updated GIN diperbarui (SO Number / No DN / Driver).";
         }
         if ($skipped > 0) {
             $msg .= " $skipped GIN dilewati (sudah Selesai/Pending/Tanpa Perubahan).";
@@ -572,6 +580,12 @@ public function store(Request $request)
                                     }
                                 }
                                 
+                                // 3. Fill Up No DN (hanya jika kosong)
+                                $dnBaru = trim($payload['no_dn'] ?? '');
+                                if ($dnBaru !== '' && (is_null($ex->no_dn) || trim((string) $ex->no_dn) === '')) {
+                                    $updateData['no_dn'] = $dnBaru;
+                                }
+                                
                                 if (!empty($updateData)) {
                                     DB::table('barang_keluar')
                                         ->where('id_barang_keluar', $ex->id_barang_keluar)
@@ -580,6 +594,8 @@ public function store(Request $request)
                                 }
                             }
                             DB::commit();
+
+                            $this->betulkanRelasiTraceability($ginNo);
                             
                             if ($adaUpdate) {
                                 $updated++;
@@ -612,7 +628,7 @@ public function store(Request $request)
 
         $msg = "Upload selesai! $inserted GIN ditambahkan.";
         if ($updated > 0) {
-            $msg .= " $updated GIN diperbarui (SO Number).";
+            $msg .= " $updated GIN diperbarui (SO Number / No DN).";
         }
         if ($skipped > 0) {
             $msg .= " $skipped GIN dilewati (sudah Selesai/Pending).";
@@ -1512,6 +1528,19 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             SET t.id_barang_keluar = bk.id_barang_keluar, t.best_before = bk.best_before, t.batch_number = bk.batch
             WHERE bk.id_barang_keluar = ?
         ", [$idBarangKeluar]);
+    }
+
+    private function betulkanRelasiTraceability($ginNo)
+    {
+        DB::statement("
+            UPDATE traceability t
+            INNER JOIN barang_keluar bk
+                ON bk.so_number LIKE CONCAT('%', t.so_number, '%')
+                AND bk.id_produk = t.id_produk
+                AND bk.id_pengguna_lokasi = t.id_pengguna_lokasi
+            SET t.id_barang_keluar = bk.id_barang_keluar, t.best_before = bk.best_before, t.batch_number = bk.batch
+            WHERE bk.gin_no = ?
+        ", [$ginNo]);
     }
 
     private function ubahItemOutboundSelesai($idBarangKeluarLama, $idPenggunaLokasi, $jumlahBaru, $catatanPerubahan, $namaPengguna)
