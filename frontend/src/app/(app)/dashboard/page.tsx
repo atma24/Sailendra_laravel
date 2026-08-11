@@ -15,6 +15,7 @@ type Summary = {
   };
   stock: { zona: Record<string, number>; total_qty: number };
   stok_list: { nama_produk: string; stok: number }[];
+  penjualan: { nama_produk: string; qty: number }[];
 };
 
 const dashCss = `
@@ -205,32 +206,35 @@ export default function DashboardPage() {
       (barChartRef.current as { destroy?: () => void } | null)?.destroy?.();
       const ctx = bar.getContext("2d");
       if (!ctx) return;
-      const sales = (summary.outbound?.series || []).map((s) => s.qty);
+      const sold = (summary.penjualan || []).map((s) => s.qty);
       barChartRef.current = new Chart(ctx, {
         type: "bar",
         data: {
-          labels: (summary.outbound?.series || []).map((s) => s.tanggal.slice(8, 10) + "/" + s.tanggal.slice(5, 7)),
+          labels: (summary.penjualan || []).map((s) => s.nama_produk),
           datasets: [
             {
-              label: "Penjualan",
-              data: sales,
+              label: "Kuantitas",
+              data: sold,
               backgroundColor: "rgba(124, 58, 237, 0.7)",
               borderColor: "#7C3AED",
               borderWidth: 1,
               borderRadius: 4,
+              barThickness: 26,
             },
           ],
         },
         options: {
+          indexAxis: "y",
           responsive: true,
           maintainAspectRatio: false,
+          layout: { padding: { top: 10 } },
           plugins: {
-            legend: { position: "top", labels: { usePointStyle: true, font: { size: 12 } } },
+            legend: { display: false },
             tooltip: { backgroundColor: "rgba(15, 23, 42, 0.9)" },
           },
           scales: {
-            y: { beginAtZero: true, grid: { color: "#F1F5F9" }, ticks: { font: { size: 11 } } },
-            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            x: { beginAtZero: true, grid: { color: "#F1F5F9" }, ticks: { font: { size: 11 } } },
+            y: { grid: { display: false }, ticks: { font: { size: 11 } } },
           },
         },
       });
@@ -342,12 +346,15 @@ export default function DashboardPage() {
       <div className="mt-3">
         <div className="chart-card">
           <div className="dash-card-head">
-            <div className="dash-card-title">Penjualan Barang (Harian)</div>
+            <div className="dash-card-title">Penjualan Barang (Bulanan)</div>
             <div className="dash-card-sub">
-              Kuantitas barang keluar per hari selama bulan {bulanLabelFull}
+              Item &amp; kuantitas keluar selama bulan {bulanLabelFull}
             </div>
           </div>
-          <div className="canvas-container">
+          <div
+            className="canvas-container"
+            style={{ height: Math.max(280, (summary?.penjualan?.length ?? 0) * 36 + 40) }}
+          >
             <canvas id="barChart" ref={barRef}></canvas>
           </div>
         </div>

@@ -159,6 +159,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/barang-keluar/update', [BarangKeluarController::class, 'update']);
     Route::post('/barang-keluar/hapus', [BarangKeluarController::class, 'destroy']);
 
+    Route::post('/barang-masuk/batch', [BarangMasukController::class, 'storeBatch']);
     Route::get('/barang-masuk', [BarangMasukController::class, 'index']);
     Route::post('/barang-masuk', [BarangMasukController::class, 'store']);
     Route::post('/barang-masuk/preview', [BarangMasukController::class, 'preview']);

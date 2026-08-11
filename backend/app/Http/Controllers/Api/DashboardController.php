@@ -39,6 +39,7 @@ class DashboardController extends Controller
         $outbound = $this->outboundStats($filter, $monthStart, $monthEnd, $today, $dates);
         $stock = $this->ringkasanStok($filter);
         $stokList = $this->stokList($filter);
+        $penjualan = $this->penjualanBulan($filter, $monthStart, $monthEnd);
 
         return response()->json([
             'success' => true,
@@ -47,6 +48,7 @@ class DashboardController extends Controller
             'mutasi_total' => $mutasiTotal,
             'stock' => $stock,
             'stok_list' => $stokList,
+            'penjualan' => $penjualan,
         ]);
     }
 
@@ -147,6 +149,24 @@ class DashboardController extends Controller
             'pending' => (int) ($r['pending'] ?? 0),
             'series' => $series,
         ];
+    }
+
+    private function penjualanBulan(?array $filter, string $monthStart, string $monthEnd): array
+    {
+        $q = DB::table('barang_keluar as bk')
+            ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$monthStart, $monthEnd])
+            ->selectRaw('bk.nama_produk AS nama_produk, SUM(bk.jumlah) AS qty')
+            ->groupBy('bk.nama_produk')
+            ->orderByRaw('SUM(bk.jumlah) ASC');
+
+        $q = $this->withLokasiFilter($q, 'bk.id_pengguna_lokasi', $filter);
+
+        $rows = [];
+        foreach ($q->get() as $row) {
+            $rows[] = ['nama_produk' => $row->nama_produk, 'qty' => (int) $row->qty];
+        }
+
+        return $rows;
     }
 
     private function stokList(?array $filter): array
