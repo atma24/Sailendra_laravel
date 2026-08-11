@@ -118,11 +118,16 @@ function makeToken(): string {
 }
 
 export default function ReportPage() {
+  // 1. Pindahkan deklarasi 'today' ke atas agar bisa digunakan sebagai initial state
+  const today = new Date().toISOString().slice(0, 10);
+
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
   const [type, setType] = useState<TypeKey>("inbound");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
+  
+  // 2. Gunakan 'today' sebagai default awal, bukan string kosong ("")
+  const [start, setStart] = useState(today);
+  const [end, setEnd] = useState(today);
   const [error, setError] = useState("");
 
   const [picking, setPicking] = useState(false);
@@ -223,7 +228,6 @@ export default function ReportPage() {
     } finally { setDownloading(false); }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
 
   const renderTable = (key: TypeKey, items: Row[] | undefined) => {
     const cols = columnsFor(key);
