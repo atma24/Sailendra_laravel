@@ -3,11 +3,12 @@
 namespace App\Http\Controllers\Api\Concerns;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 
 trait ApiResponse
 {
-    protected function ok(Collection|array $data = [], string $message = ''): JsonResponse
+    protected function ok(Collection|array|null $data = [], string $message = ''): JsonResponse
     {
         return response()->json([
             'success' => true,
@@ -30,10 +31,14 @@ trait ApiResponse
         ], $code);
     }
 
-    protected function isSupervisor(array $in): bool
+    protected function requireLok(Request $request): string|JsonResponse
     {
-        $role = (string) ($in['role'] ?? 'Checker');
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
 
-        return $role === 'Supervisor' || $role === 'SuperAdmin';
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('id_pengguna_lokasi wajib');
+        }
+
+        return $idPenggunaLokasi;
     }
 }

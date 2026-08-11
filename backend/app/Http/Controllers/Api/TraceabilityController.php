@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use Exception;
 use Illuminate\Http\Request;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 
 class TraceabilityController extends Controller
 {
+    use ApiResponse;
     use ExcelReader;
 
     // =========================================================================
@@ -127,7 +129,7 @@ class TraceabilityController extends Controller
             ->get();
 
         return response()->json([
-            'sukses' => true, 'success' => true, 'data' => $data,
+            'success' => true, 'message' => '', 'data' => $data,
             'total' => $total, 'page' => $page, 'limit' => $limit, 'pages' => $pages,
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
@@ -164,7 +166,7 @@ class TraceabilityController extends Controller
             return $this->fail('Data traceability tidak ditemukan', 404);
         }
 
-        return $this->ok($row);
+        return $this->ok((array) $row);
     }
 
     // =========================================================================
@@ -197,7 +199,7 @@ class TraceabilityController extends Controller
         $msg = "Backfill selesai. {$affectedFk} FK traceability diperbarui. {$affectedBb} batch/best_before diperbarui.";
 
         return response()->json([
-            'sukses' => true, 'success' => true, 'pesan' => $msg,
+            'success' => true, 'message' => $msg,
             'affected_rows' => $affectedFk + $affectedBb, 'fk_fixed' => $affectedFk, 'bb_fixed' => $affectedBb,
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
@@ -449,22 +451,5 @@ class TraceabilityController extends Controller
         $response = response()->json($data);
 
         return $response;
-    }
-
-    // =========================================================================
-    // PRIVATE HELPER METHODS
-    // =========================================================================
-    private function ok($data = [], $message = 'OK')
-    {
-        return response()->json([
-            'sukses' => true, 'success' => true, 'pesan' => $message, 'message' => $message, 'data' => $data,
-        ], 200, [], JSON_UNESCAPED_UNICODE);
-    }
-
-    private function fail($message, $code = 400)
-    {
-        return response()->json([
-            'sukses' => false, 'success' => false, 'pesan' => $message, 'message' => $message,
-        ], $code, [], JSON_UNESCAPED_UNICODE);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -9,12 +10,9 @@ use Illuminate\Support\Facades\DB;
 
 class StokController extends Controller
 {
-    private const INT_KEYS = ['id_stok', 'id_produk', 'id_barang_masuk', 'id_lokasi', 'id_block', 'id_line', 'qty_sisa', 'total_qty', 'total_kapasitas'];
+    use ApiResponse;
 
-    private function out(bool $status, array $payload): JsonResponse
-    {
-        return response()->json(['status' => $status] + $payload);
-    }
+    private const INT_KEYS = ['id_stok', 'id_produk', 'id_barang_masuk', 'id_lokasi', 'id_block', 'id_line', 'qty_sisa', 'total_qty', 'total_kapasitas'];
 
     private function normUnit(string $u): string
     {
@@ -105,7 +103,7 @@ class StokController extends Controller
             $result = $this->build($mode, $idPenggunaLokasi, $idProduk, $zona, $zonaWhere, $request);
 
             if (isset($result['error'])) {
-                return $this->out(false, ['message' => $result['error']]);
+                return $this->fail($result['error']);
             }
 
             $rows = DB::select($result['sql'], $result['bind']);
@@ -127,9 +125,9 @@ class StokController extends Controller
                 $data[] = $row;
             }
 
-            return $this->out(true, ['mode' => $mode, 'data' => $data]);
+            return $this->ok($data);
         } catch (\Throwable $e) {
-            return $this->out(false, ['message' => 'Kesalahan server: '.$e->getMessage()]);
+            return $this->fail('Kesalahan server: '.$e->getMessage());
         }
     }
 

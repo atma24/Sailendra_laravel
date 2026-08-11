@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Deep;
 use App\Models\Level;
 use App\Models\Line;
+use App\Models\StokGudangDeep;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -17,10 +19,10 @@ class LevelController extends Controller
     public function index(Request $request)
     {
         $idLine = (int) ($request->input('id_line', $request->query('id_line', 0)));
-        $idPenggunaLokasi = trim((string) ($request->input('id_pengguna_lokasi', $request->query('id_pengguna_lokasi', ''))));
 
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
         if ($idLine <= 0) {
@@ -37,26 +39,26 @@ class LevelController extends Controller
 
     public function store(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idLine = (int) $request->input('id_line', 0);
 
         $levelRaw = trim((string) ($request->input('level') ?? $request->input('label_level') ?? $request->input('label')));
         $levelRaw = preg_replace('/[^0-9]/', '', $levelRaw);
         $levelInt = (int) $levelRaw;
 
-        if ($idPenggunaLokasi === '' || $idLine <= 0 || $levelInt <= 0) {
-            return $this->fail('id_pengguna_lokasi, id_line, dan level wajib');
+        if ($idLine <= 0 || $levelInt <= 0) {
+            return $this->fail('id_line, dan level wajib');
         }
 
         if (! Line::where('id_pengguna_lokasi', $idPenggunaLokasi)->whereKey($idLine)->exists()) {
             return $this->fail('id_line tidak ditemukan pada lokasi aktif');
         }
 
-        $totalStok = $this->totalStokLine($idPenggunaLokasi, $idLine);
+        $totalStok = StokGudangDeep::totalStokLine($idPenggunaLokasi, $idLine);
 
         if ($totalStok > 0) {
             return $this->fail('Line masih memiliki stok, kosongkan stok terlebih dahulu sebelum menambah level.');
@@ -78,10 +80,6 @@ class LevelController extends Controller
 
     public function update(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $idLevel = (int) ($request->input('id_level') ?? $id);
         $targetLevel = $request->has('level') ? (int) $request->input('level') : null;
         $targetLine = $request->has('id_line') ? (int) $request->input('id_line') : null;
@@ -143,16 +141,12 @@ class LevelController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idLevel = (int) ($request->input('id_level') ?? $id);
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
-        }
 
         if ($idLevel <= 0) {
             return $this->fail('id_level wajib');
@@ -164,7 +158,7 @@ class LevelController extends Controller
             return $this->fail('id_level tidak ditemukan pada lokasi aktif');
         }
 
-        $totalStok = $this->totalStokLine($idPenggunaLokasi, (int) $level->id_line);
+        $totalStok = StokGudangDeep::totalStokLine($idPenggunaLokasi, (int) $level->id_line);
 
         if ($totalStok > 0) {
             return $this->fail('Line masih memiliki stok, kosongkan stok terlebih dahulu sebelum menghapus level.');
@@ -203,19 +197,5 @@ class LevelController extends Controller
         } catch (\Throwable $e) {
             return $this->fail('Gagal menghapus level');
         }
-    }
-
-    private function totalStokLine(string $idPenggunaLokasi, int $idLine): int
-    {
-        return (int) DB::table('stok_gudang_deep as sd')
-            ->join('deep as d', fn ($j) => $j
-                ->on('sd.id_deep', '=', 'd.id_deep')
-                ->on('sd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
-            ->join('level as lv', fn ($j) => $j
-                ->on('d.id_level', '=', 'lv.id_level')
-                ->on('d.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi'))
-            ->where('lv.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('lv.id_line', $idLine)
-            ->sum('sd.jumlah');
     }
 }

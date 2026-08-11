@@ -9,6 +9,8 @@ use App\Models\Deep;
 use App\Models\Level;
 use App\Models\Line;
 use App\Models\PrioritasLokasiProduk;
+use App\Models\StokGudangDeep;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -39,17 +41,17 @@ class LineController extends Controller
 
     public function store(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
         $idBlock = (int) $request->input('id_block', 0);
         $nomorTunggal = (int) $request->input('nomor_line', 0);
         $lineStr = trim((string) $request->input('line'));
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
 
-        if ($idPenggunaLokasi === '' || $idBlock <= 0) {
-            return $this->fail('id_pengguna_lokasi & id_block wajib');
+        if ($idBlock <= 0) {
+            return $this->fail('id_block wajib');
         }
 
         if ($nomorTunggal <= 0 && $lineStr === '') {
@@ -95,10 +97,6 @@ class LineController extends Controller
 
     public function update(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $idLine = (int) ($request->input('id_line') ?? $id);
         $nomor = $request->has('nomor_line') ? (int) $request->input('nomor_line') : null;
 
@@ -121,16 +119,12 @@ class LineController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idLine = (int) ($request->input('id_line') ?? $id);
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
-        }
 
         if ($idLine <= 0) {
             return $this->fail('id_line wajib');
@@ -147,16 +141,7 @@ class LineController extends Controller
                     return $this->fail('Line tidak ditemukan pada lokasi aktif');
                 }
 
-                $totalSisa = (int) DB::table('stok_gudang_deep as sgd')
-                    ->join('deep as d', fn ($j) => $j
-                        ->on('sgd.id_deep', '=', 'd.id_deep')
-                        ->on('sgd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
-                    ->join('level', fn ($j) => $j
-                        ->on('d.id_level', '=', 'level.id_level')
-                        ->on('d.id_pengguna_lokasi', '=', 'level.id_pengguna_lokasi'))
-                    ->where('level.id_pengguna_lokasi', $idPenggunaLokasi)
-                    ->where('level.id_line', $idLine)
-                    ->sum('sgd.jumlah');
+                $totalSisa = StokGudangDeep::totalStokLine($idPenggunaLokasi, $idLine);
 
                 if ($totalSisa > 0) {
                     return $this->fail('Tidak bisa hapus: masih ada stok di line ini');

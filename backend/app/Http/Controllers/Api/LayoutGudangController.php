@@ -570,9 +570,7 @@ class LayoutGudangController extends Controller
 
         return response()->json([
             'success' => true,
-            'sukses' => true,
             'message' => 'OK',
-            'pesan' => 'OK',
             'data' => [
                 'id_deep' => $idDeep,
                 'id_pengguna_lokasi' => $idPenggunaLokasi,
@@ -717,18 +715,14 @@ class LayoutGudangController extends Controller
 
     public function prioritasLokasiProduk(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
-        }
-
         $idProduk = (int) $request->input('id_produk', 0);
         if ($idProduk <= 0) {
             return $this->fail('id_produk wajib');
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof \Illuminate\Http\JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
         if (! DB::table('produk')->where('id_produk', $idProduk)->exists()) {
@@ -982,17 +976,13 @@ class LayoutGudangController extends Controller
 
     public function salinBlock(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof \Illuminate\Http\JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idBlockSumber = (int) $request->input('id_block_sumber', 0);
         $kodeBlockBaru = strtoupper(trim((string) $request->input('kode_block_baru')));
-
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib diisi');
-        }
 
         if ($idBlockSumber <= 0 || $kodeBlockBaru === '') {
             return $this->fail('id_block_sumber dan kode_block_baru wajib diisi');
@@ -1088,11 +1078,11 @@ class LayoutGudangController extends Controller
 
     public function simpanLayout(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof \Illuminate\Http\JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idLokasi = (int) $request->input('id_lokasi', 0);
         $idProduk = (int) $request->input('id_produk', 0);
         $kodeBlock = strtoupper(trim((string) $request->input('kode_block')));
@@ -1102,8 +1092,8 @@ class LayoutGudangController extends Controller
             $kodeBlock = $kodeBlockType;
         }
 
-        if ($idPenggunaLokasi === '' || $idLokasi <= 0 || $idProduk <= 0 || $kodeBlock === '') {
-            return $this->fail('id_pengguna_lokasi, id_lokasi, id_produk & kode_block wajib');
+        if ($idLokasi <= 0 || $idProduk <= 0 || $kodeBlock === '') {
+            return $this->fail('id_lokasi, id_produk & kode_block wajib');
         }
 
         if (! DB::table('produk')->where('id_produk', $idProduk)->exists()) {
@@ -2152,15 +2142,15 @@ class LayoutGudangController extends Controller
 
     public function importLayout(Request $request)
     {
-        if (! $this->isSupervisor($request->all())) {
-            return $this->fail('Hak akses ditolak');
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof \Illuminate\Http\JsonResponse) {
+            return $idPenggunaLokasi;
         }
 
-        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $file = $request->file('file');
 
-        if ($idPenggunaLokasi === '' || ! $file || ! $file->isValid()) {
-            return $this->fail('id_pengguna_lokasi & file wajib diisi');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('file wajib diisi');
         }
 
         $lookup = ['kode_block', 'nama_lokasi', 'nama_produk', 'nomor_line', 'level', 'jumlah_deep', 'jumlah_kapasitas'];
