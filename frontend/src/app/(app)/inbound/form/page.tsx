@@ -241,7 +241,7 @@ const simpan = async () => {
       const no = idx + 1;
       if (it.id_produk <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Produk pada item ke-${no} belum dipilih.` }); continue; }
       if (angka(it.jumlah) <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Jumlah pada item ke-${no} belum benar.` }); continue; }
-      if (!it.no_batch && norm(it.best_before) === "") { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Best before pada item ke-${no} belum diisi.` }); continue; }
+      if (!isReject && !it.no_batch && norm(it.best_before) === "") { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Best before pada item ke-${no} belum diisi.` }); continue; }
       if (!it.no_batch && norm(it.asal_pabrik) === "") { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Asal pabrik pada item ke-${no} belum dipilih.` }); continue; }
 
       const bb = it.no_batch ? "9999-12-31" : (isReject ? "9999-12-31" : norm(it.best_before));
