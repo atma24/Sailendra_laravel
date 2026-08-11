@@ -9,18 +9,22 @@ use Illuminate\Support\Facades\DB;
 class LaporanController extends Controller
 {
     // =========================================================================
-    // 1. LAPORAN BARANG KELUAR (Ref: source 7)
+    // 1. LAPORAN BARANG KELUAR (Ref: laporan_barang_keluar.php)
     // =========================================================================
     public function exportBarangKeluar(Request $request)
     {
+        if (app()->environment('local')) {
+            @file_put_contents(storage_path('logs/laporan_debug.log'), json_encode($request->all()).PHP_EOL, FILE_APPEND);
+        }
+
         $mode = $request->input('mode', 'day');
         $format = $request->input('format', 'xlsx');
-        $date = $request->input('date');
+        $date = trim((string) $request->input('date', ''));
         $month = $request->input('month');
         $year = $request->input('year');
         $driver = $request->input('driver', '');
-        $startDate = $request->input('start_date');
-        $endDate = $request->input('end_date');
+        $startDate = trim((string) $request->input('start_date', ''));
+        $endDate = trim((string) $request->input('end_date', ''));
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
 
         $labelPeriode = $this->resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year);
@@ -39,17 +43,17 @@ class LaporanController extends Controller
                 'bk.catatan', 'bk.catatan_perubahan'
             );
 
-        // Filter Mode Tanggal
-        if ($mode === 'range' && $startDate && $endDate) {
+        $diterapkanFilter = true;
+        if ($mode === 'range' && $startDate !== '' && $endDate !== '') {
             $query->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$startDate, $endDate]);
-        } elseif ($mode === 'day' && $date) {
+        } elseif ($mode === 'day' && $date !== '') {
             $query->whereDate('bk.tanggal_keluar', $date);
         } elseif ($mode === 'month' && $month && $year) {
             $query->whereYear('bk.tanggal_keluar', $year)->whereMonth('bk.tanggal_keluar', $month);
         } elseif ($mode === 'year' && $year) {
             $query->whereYear('bk.tanggal_keluar', $year);
         } else {
-            $query->whereDate('bk.tanggal_keluar', date('Y-m-d'));
+            $diterapkanFilter = false;
         }
 
         if ($driver !== '') {
@@ -57,6 +61,11 @@ class LaporanController extends Controller
         }
 
         $query = $this->filterLokasi($query, 'bk.id_pengguna_lokasi', $idPenggunaLokasi);
+
+        if (! $diterapkanFilter) {
+            $query->whereDate('bk.tanggal_keluar', date('Y-m-d'));
+        }
+
         $rows = $query->orderBy('bk.tanggal_keluar', 'ASC')
             ->orderBy('bk.id_pengguna_lokasi', 'ASC')
             ->orderBy('bk.nama_driver', 'ASC')
@@ -104,17 +113,17 @@ class LaporanController extends Controller
     }
 
     // =========================================================================
-    // 2. LAPORAN BARANG MASUK (Ref: source 8)
+    // 2. LAPORAN BARANG MASUK (Ref: laporan_barang_masuk.php)
     // =========================================================================
     public function exportBarangMasuk(Request $request)
     {
         $mode = $request->input('mode', 'day');
         $format = $request->input('format', 'xlsx');
-        $date = $request->input('date');
+        $date = trim((string) $request->input('date', ''));
         $month = $request->input('month');
         $year = $request->input('year');
-        $startDate = $request->input('start_date');
-        $endDate = $request->input('end_date');
+        $startDate = trim((string) $request->input('start_date', ''));
+        $endDate = trim((string) $request->input('end_date', ''));
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
 
         $labelPeriode = $this->resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year);
@@ -127,25 +136,31 @@ class LaporanController extends Controller
                 'bm.tanggal_masuk', 'bm.nama_driver', 'bm.no_mobil', 'bm.no_dn',
                 'bm.tipe_penerimaan', 'bm.asal_pabrik', 'bm.nama_produk', 'bm.jumlah',
                 'bm.best_before', DB::raw('COALESCE(bm.batch_sekarang, bm.batch) AS batch'),
-'bm.satuan', 'bm.catatan',
-                DB::raw('SEC_TO_TIME(bm.durasi_detik) AS durasi_input'),
-                'bm.diperbarui_oleh', 'bm.catatan_perubahan',
-                DB::raw("DATE_FORMAT(bm.diperbarui_pada, '%Y-%m-%d %H:%i') AS diperbarui_pada")
+                'bm.satuan', 'bm.diperbarui_oleh', 'bm.catatan', 'bm.catatan_perubahan',
+                DB::raw("DATE_FORMAT(bm.diperbarui_pada, '%Y-%m-%d %H:%i') AS diperbarui_pada"),
+                DB::raw("DATE_FORMAT(bm.waktu_mulai_input, '%Y-%m-%d %H:%i:%s') AS waktu_mulai_input"),
+                DB::raw('SEC_TO_TIME(bm.durasi_detik) AS durasi_input')
             );
 
-        if ($mode === 'range' && $startDate && $endDate) {
+        $diterapkanFilter = true;
+        if ($mode === 'range' && $startDate !== '' && $endDate !== '') {
             $query->whereBetween(DB::raw('DATE(bm.tanggal_masuk)'), [$startDate, $endDate]);
-        } elseif ($mode === 'day' && $date) {
+        } elseif ($mode === 'day' && $date !== '') {
             $query->whereDate('bm.tanggal_masuk', $date);
         } elseif ($mode === 'month' && $month && $year) {
             $query->whereYear('bm.tanggal_masuk', $year)->whereMonth('bm.tanggal_masuk', $month);
         } elseif ($mode === 'year' && $year) {
             $query->whereYear('bm.tanggal_masuk', $year);
         } else {
-            $query->whereDate('bm.tanggal_masuk', date('Y-m-d'));
+            $diterapkanFilter = false;
         }
 
         $query = $this->filterLokasi($query, 'bm.id_pengguna_lokasi', $idPenggunaLokasi);
+
+        if (! $diterapkanFilter) {
+            $query->whereDate('bm.tanggal_masuk', date('Y-m-d'));
+        }
+
         $rows = $query->orderBy('bm.tanggal_masuk', 'ASC')
             ->orderBy('bm.id_pengguna_lokasi', 'ASC')
             ->orderBy('bm.nama_produk', 'ASC')
@@ -192,12 +207,24 @@ class LaporanController extends Controller
     }
 
     // =========================================================================
-    // 3. LAPORAN GABUNGAN MASUK & KELUAR (Ref: source 9)
+    // 3. LAPORAN GABUNGAN MASUK & KELUAR (Ref: laporan_gabungan.php)
     // =========================================================================
-public function exportGabungan(Request $request)
+    public function exportGabungan(Request $request)
     {
-        $from = $request->input('from', date('Y-m-01'));
-        $to = $request->input('to', date('Y-m-d'));
+        $from = trim((string) $request->input('from', ''));
+        $to = trim((string) $request->input('to', ''));
+        if ($from === '') {
+            $from = trim((string) $request->input('start_date', ''));
+        }
+        if ($to === '') {
+            $to = trim((string) $request->input('end_date', ''));
+        }
+        if ($from === '' || ! strtotime($from)) {
+            $from = date('Y-m-01');
+        }
+        if ($to === '' || ! strtotime($to)) {
+            $to = date('Y-m-d');
+        }
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
         $format = $request->input('format', 'xlsx');
 
@@ -205,17 +232,24 @@ public function exportGabungan(Request $request)
             ->leftJoin('pengguna_lokasi as pl', 'pl.id_pengguna_lokasi', '=', 'bm.id_pengguna_lokasi')
             ->leftJoin('pengguna as u', 'u.id_pengguna', '=', 'bm.id_pengguna')
             ->whereBetween(DB::raw('DATE(bm.tanggal_masuk)'), [$from, $to])
-            ->select('bm.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bm.tanggal_masuk) AS tgl_masuk'));
+            ->select('bm.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bm.tanggal_masuk) AS tanggal_masuk'));
         $queryInbound = $this->filterLokasi($queryInbound, 'bm.id_pengguna_lokasi', $idPenggunaLokasi);
-        $resInbound = $queryInbound->orderBy('bm.tanggal_masuk', 'ASC')->get();
+        $resInbound = $queryInbound->orderBy('bm.tanggal_masuk', 'ASC')
+            ->orderBy('bm.id_pengguna_lokasi', 'ASC')
+            ->orderBy('bm.nama_produk', 'ASC')
+            ->get();
 
         $queryOutbound = DB::table('barang_keluar as bk')
             ->leftJoin('pengguna_lokasi as pl', 'pl.id_pengguna_lokasi', '=', 'bk.id_pengguna_lokasi')
             ->leftJoin('pengguna as u', 'u.id_pengguna', '=', 'bk.id_pengguna')
             ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$from, $to])
-            ->select('bk.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bk.tanggal_keluar) AS tgl_keluar'), DB::raw('SEC_TO_TIME(bk.durasi_detik) AS durasi_input'));
+            ->select('bk.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bk.tanggal_keluar) AS tanggal_keluar'), DB::raw('SEC_TO_TIME(bk.durasi_detik) AS durasi_input'));
         $queryOutbound = $this->filterLokasi($queryOutbound, 'bk.id_pengguna_lokasi', $idPenggunaLokasi);
-$resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
+        $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')
+            ->orderBy('bk.id_pengguna_lokasi', 'ASC')
+            ->orderBy('bk.nama_driver', 'ASC')
+            ->orderBy('bk.nama_produk', 'ASC')
+            ->get();
 
         if ($format === 'json') {
             return response()->json([
@@ -226,7 +260,6 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
         }
 
         return $this->renderExcelResponse("Laporan Gabungan {$from} s-d {$to}.xls", function () use ($resInbound, $resOutbound, $from, $to) {
-            // Tabel Inbound
             echo "<table border='1'><tr><th colspan='16'>LAPORAN BARANG MASUK ({$from} s/d {$to})</th></tr>";
             echo '<tr><th>No</th><th>ID Lokasi</th><th>Nama Lokasi</th><th>Dibuat Oleh</th><th>Tanggal Masuk</th><th>Driver</th><th>No Mobil</th><th>No DN</th><th>Tipe Penerimaan</th><th>Asal Pabrik</th><th>Produk</th><th>Jumlah</th><th>Best Before</th><th>Batch</th><th>Satuan</th><th>Catatan</th></tr>';
             $no = 1;
@@ -236,7 +269,7 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
                     <td>'.htmlspecialchars($row->id_pengguna_lokasi ?? '').'</td>
                     <td>'.htmlspecialchars($row->nama_pengguna_lokasi ?? '').'</td>
                     <td>'.htmlspecialchars($row->dibuat_oleh ?? '').'</td>
-                    <td>'.htmlspecialchars($row->tgl_masuk ?? '').'</td>
+                    <td>'.htmlspecialchars($row->tanggal_masuk ?? '').'</td>
                     <td>'.htmlspecialchars($row->nama_driver ?? '').'</td>
                     <td>'.htmlspecialchars($row->no_mobil ?? '').'</td>
                     <td>'.htmlspecialchars($row->no_dn ?? '').'</td>
@@ -252,7 +285,6 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
             }
             echo '</table><br><br>';
 
-            // Tabel Outbound
             echo "<table border='1'><tr><th colspan='17'>LAPORAN BARANG KELUAR ({$from} s/d {$to})</th></tr>";
             echo '<tr><th>No</th><th>ID Lokasi</th><th>Nama Lokasi</th><th>Dibuat Oleh</th><th>Tanggal Keluar</th><th>Driver</th><th>No Mobil</th><th>Tipe Pengeluaran</th><th>Tujuan</th><th>Produk</th><th>Jumlah</th><th>Best Before</th><th>Batch</th><th>Satuan</th><th>Status</th><th>Durasi Input</th><th>Catatan</th></tr>';
             $no = 1;
@@ -262,7 +294,7 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
                     <td>'.htmlspecialchars($row->id_pengguna_lokasi ?? '').'</td>
                     <td>'.htmlspecialchars($row->nama_pengguna_lokasi ?? '').'</td>
                     <td>'.htmlspecialchars($row->dibuat_oleh ?? '').'</td>
-                    <td>'.htmlspecialchars($row->tgl_keluar ?? '').'</td>
+                    <td>'.htmlspecialchars($row->tanggal_keluar ?? '').'</td>
                     <td>'.htmlspecialchars($row->nama_driver ?? '').'</td>
                     <td>'.htmlspecialchars($row->no_mobil ?? '').'</td>
                     <td>'.htmlspecialchars($row->tipe_pengeluaran ?? '').'</td>
@@ -282,17 +314,17 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
     }
 
     // =========================================================================
-    // 4. LAPORAN MUTASI (Ref: source 10)
+    // 4. LAPORAN MUTASI (Ref: laporan_mutasi.php)
     // =========================================================================
     public function exportMutasi(Request $request)
     {
         $mode = $request->input('mode', 'day');
         $format = $request->input('format', 'xlsx');
-        $date = $request->input('date');
+        $date = trim((string) $request->input('date', ''));
         $month = $request->input('month');
         $year = $request->input('year');
-        $startDate = $request->input('start_date');
-        $endDate = $request->input('end_date');
+        $startDate = trim((string) $request->input('start_date', ''));
+        $endDate = trim((string) $request->input('end_date', ''));
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
 
         $labelPeriode = $this->resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year);
@@ -307,16 +339,21 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
                 'm.jenis_mutasi', 'm.lokasi_sumber', 'm.lokasi_tujuan', 'm.catatan'
             );
 
+        $diterapkanFilter = true;
         if ($mode !== 'all') {
-            if ($mode === 'range' && $startDate && $endDate) {
+            if ($mode === 'range' && $startDate !== '' && $endDate !== '') {
                 $query->whereBetween(DB::raw('DATE(m.created_at)'), [$startDate, $endDate]);
-            } elseif ($mode === 'day' && $date) {
+            } elseif ($mode === 'day' && $date !== '') {
                 $query->whereDate('m.created_at', $date);
             } elseif ($mode === 'month' && $month && $year) {
                 $query->whereYear('m.created_at', $year)->whereMonth('m.created_at', $month);
             } elseif ($mode === 'year' && $year) {
                 $query->whereYear('m.created_at', $year);
             } else {
+                $diterapkanFilter = false;
+            }
+
+            if (! $diterapkanFilter) {
                 $query->whereDate('m.created_at', date('Y-m-d'));
             }
         }
@@ -375,7 +412,7 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
     }
 
     // =========================================================================
-    // 5. LAPORAN STOCK OPNAME (Ref: source 11)
+    // 5. LAPORAN STOCK OPNAME (Ref: laporan_stok_opname.php)
     // =========================================================================
     public function exportStockOpname(Request $request)
     {
@@ -420,13 +457,14 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
                 <th>Best Before</th><th>Stok Fisik</th><th>Stok Sistem</th><th>Selisih</th>
                 <th>Satuan</th><th>Catatan Wajib</th><th>Stok Sebelumnya</th><th>Dirubah Oleh</th>
             </tr></thead><tbody>";
-
             foreach ($rows as $row) {
-                $waktuSimpan = ! empty($row->created_at) ? date('H:i', strtotime($row->created_at)) : '';
-                $selisih = (int) ($row->selisih ?? 0);
+                $waktuSimpan = '';
+                if (! empty($row->created_at)) {
+                    $waktuSimpan = date('H:i', strtotime($row->created_at));
+                }
+                $selisih = intval($row->selisih ?? 0);
                 $text_selisih = $selisih > 0 ? '+'.$selisih : $selisih;
-                $stok_sebelumnya = isset($row->stok_sebelumnya) ? (int) $row->stok_sebelumnya : '-';
-
+                $stok_sebelumnya = isset($row->stok_sebelumnya) ? intval($row->stok_sebelumnya) : '-';
                 echo '<tr>
                     <td>'.htmlspecialchars($row->tanggal_opname ?? '').'</td>
                     <td>'.htmlspecialchars($waktuSimpan).'</td>
@@ -447,7 +485,7 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
     }
 
     // =========================================================================
-    // PRIVATE HELPER METHODS
+    // 6. FORM PRINT STOCK OPNAME (bukan dari referensi, dipakai route tersendiri)
     // =========================================================================
     public function printReadyStockOpname(Request $request)
     {
@@ -478,7 +516,9 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
         return $pdf->download('Form_Stock_Opname_'.str_replace('-', '', date('Y-m-d')).'.pdf');
     }
 
-
+    // =========================================================================
+    // PRIVATE HELPER METHODS
+    // =========================================================================
     private function resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year)
     {
         if ($mode === 'range' && $startDate && $endDate) {
@@ -497,6 +537,10 @@ $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')->get();
     private function filterLokasi($query, $column, $idPenggunaLokasi)
     {
         if (! empty($idPenggunaLokasi) && $idPenggunaLokasi !== 'all') {
+            if (is_string($idPenggunaLokasi) && strpos($idPenggunaLokasi, ',') !== false) {
+                $idPenggunaLokasi = explode(',', $idPenggunaLokasi);
+            }
+
             if (is_array($idPenggunaLokasi)) {
                 $filteredIds = array_filter(array_map('trim', $idPenggunaLokasi), fn ($id) => $id !== 'all' && $id !== '');
                 if (! empty($filteredIds)) {

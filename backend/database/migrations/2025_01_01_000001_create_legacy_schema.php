@@ -136,7 +136,7 @@ CREATE TABLE `barang_masuk` (
   `batch` varchar(50) DEFAULT NULL,
   `batch_sekarang` varchar(50) DEFAULT NULL,
   `catatan` text DEFAULT NULL,
-  `satuan` enum('GALLON','BOX','MP') NOT NULL,
+  `satuan` enum('GALLON','BOX','MP','PCS') NOT NULL,
   `lokasi_block` varchar(100) DEFAULT NULL,
   `diperbarui_pada` datetime DEFAULT NULL,
   `diperbarui_oleh` varchar(100) DEFAULT NULL,

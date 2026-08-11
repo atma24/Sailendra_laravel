@@ -195,7 +195,7 @@ export default function ReportPage() {
       const sp = toQuery();
       sp.set("format", "json");
       const res = await apiGet<Preview>(`${ENDPOINT[type]}?${sp.toString()}`);
-      setPv((res as unknown as Preview) ?? null);
+      setPv((res?.data ?? res) as unknown as Preview ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Gagal memuat preview.");
     } finally { setLoading(false); }

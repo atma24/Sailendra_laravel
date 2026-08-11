@@ -167,11 +167,19 @@ class BarangMasukController extends Controller
             return $this->fail('Lokasi pengguna tidak sesuai dengan lokasi transaksi.', 403);
         }
 
-        $namaProduk = trim((string) DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk'));
-        if ($namaProduk === '') {
+        $produkRow = DB::table('produk')->where('id_produk', $idProduk)->first();
+        if (! $produkRow) {
             return $this->fail('Produk tidak ditemukan.');
         }
+        $namaProduk = trim((string) $produkRow->nama_produk);
+        $isiPerPcs = (int) $produkRow->isi_per_pcs > 0 ? (int) $produkRow->isi_per_pcs : 1;
 
+        // Otomatis ubah satuan ke PCS dan siapkan multiplier untuk REJECT (Kecuali Gallon)
+        $multiplier = 1;
+        if ($tipePenerimaan === 'REJECT' && strtoupper($satuan) !== 'GALLON' && strtoupper($satuan) !== 'PCS') {
+            $multiplier = $isiPerPcs;
+            $satuan = 'PCS';
+        }
         if (in_array($idProduk, self::PRODUK_TANPA_BATCH, true)) {
             $bestBefore = '9999-12-31';
             $asalPabrik = '-';
@@ -422,7 +430,7 @@ class BarangMasukController extends Controller
             DB::transaction(function () use (
                 $alokasiPerLine, $idPenggunaLokasi, $idPengguna, $idProduk, $namaProduk,
                 $satuan, $tanggalMasuk, $tipePenerimaan, $bestBefore, $batch, $asalPabrik,
-                $noDn, $namaDriver, $noMobil, $catatan, $waktuMulai, $durasiDetik,
+                $noDn, $namaDriver, $noMobil, $catatan, $waktuMulai, $durasiDetik, $multiplier,
                 &$idBarangMasukList, &$idStokList, &$ringkasanList, &$lokasiAkhirStr
             ) {
                 $parts = [];
@@ -431,14 +439,17 @@ class BarangMasukController extends Controller
                     foreach ($details as $det) {
                         $jumlahLine += $det['jumlah'];
                     }
-                    $parts[] = $lineLabel.' ('.$jumlahLine.')';
+                    
+                    // Kalikan total dengan multiplier (jika reject akan dikali isi_per_pcs)
+                    $jumlahTersimpan = $jumlahLine * $multiplier;
+                    $parts[] = $lineLabel.' ('.$jumlahTersimpan.')';
 
                     $idBm = DB::table('barang_masuk')->insertGetId([
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_pengguna' => $idPengguna,
                         'id_produk' => $idProduk,
                         'nama_produk' => $namaProduk,
-                        'jumlah' => $jumlahLine,
+                        'jumlah' => $jumlahTersimpan,
                         'satuan' => $satuan,
                         'tanggal_masuk' => $tanggalMasuk,
                         'tipe_penerimaan' => $tipePenerimaan,
@@ -462,7 +473,7 @@ class BarangMasukController extends Controller
                         'id_produk' => $idProduk,
                         'nama_produk' => $namaProduk,
                         'id_barang_masuk' => $idBm,
-                        'jumlah_sisa' => $jumlahLine,
+                        'jumlah_sisa' => $jumlahTersimpan,
                         'batch' => $batch,
                         'satuan' => $satuan,
                         'best_before' => $bestBefore,
@@ -476,7 +487,7 @@ class BarangMasukController extends Controller
                             'id_pengguna_lokasi' => $idPenggunaLokasi,
                             'id_stok_header' => $idStok,
                             'id_deep' => $det['id_deep'],
-                            'jumlah' => $det['jumlah'],
+                            'jumlah' => $det['jumlah'] * $multiplier,
                             'best_before' => $bestBefore,
                             'batch' => $batch,
                             'lokasi_block' => $lineLabel,
@@ -484,7 +495,7 @@ class BarangMasukController extends Controller
                         ]);
                     }
 
-                    $ringkasanList[] = ['line' => $lineLabel, 'qty' => $jumlahLine];
+                    $ringkasanList[] = ['line' => $lineLabel, 'qty' => $jumlahTersimpan];
                 }
                 $lokasiAkhirStr = implode(', ', $parts);
             });
@@ -1471,12 +1482,12 @@ class BarangMasukController extends Controller
 
         $punyaLayoutPrioritas = ! empty(array_filter([$deepProduk, $levelProduk, $lineProduk, $blockProduk, $lokasiProduk]));
 
-        // Kandidat staging untuk Secondary (block RECEH / TRANSIT)
+    
         $stagingCandidates = [];
-        if ($isSecondary) {
+        if ($isSecondary || $tipePenerimaan === 'REJECT') {
             
-            // FIX BUG 3: Cari tau produk ini ada di lokasi mana (Gallon / SPS) 
-            // berdasarkan layout prioritasnya agar tidak nyasar ke transit area lain.
+            // Cari tau produk ini ada di lokasi mana (Gallon / SPS) 
+            // berdasarkan layout prioritasnya agar tidak nyasar ke transit/reject area lain.
             $lokasiPrioritasProduk = DB::table('prioritas_lokasi_produk as p')
                 ->leftJoin('block as b', 'b.id_block', '=', 'p.id_block')
                 ->leftJoin('line as ln', 'ln.id_line', '=', 'p.id_line')
@@ -1489,17 +1500,22 @@ class BarangMasukController extends Controller
                 ->unique()
                 ->toArray();
 
-            $qStaging = $this->baseDeep($idPenggunaLokasi)
-                ->whereRaw("(UPPER(TRIM(b.kode_block)) = 'RECEH' OR UPPER(TRIM(b.kode_block)) = 'TRANSIT')");
+            $qStaging = $this->baseDeep($idPenggunaLokasi);
 
-            // Filter block RECEH/TRANSIT agar HANYA di lokasi yang sesuai dengan area produk
+            if ($isSecondary) {
+                $qStaging->whereRaw("(UPPER(TRIM(b.kode_block)) = 'RECEH' OR UPPER(TRIM(b.kode_block)) = 'TRANSIT')")
+                         ->orderByRaw("CASE WHEN UPPER(TRIM(b.kode_block)) = 'RECEH' THEN 0 WHEN UPPER(TRIM(b.kode_block)) = 'TRANSIT' THEN 1 ELSE 2 END ASC, b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
+            } else {
+                // Tipe Penerimaan REJECT (pakai LIKE biar deteksi "BLOCK REJECT")
+                $qStaging->whereRaw("UPPER(TRIM(b.kode_block)) LIKE '%REJECT%'")
+                         ->orderByRaw("b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
+            }
+
             if (!empty($lokasiPrioritasProduk)) {
                 $qStaging->whereIn('l.id_lokasi', $lokasiPrioritasProduk);
             }
 
-            $stagingCandidates = $qStaging
-                ->orderByRaw("CASE WHEN UPPER(TRIM(b.kode_block)) = 'RECEH' THEN 0 WHEN UPPER(TRIM(b.kode_block)) = 'TRANSIT' THEN 1 ELSE 2 END ASC, b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC")
-                ->get()->map(fn ($r) => (array) $r)->all();
+            $stagingCandidates = $qStaging->get()->map(fn ($r) => (array) $r)->all();
         }
 
         // Kandidat prioritas
@@ -2284,7 +2300,8 @@ class BarangMasukController extends Controller
     {
         return function ($q) use ($tipePenerimaan) {
             if ($tipePenerimaan === 'REJECT') {
-                $q->whereRaw("UPPER(TRIM(b.kode_block)) = 'REJECT'");
+                // FIX BUG BLOCK: Ubah pencarian menjadi LIKE agar mendeteksi "BLOCK REJECT"
+                $q->whereRaw("UPPER(TRIM(b.kode_block)) LIKE '%REJECT%'");
                 return;
             }
             $exclude = ['BS', 'BAD', 'BADSTOCK', 'REJECT', 'RECEH', 'TRANSIT', 'FESTIVE'];

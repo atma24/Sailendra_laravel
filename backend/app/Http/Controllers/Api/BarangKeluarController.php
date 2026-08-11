@@ -255,26 +255,105 @@ public function store(Request $request)
                 continue;
             }
 
-            $payload['id_pengguna_lokasi'] = trim($payload['id_pengguna_lokasi'] ?? ($in['id_pengguna_lokasi'] ?? ''));
+            $idPenggunaLokasi = trim($payload['id_pengguna_lokasi'] ?? ($in['id_pengguna_lokasi'] ?? ''));
+            $payload['id_pengguna_lokasi'] = $idPenggunaLokasi;
             $payload['tipe_pengeluaran'] = trim($payload['tipe_pengeluaran'] ?? 'Secondary');
             $payload['status'] = 'Draft';
             $payload['catatan'] = trim($payload['catatan'] ?? 'Upload Excel');
+
+            // --- INTERCEPTOR STATUS SELESAI ---
+            $ginNo = trim($payload['gin_no']);
+            $isSelesai = false;
+
+            $existing = DB::table('barang_keluar')
+                ->where('gin_no', $ginNo)
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->get();
+                
+            if ($existing->isNotEmpty()) {
+                $statusFirst = strtolower(trim($existing->first()->status));
+                if (in_array($statusFirst, ['selesai', 'confirmed'])) {
+                    $isSelesai = true;
+                    $driverBaru = trim($payload['nama_driver'] ?? '');
+                    $adaUpdate = false;
+                    
+                    DB::beginTransaction();
+                    try {
+                        foreach ($existing as $ex) {
+                            $updateData = [];
+                            
+                            // 1. Replace Driver Name
+                            if ($driverBaru !== '' && $ex->nama_driver !== $driverBaru) {
+                                $updateData['nama_driver'] = $driverBaru;
+                            }
+                            
+                            // 2. Fill up SO Number (Append Unique)
+                            $soToAppend = [];
+                            foreach ($payload['items'] as $it) {
+                                if ($it['id_produk'] == $ex->id_produk && !empty($it['so_number'])) {
+                                    $soToAppend[] = trim($it['so_number']);
+                                }
+                            }
+                            
+                            if (!empty($soToAppend)) {
+                                $existingSoArr = array_filter(array_map('trim', explode(',', $ex->so_number ?? '')));
+                                foreach ($soToAppend as $newSo) {
+                                    $newSoArr = array_filter(array_map('trim', explode(',', $newSo)));
+                                    foreach ($newSoArr as $n) {
+                                        if (!in_array($n, $existingSoArr)) {
+                                            $existingSoArr[] = $n;
+                                        }
+                                    }
+                                }
+                                $mergedSo = implode(', ', $existingSoArr);
+                                if ($mergedSo !== $ex->so_number) {
+                                    $updateData['so_number'] = $mergedSo;
+                                }
+                            }
+                            
+                            if (!empty($updateData)) {
+                                DB::table('barang_keluar')
+                                    ->where('id_barang_keluar', $ex->id_barang_keluar)
+                                    ->update($updateData);
+                                $adaUpdate = true;
+                            }
+                        }
+                        DB::commit();
+                        
+                        if ($adaUpdate) {
+                            $updated++;
+                        } else {
+                            $skipped++;
+                        }
+                    } catch (Throwable $e) {
+                        DB::rollBack();
+                        $failed++;
+                        $details[] = $ginNo . ': Gagal update data Selesai - ' . $e->getMessage();
+                    }
+                }
+            }
+            
+            // Bypass simpanOutbound sepenuhnya jika status Selesai
+            if ($isSelesai) {
+                continue;
+            }
+            // ------------------------------------------
 
             try {
                 $this->simpanOutbound($payload);
                 $inserted++;
             } catch (Throwable $e) {
                 $failed++;
-                $details[] = trim($payload['gin_no'] ?? '') . ': ' . $e->getMessage();
+                $details[] = $ginNo . ': ' . $e->getMessage();
             }
         }
 
         $msg = "Upload batch selesai! $inserted GIN berhasil ditambahkan.";
         if ($updated > 0) {
-            $msg .= " $updated GIN diperbarui (SO Number).";
+            $msg .= " $updated GIN diperbarui (SO Number / Driver).";
         }
         if ($skipped > 0) {
-            $msg .= " $skipped GIN dilewati (sudah Selesai/Pending).";
+            $msg .= " $skipped GIN dilewati (sudah Selesai/Pending/Tanpa Perubahan).";
         }
         if ($failed > 0) {
             $msg .= " $failed GIN gagal: " . implode('; ', $details);
@@ -282,7 +361,6 @@ public function store(Request $request)
 
         return $this->ok(['inserted' => $inserted, 'updated' => $updated, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
     }
-
     // =========================================================================
     // 4c. UPLOAD FILE EXCEL/CSV (Ref: Outbound::upload_excel)
     //     Parse file di server, grouping per GIN, simpan sebagai Draft.
@@ -438,8 +516,91 @@ public function store(Request $request)
         $skipped = 0;
         $failed = 0;
         $details = [];
+        
         foreach ($grouped as $payload) {
             unset($payload['_seen']);
+            
+            // --- INTERCEPTOR STATUS SELESAI ---
+            $ginNo = trim($payload['gin_no'] ?? '');
+            $isSelesai = false;
+            
+            if ($ginNo !== '') {
+                $existing = DB::table('barang_keluar')
+                    ->where('gin_no', $ginNo)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->get();
+                    
+                if ($existing->isNotEmpty()) {
+                    $statusFirst = strtolower(trim($existing->first()->status));
+                    if (in_array($statusFirst, ['selesai', 'confirmed'])) {
+                        $isSelesai = true;
+                        
+                        $driverBaru = trim($payload['nama_driver'] ?? '');
+                        $adaUpdate = false;
+                        
+                        DB::beginTransaction();
+                        try {
+                            foreach ($existing as $ex) {
+                                $updateData = [];
+                                
+                                // 1. Replace Driver Name
+                                if ($driverBaru !== '' && $ex->nama_driver !== $driverBaru) {
+                                    $updateData['nama_driver'] = $driverBaru;
+                                }
+                                
+                                // 2. Fill Up SO Number (Append Unique)
+                                $soToAppend = [];
+                                foreach ($payload['items'] as $it) {
+                                    if ($it['id_produk'] == $ex->id_produk && !empty($it['so_number'])) {
+                                        $soToAppend[] = trim($it['so_number']);
+                                    }
+                                }
+                                
+                                if (!empty($soToAppend)) {
+                                    $existingSoArr = array_filter(array_map('trim', explode(',', $ex->so_number ?? '')));
+                                    foreach ($soToAppend as $newSo) {
+                                        $newSoArr = array_filter(array_map('trim', explode(',', $newSo)));
+                                        foreach ($newSoArr as $n) {
+                                            if (!in_array($n, $existingSoArr)) {
+                                                $existingSoArr[] = $n;
+                                            }
+                                        }
+                                    }
+                                    $mergedSo = implode(', ', $existingSoArr);
+                                    if ($mergedSo !== $ex->so_number) {
+                                        $updateData['so_number'] = $mergedSo;
+                                    }
+                                }
+                                
+                                if (!empty($updateData)) {
+                                    DB::table('barang_keluar')
+                                        ->where('id_barang_keluar', $ex->id_barang_keluar)
+                                        ->update($updateData);
+                                    $adaUpdate = true;
+                                }
+                            }
+                            DB::commit();
+                            
+                            if ($adaUpdate) {
+                                $updated++;
+                            } else {
+                                $skipped++;
+                            }
+                        } catch (Throwable $e) {
+                            DB::rollBack();
+                            $failed++;
+                            $details[] = $ginNo . ': Gagal update data Selesai - ' . $e->getMessage();
+                        }
+                    }
+                }
+            }
+            
+            // Bypass simpanOutbound sepenuhnya jika status Selesai
+            if ($isSelesai) {
+                continue;
+            }
+            // ------------------------------------------
+
             try {
                 $this->simpanOutbound($payload);
                 $inserted++;
@@ -640,6 +801,17 @@ public function store(Request $request)
         $statusInput = in_array(trim($in['status'] ?? ''), ['Draft', 'Pending']) ? trim($in['status']) : 'Pending';
         $waktuMulaiInput = ! empty($in['waktu_mulai_input']) ? trim($in['waktu_mulai_input']) : null;
         $durasiDetik = ! empty($in['durasi_detik']) ? (int) $in['durasi_detik'] : null;
+
+        // --- TAMBAHAN GUARD ---
+        if ($ginNo !== '' && $idPenggunaLokasi !== '') {
+            $cekSelesai = DB::table('barang_keluar')->where('gin_no', $ginNo)
+                            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                            ->whereIn(DB::raw('LOWER(TRIM(status))'), ['selesai', 'confirmed'])->exists();
+            if ($cekSelesai) {
+                throw new Exception("GIN {$ginNo} sudah berstatus Selesai. Pembaruan kuantitas dan status ditolak sistem.");
+            }
+        }
+        // ----------------------
 
         if ($idPenggunaLokasi === '') {
             throw new Exception('id_pengguna_lokasi wajib');

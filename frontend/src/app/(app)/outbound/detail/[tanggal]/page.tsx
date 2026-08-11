@@ -156,6 +156,8 @@ export default function OutboundDetailPage() {
   const [showQr, setShowQr] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmOne, setConfirmOne] = useState<BkDetail | null>(null);
+  // --- Script Tambahan Timer ---
+  const waktuMulaiRef = useRef<Date | null>(null);
 
   // header form
   const [hMobil, setHMobil] = useState("");
@@ -223,8 +225,21 @@ export default function OutboundDetailPage() {
           dsp.append("id_pengguna_lokasi", String(myRows[0]?.id_pengguna_lokasi || idPenggunaLokasi()));
           const d = await apiGet<{ data: BkDetail; items: BkDetail[] }>(`/barang-keluar/detail?${dsp.toString()}`);
           if (!cancelled) {
-            setHeader(d.data?.data || null);
+            const fetchedHeader = d.data?.data || null;
+            setHeader(fetchedHeader);
             setItems(d.data?.items || []);
+            
+            // --- Script Tambahan Timer (Revisi) ---
+            if (fetchedHeader?.waktu_mulai_input) {
+              // Jika di DB sudah ada waktu mulainya, teruskan dari waktu tersebut
+              // Replace '-' dengan '/' agar aman di-parse oleh browser Safari/iOS
+              const parsedDate = new Date(fetchedHeader.waktu_mulai_input.replace(/-/g, '/'));
+              waktuMulaiRef.current = parsedDate;
+            } else {
+              // Jika belum ada sama sekali di DB (baru pertama buka Draft), catat waktu sekarang
+              waktuMulaiRef.current = new Date();
+            }
+            // --------------------------------------
           }
         }
         if (!cancelled) setProdukList((pr.data || []).sort((a, b) => angka(a.id_produk) - angka(b.id_produk)));
@@ -453,11 +468,33 @@ export default function OutboundDetailPage() {
     if (firstId <= 0) return;
     setBusy(true);
     try {
+      // --- Script Tambahan Timer (Revisi) ---
+      let waktuMulaiStr: string | undefined = undefined;
+      let durasiDetik: number | undefined = undefined;
+
+      if (waktuMulaiRef.current) {
+        // Format Date ke YYYY-MM-DD HH:mm:ss untuk dikirim ke database
+        const pad = (n: number) => n.toString().padStart(2, "0");
+        const d = waktuMulaiRef.current;
+        waktuMulaiStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+        // Durasi HANYA dihitung jika aksinya konfirmasi
+        if (aksi === "konfirmasi") {
+          const waktuSelesai = new Date();
+          durasiDetik = Math.floor((waktuSelesai.getTime() - d.getTime()) / 1000);
+        }
+      }
+      // --------------------------------------
+
       await apiPost("/barang-keluar/update", {
         id_barang_keluar: firstId,
         id_pengguna_lokasi: String(header?.id_pengguna_lokasi || idPenggunaLokasi()),
         aksi,
+        // --- Sisipkan payload timer ---
+        waktu_mulai_input: waktuMulaiStr, 
+        durasi_detik: durasiDetik,
       });
+
       notify("success", aksi === "revert_to_draft" ? "Outbound dikembalikan ke Draft." : aksi === "konfirmasi" ? "Konfirmasi outbound berhasil." : "Outbound disubmit ke Pending.");
       window.location.reload();
     } catch (e) {
