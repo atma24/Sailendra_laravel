@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiPost, apiGet } from "@/lib/api";
-import { isMultiRole, useSession } from "@/lib/auth";
+import { aktifLokasiId, useSession } from "@/lib/auth";
 
 type Produk = { id_produk: number; nama_produk: string; satuan: string };
 type Plant = { id_plant: string; nama_plant: string };
@@ -166,9 +166,7 @@ export default function OutboundFormPage() {
 
   if (!session || !loaded) return null;
 
-  const idPenggunaLokasi = isMultiRole(session.user.role)
-    ? String(session.lokasi[0] ?? "")
-    : String(session.user.id_pengguna_lokasi || "");
+  const idPenggunaLokasi = aktifLokasiId(session);
 
   const emptyItem = (): Item => ({ id_produk: 0, nama_produk: "", satuan: "", jumlah: "", id_line: 0, batch: "", best_before: "" });
 

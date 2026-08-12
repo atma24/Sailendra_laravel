@@ -30,6 +30,18 @@ class StokController extends Controller
         return $u;
     }
 
+    private function resolveLokasiIds(Request $request): array
+    {
+        $multi = trim((string) $request->query('id_pengguna_lokasi_multi', ''));
+        if ($multi !== '') {
+            return array_values(array_filter(array_map('trim', explode(',', $multi)), fn ($id) => $id !== ''));
+        }
+
+        $single = trim((string) $request->query('id_pengguna_lokasi', ''));
+
+        return $single !== '' ? [$single] : [];
+    }
+
     private function zonaWhere(string $zona): string
     {
         $loc = "UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line)))";
@@ -74,7 +86,7 @@ class StokController extends Controller
     public function __invoke(Request $request): JsonResponse
     {
         try {
-            $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi', ''));
+            $lokasiIds = $this->resolveLokasiIds($request);
             $rawMode = strtolower(trim((string) $request->query('mode', '')));
             $idProduk = (int) $request->query('id_produk', 0);
             $zonaParam = strtolower(trim((string) $request->query('zona', 'normal')));
@@ -100,7 +112,7 @@ class StokController extends Controller
 
             $zonaWhere = $zona === 'all' ? '' : $this->zonaWhere($zona);
 
-            $result = $this->build($mode, $idPenggunaLokasi, $idProduk, $zona, $zonaWhere, $request);
+            $result = $this->build($mode, $lokasiIds, $idProduk, $zona, $zonaWhere, $request);
 
             if (isset($result['error'])) {
                 return $this->fail($result['error']);
@@ -131,12 +143,27 @@ class StokController extends Controller
         }
     }
 
-    private function build(string $mode, string $lok, int $idProduk, string $zona, string $zonaWhere, Request $request): array
+    private function build(string $mode, array $lokArr, int $idProduk, string $zona, string $zonaWhere, Request $request): array
     {
-        $lokS = $lok !== '' ? ' AND sg.id_pengguna_lokasi = ?' : '';
-        $lokD = $lok !== '' ? ' AND sd.id_pengguna_lokasi = ?' : '';
+        $lokCount = count($lokArr);
 
-        $baseBind = $lok !== '' ? [$lok, $lok] : [];
+        if ($lokCount === 1) {
+            $lokSgSd = ' AND sg.id_pengguna_lokasi = ? AND sd.id_pengguna_lokasi = ?';
+            $baseBind = [$lokArr[0], $lokArr[0]];
+            $whereB = ' WHERE b.id_pengguna_lokasi = ?';
+            $bindB = [$lokArr[0]];
+        } elseif ($lokCount > 1) {
+            $ph = implode(',', array_fill(0, $lokCount, '?'));
+            $lokSgSd = " AND sg.id_pengguna_lokasi IN ($ph) AND sd.id_pengguna_lokasi IN ($ph)";
+            $baseBind = array_merge($lokArr, $lokArr);
+            $whereB = " WHERE b.id_pengguna_lokasi IN ($ph)";
+            $bindB = $lokArr;
+        } else {
+            $lokSgSd = '';
+            $baseBind = [];
+            $whereB = '';
+            $bindB = [];
+        }
 
         $satuan = $this->satuanCaseSg();
 
@@ -153,7 +180,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? {$lokSgSd}{$zonaWhere}
                     GROUP BY l.id_lokasi, l.nama_lokasi, l.kategori
                     ORDER BY l.nama_lokasi ASC";
 
@@ -175,7 +202,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND b.id_lokasi = ? {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND b.id_lokasi = ? {$lokSgSd}{$zonaWhere}
                     GROUP BY b.id_block, b.id_lokasi, b.kode_block
                     ORDER BY b.kode_block ASC";
 
@@ -197,7 +224,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_block = ? {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_block = ? {$lokSgSd}{$zonaWhere}
                     GROUP BY ln.id_line, ln.id_block, ln.nomor_line
                     ORDER BY CAST(ln.nomor_line AS UNSIGNED) ASC, ln.nomor_line ASC";
 
@@ -233,7 +260,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? {$lokSgSd}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(sg.nama_produk, p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         COALESCE(sd.batch, sg.batch),
@@ -262,7 +289,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 {$lokS}{$lokD}
+                    WHERE sd.jumlah > 0 {$lokSgSd}
                     GROUP BY sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         {$satuan},
@@ -288,7 +315,7 @@ class StokController extends Controller
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
                     LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    WHERE sd.jumlah > 0 {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sd.jumlah > 0 {$lokSgSd}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         UPPER(COALESCE(l.kategori, l.nama_lokasi, 'LAINNYA')),
@@ -316,7 +343,7 @@ class StokController extends Controller
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
                     LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    WHERE sd.jumlah > 0 {$lokS}{$lokD}{$whereProduk}{$zonaWhere}
+                    WHERE sd.jumlah > 0 {$lokSgSd}{$whereProduk}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         UPPER(COALESCE(l.kategori, l.nama_lokasi, 'LAINNYA')),
@@ -347,7 +374,7 @@ class StokController extends Controller
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
                     LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokSgSd}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         {$satuan},
@@ -378,7 +405,7 @@ class StokController extends Controller
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
                     LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokS}{$lokD}{$zonaWhere}
+                    WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokSgSd}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         {$satuan},
@@ -389,7 +416,6 @@ class StokController extends Controller
                 return ['sql' => $sql, 'bind' => array_merge([$idProduk], $baseBind)];
 
             case 'kapasitas':
-                $whereB = $lok !== '' ? ' WHERE b.id_pengguna_lokasi = ?' : '';
                 $sql = "SELECT
                     UPPER(COALESCE(l.kategori, l.nama_lokasi, 'LAINNYA')) AS kategori,
                     SUM(COALESCE(d.kapasitas,0)) AS total_kapasitas
@@ -402,10 +428,10 @@ class StokController extends Controller
                     GROUP BY UPPER(COALESCE(l.kategori, l.nama_lokasi, 'LAINNYA'))
                     ORDER BY kategori ASC";
 
-                return ['sql' => $sql, 'bind' => $lok !== '' ? [$lok] : []];
+                return ['sql' => $sql, 'bind' => $bindB];
 
             case 'kapasitas_produk':
-                return $this->kapasitasProduk($lok);
+                return $this->kapasitasProduk($lokArr);
 
             default:
                 $sql = "SELECT
@@ -423,7 +449,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    WHERE sd.jumlah > 0 {$lokS}{$lokD}
+                    WHERE sd.jumlah > 0 {$lokSgSd}
                     GROUP BY sg.id_stok, sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         sg.id_barang_masuk,
@@ -437,11 +463,25 @@ class StokController extends Controller
         }
     }
 
-    private function kapasitasProduk(string $lok): array
+    private function kapasitasProduk(array $lokArr): array
     {
         $satuan = $this->satuanCaseP();
-        $wherePlp = $lok !== '' ? ' AND plp.id_pengguna_lokasi = ?' : '';
-        $bind = $lok !== '' ? [$lok] : [];
+
+        $lokCount = count($lokArr);
+        if ($lokCount === 1) {
+            $wherePlp = ' AND plp.id_pengguna_lokasi = ?';
+            $repeatBind = array_fill(0, 5, $lokArr[0]);
+        } elseif ($lokCount > 1) {
+            $ph = implode(',', array_fill(0, $lokCount, '?'));
+            $wherePlp = " AND plp.id_pengguna_lokasi IN ($ph)";
+            $repeatBind = [];
+            for ($i = 0; $i < 5; $i++) {
+                $repeatBind = array_merge($repeatBind, $lokArr);
+            }
+        } else {
+            $wherePlp = '';
+            $repeatBind = [];
+        }
 
         $seg = "SELECT
             p.id_produk,
@@ -533,9 +573,6 @@ class StokController extends Controller
             ) AS x
             GROUP BY x.id_produk, x.nama_produk, x.kategori_lokasi, x.satuan
             ORDER BY x.kategori_lokasi ASC, x.nama_produk ASC";
-
-        // binding lokasi dipakai 5x (sekali per segment)
-        $repeatBind = $lok !== '' ? array_fill(0, 5, $lok) : [];
 
         return ['sql' => $sql, 'bind' => $repeatBind];
     }

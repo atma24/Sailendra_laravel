@@ -426,16 +426,16 @@ class LaporanController extends Controller
             ]);
         }
 
-        $id_pengguna_lokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+        $id_pengguna_lokasi = $this->resolveLokasiIds($request);
         $tanggal_opname = $request->input('tanggal_opname') ?: date('Y-m-d');
         $created_at = trim((string) $request->input('created_at', ''));
 
-        if ($id_pengguna_lokasi === '') {
+        if (empty($id_pengguna_lokasi)) {
             return response('id_pengguna_lokasi wajib diisi', 400, ['Content-Type' => 'text/plain; charset=utf-8']);
         }
 
         $query = DB::table('stok_opname')
-            ->where('id_pengguna_lokasi', $id_pengguna_lokasi)
+            ->whereIn('id_pengguna_lokasi', $id_pengguna_lokasi)
             ->where('tanggal_opname', $tanggal_opname);
 
         if ($created_at !== '') {
@@ -489,21 +489,23 @@ class LaporanController extends Controller
     // =========================================================================
     public function printReadyStockOpname(Request $request)
     {
-        $id_pengguna_lokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+        $id_pengguna_lokasi = $this->resolveLokasiIds($request);
 
-        if ($id_pengguna_lokasi === '') {
+        if (empty($id_pengguna_lokasi)) {
             return response('id_pengguna_lokasi wajib diisi', 400, ['Content-Type' => 'text/plain; charset=utf-8']);
         }
+
+        $placeholders = implode(',', array_fill(0, count($id_pengguna_lokasi), '?'));
 
         $rows = DB::select(
             "SELECT p.id_produk, p.nama_produk
              FROM stok_gudang_deep sd
              JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header AND sg.id_pengguna_lokasi = sd.id_pengguna_lokasi
              JOIN produk p ON p.id_produk = sg.id_produk
-             WHERE sd.id_pengguna_lokasi = ? AND sd.jumlah > 0
+             WHERE sd.id_pengguna_lokasi IN ($placeholders) AND sd.jumlah > 0
              GROUP BY p.id_produk, p.nama_produk
              ORDER BY p.nama_produk ASC",
-            [$id_pengguna_lokasi]
+            $id_pengguna_lokasi
         );
 
         $html = view('pdf.stok-opname-form', [
@@ -519,6 +521,18 @@ class LaporanController extends Controller
     // =========================================================================
     // PRIVATE HELPER METHODS
     // =========================================================================
+    private function resolveLokasiIds(Request $request): array
+    {
+        $multi = trim((string) $request->input('id_pengguna_lokasi_multi', ''));
+        if ($multi !== '') {
+            return array_values(array_filter(array_map('trim', explode(',', $multi)), fn ($id) => $id !== ''));
+        }
+
+        $single = trim((string) $request->input('id_pengguna_lokasi', ''));
+
+        return $single !== '' ? [$single] : [];
+    }
+
     private function resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year)
     {
         if ($mode === 'range' && $startDate && $endDate) {

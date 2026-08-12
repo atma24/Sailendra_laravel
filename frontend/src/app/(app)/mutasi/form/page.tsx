@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
-import { useSession } from "@/lib/auth";
+import { aktifLokasiId, useSession } from "@/lib/auth";
 
 type Produk = { id_produk: number; nama_produk: string; satuan: string; isi_per_pcs: number };
 type Lokasi = { id_lokasi: number; nama_lokasi: string; kategori: string };
@@ -122,7 +122,7 @@ export default function MutasiFormPage() {
   };
   const closeToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
 
-  const idPenggunaLokasi = () => String(session?.user.id_pengguna_lokasi || "");
+  const idPenggunaLokasi = () => (session ? aktifLokasiId(session) : "");
 
   useEffect(() => {
     if (!session) return;

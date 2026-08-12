@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { api, apiGet, apiPost } from "@/lib/api";
-import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 
 type BmRow = {
   id_barang_masuk: number;
@@ -211,7 +211,7 @@ export default function InboundDetailPage() {
     setBusy(true);
     try {
       const payload: Record<string, unknown> = {
-        id_pengguna_lokasi: String(session.user.id_pengguna_lokasi || ""),
+        id_pengguna_lokasi: aktifLokasiId(session),
         nama_pengguna: session.user.username,
         tanggal_masuk: hTanggal,
         nama_driver: hDriver || "Tanpa nama driver",
@@ -248,7 +248,7 @@ export default function InboundDetailPage() {
     try {
       const payload: Record<string, unknown> = {
         id_barang_masuk: showItem.id_barang_masuk,
-        id_pengguna_lokasi: String(session.user.id_pengguna_lokasi || ""),
+        id_pengguna_lokasi: aktifLokasiId(session),
         nama_pengguna: session.user.username,
         jumlah: j,
       };

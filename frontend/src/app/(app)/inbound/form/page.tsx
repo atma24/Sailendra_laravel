@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiPost, apiGet } from "@/lib/api";
-import { isMultiRole, useSession } from "@/lib/auth";
+import { aktifLokasiId, useSession } from "@/lib/auth";
 
 type Produk = { id_produk: number; nama_produk: string; satuan: string };
 type Plant = { id_plant: string; nama_plant: string };
 type PreviewRec = { id_deep: number; alokasi: number; label_lokasi: string; kode_block: string; nomor_line: number; label_line: string };
+type KonversiLevel = { level: number; jumlah_deep: number };
+type KonversiLine = { id_line: number; kode_block: string; nomor_line: number; label_line: string; produk_lama: string; levels: KonversiLevel[]; jumlah_deep: number; kapasitas_baru: number; kapasitas_total: number };
 
 type Item = {
   id_produk: number;
@@ -20,6 +22,7 @@ type Item = {
   alokasi: { id_deep: number; jumlah: number }[];
   block_preview: string;
   no_batch: boolean;
+  konversi: number[];
 };
 
 type ResultItem = { nama_produk: string; message: string; lokasi?: string; slot?: string };
@@ -125,6 +128,7 @@ export default function InboundFormPage() {
   const [results, setResults] = useState<{ success: ResultItem[]; failed: ResultItem[] } | null>(null);
   const [toasts, setToasts] = useState<{ id: number; type: string; msg: string }[]>([]);
   const toastSeq = useRef(0);
+  const [konfirmasiKonversi, setKonfirmasiKonversi] = useState<{ idx: number; lines: KonversiLine[]; alokasi: { id_deep: number; jumlah: number }[]; lokasi_line: string } | null>(null);
 
   const startTime = useRef(new Date());
   const [timer, setTimer] = useState(0);
@@ -153,16 +157,14 @@ export default function InboundFormPage() {
 
   if (!session || !loaded) return null;
 
-  const idPenggunaLokasi = isMultiRole(session.user.role)
-    ? String(session.lokasi[0] ?? "")
-    : String(session.user.id_pengguna_lokasi || "");
+  const idPenggunaLokasi = aktifLokasiId(session);
 
   const isReject = tipe === "REJECT";
   const isNoBatchGlobal = (id: number) => PRODUK_TANPA_BATCH.includes(id);
 
   const emptyItem = (): Item => ({
     id_produk: 0, nama_produk: "", satuan: "", jumlah: "", best_before: "",
-    asal_pabrik: "", lokasi_line: "", alokasi: [], block_preview: "", no_batch: false,
+    asal_pabrik: "", lokasi_line: "", alokasi: [], block_preview: "", no_batch: false, konversi: [],
   });
 
   const addItem = () => setItems((arr) => [...arr, emptyItem()]);
@@ -189,7 +191,7 @@ export default function InboundFormPage() {
     if (!it || it.id_produk <= 0 || angka(it.jumlah) <= 0) return;
     const item = it;
     try {
-      const r = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; message?: string }>(
+      const r = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; konversi?: KonversiLine[]; message?: string }>(
         "/barang-masuk/preview",
         {
           id_pengguna_lokasi: idPenggunaLokasi,
@@ -204,10 +206,31 @@ export default function InboundFormPage() {
         .filter((x) => angka(x.id_deep) > 0 && angka(x.alokasi) > 0)
         .map((x) => ({ id_deep: x.id_deep, jumlah: angka(x.alokasi) }));
       const lokasiLine = r.data?.lokasi_line || (recs.length ? `${recs[0].kode_block}-${recs[0].nomor_line}` : "");
-      updateItem(idx, { alokasi, lokasi_line: lokasiLine, block_preview: lokasiLine || "-" });
+      const konversi = r.data?.konversi || [];
+      if (konversi.length) {
+        setKonfirmasiKonversi({ idx, lines: konversi, alokasi, lokasi_line: lokasiLine });
+        return;
+      }
+      updateItem(idx, { alokasi, lokasi_line: lokasiLine, block_preview: lokasiLine || "-", konversi: [] });
     } catch {
-      updateItem(idx, { alokasi: [], lokasi_line: "", block_preview: "-" });
+      updateItem(idx, { alokasi: [], lokasi_line: "", block_preview: "-", konversi: [] });
     }
+  };
+
+  const terimaKonversi = () => {
+    if (!konfirmasiKonversi) return;
+    const { idx, lines, alokasi, lokasi_line } = konfirmasiKonversi;
+    updateItem(idx, { alokasi, lokasi_line, block_preview: lokasi_line || "-", konversi: lines.map((l) => l.id_line) });
+    notify("success", `${lines.length} line kosong dikonversi ke produk ini (${lines[0].label_line}${lines.length > 1 ? ", dst" : ""}).`);
+    setKonfirmasiKonversi(null);
+  };
+
+  const tolakKonversi = () => {
+    if (!konfirmasiKonversi) return;
+    const { idx } = konfirmasiKonversi;
+    updateItem(idx, { alokasi: [], lokasi_line: "", block_preview: "-", konversi: [] });
+    notify("error", "Konversi dibatalkan. Kapasitas line tidak cukup.");
+    setKonfirmasiKonversi(null);
   };
 
   const batchPreview = (it: Item) => {
@@ -237,7 +260,7 @@ const simpan = async () => {
       return tB - tA; 
     });
 
-    for (let { it, idx } of processingOrder) {
+    for (const { it, idx } of processingOrder) {
       const no = idx + 1;
       if (it.id_produk <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Produk pada item ke-${no} belum dipilih.` }); continue; }
       if (angka(it.jumlah) <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Jumlah pada item ke-${no} belum benar.` }); continue; }
@@ -251,7 +274,7 @@ const simpan = async () => {
       try {
         // FIX BUG 2: Jangan pakai state it.alokasi yang usang. 
         // Selalu tarik ulang rekomendasi terbaru dari backend di tiap iterasi.
-        const rRec = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; message?: string }>(
+        const rRec = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; konversi?: KonversiLine[]; message?: string }>(
           "/barang-masuk/preview",
           {
             id_pengguna_lokasi: idPenggunaLokasi,
@@ -267,6 +290,12 @@ const simpan = async () => {
           .filter((x) => angka(x.id_deep) > 0 && angka(x.alokasi) > 0)
           .map((x) => ({ id_deep: x.id_deep, jumlah: angka(x.alokasi) }));
         const freshLokasiLine = rRec.data?.lokasi_line || (recs.length ? `${recs[0].kode_block}-${recs[0].nomor_line}` : "");
+
+        const konvLines = rRec.data?.konversi || [];
+        if (konvLines.length && !(it.konversi || []).length) {
+          failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "Kapasitas kurang. Konfirmasi konversi line kosong (blur jumlah untuk preview) terlebih dahulu." });
+          continue;
+        }
 
         if (!freshAlokasi.length) {
           failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "Line produk tidak tersedia atau kapasitas penuh. Silakan buat layout baru." });
@@ -290,6 +319,7 @@ const simpan = async () => {
           catatan: catatan,
           lokasi_line: freshLokasiLine,
           alokasi: freshAlokasi,
+          konversi: (it.konversi || []).length ? it.konversi : undefined,
           waktu_mulai_input: waktuMulai,
           durasi_detik: timer,
         });
@@ -431,6 +461,40 @@ const simpan = async () => {
         <i className="bi bi-save2"></i>
         <span>{busy ? "Menyimpan..." : "Simpan Semua"}</span>
       </button>
+
+      {konfirmasiKonversi && (
+        <div className="inbound-success-overlay">
+          <div className="inbound-success-modal">
+            <div className="inbound-success-title">
+              <i className="bi bi-arrow-left-right"></i>
+              <span>Konversi Line Kosong</span>
+            </div>
+            <div className="inbound-failed-message" style={{ marginTop: 0 }}>
+              Kapasitas milik <b>{items[konfirmasiKonversi.idx]?.nama_produk || "produk ini"}</b> tidak cukup.
+              Line kosong milik produk lain berikut akan dikonversi (kepemilikan + kapasitas deep) ke produk ini:
+            </div>
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              {konfirmasiKonversi.lines.map((l) => (
+                <div key={l.id_line} className="inbound-success-item" style={{ padding: 10 }}>
+                  <div className="inbound-success-product">{l.label_line} <span style={{ fontWeight: 600, textTransform: "none" }}>({l.produk_lama})</span></div>
+                  <div className="inbound-success-location">
+                    <i className="bi bi-layers"></i>
+                    <span>{l.jumlah_deep} deep × {l.kapasitas_baru} = <b>{l.kapasitas_total}</b> kapasitas</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="inbound-success-action" style={{ display: "flex", gap: 8 }}>
+              <button type="button" className="inbound-back-btn" onClick={tolakKonversi} style={{ minHeight: 34, padding: "0 17px", fontSize: 12, fontWeight: 900, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button type="button" className="inbound-success-close" onClick={terimaKonversi}>
+                Lanjut Konversi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {busy && (
         <div className="inbound-loading-overlay">

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
-import { isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
+import { aktifLokasiId, isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
 
 type HistRow = {
   tanggal_opname: string;
@@ -146,6 +146,14 @@ export default function StockOpnamePage() {
     return sp;
   }, [session, multi]);
 
+  const lokasiWrite = useCallback(() => {
+    const sp = new URLSearchParams();
+    if (!session) return sp;
+    const single = aktifLokasiId(session as Session);
+    if (single) sp.set("id_pengguna_lokasi", single);
+    return sp;
+  }, [session]);
+
   const reload = useCallback(() => {
     if (!session) return;
     apiGet<HistRow[]>(`/stok-opname?mode=history&${paramsOf().toString()}`)
@@ -252,7 +260,7 @@ export default function StockOpnamePage() {
       }));
     }
     setLoading(true); setErr(""); setMsg("");
-    const body: Record<string, unknown> = Object.fromEntries(paramsOf());
+    const body: Record<string, unknown> = Object.fromEntries(lokasiWrite());
     body.id_pengguna = session.user.id_pengguna;
     body.tanggal_opname = tanggal;
     body.jenis_opname = jenis;
@@ -277,7 +285,7 @@ export default function StockOpnamePage() {
       best_before: x.best_before, satuan: x.satuan, stok_fisik: x.stok_fisik, alasan: x.alasan ?? "",
     }));
     setLoading(true); setErr(""); setMsg("");
-    const body: Record<string, unknown> = Object.fromEntries(paramsOf());
+    const body: Record<string, unknown> = Object.fromEntries(lokasiWrite());
     body.id_pengguna = session.user.id_pengguna;
     body.tanggal_opname = tanggal;
     body.jenis_opname = jenis;
@@ -319,9 +327,9 @@ export default function StockOpnamePage() {
     const al = norm(ev?.alasan);
     if (v !== d.stok_fisik && al === "") { setErr("Catatan wajib diisi jika Stok Fisik diubah."); return; }
     setErr("");
-    const body: Record<string, unknown> = Object.fromEntries(paramsOf());
+    const body: Record<string, unknown> = Object.fromEntries(lokasiWrite());
     body.id_opname = d.id_opname; body.stok_fisik = v; body.alasan = al; body.dirubah_oleh = session.user.username;
-    apiPost<{ ok?: boolean }>(`/stok-opname?mode=edit_item&${paramsOf().toString()}`, body)
+    apiPost<{ ok?: boolean }>(`/stok-opname?mode=edit_item&${lokasiWrite().toString()}`, body)
       .then(() => {
         setMsg("Data berhasil disimpan.");
         const row = detail.slice();

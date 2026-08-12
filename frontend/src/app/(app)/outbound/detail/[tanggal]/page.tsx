@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
-import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 
 type Produk = { id_produk: number; nama_produk: string; satuan: string };
 type Rencana = {
@@ -191,8 +191,7 @@ export default function OutboundDetailPage() {
   };
   const closeToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
 
-  const idPenggunaLokasi = () =>
-    multi ? String(session?.lokasi[0] ?? "") : String(session?.user.id_pengguna_lokasi || "");
+  const idPenggunaLokasi = () => (session ? aktifLokasiId(session) : "");
 
   useEffect(() => {
     if (!session || !tanggal || !driver) return;

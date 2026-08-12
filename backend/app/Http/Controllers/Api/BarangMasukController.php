@@ -174,6 +174,25 @@ class BarangMasukController extends Controller
         $namaProduk = trim((string) $produkRow->nama_produk);
         $isiPerPcs = (int) $produkRow->isi_per_pcs > 0 ? (int) $produkRow->isi_per_pcs : 1;
 
+        // ---- Konversi line kosong milik produk lain (sudah dikonfirmasi frontend) ----
+        $konversiIds = [];
+        if ($tipePenerimaan !== 'REJECT' && ! empty($in['konversi'])) {
+            $rawKonv = is_array($in['konversi']) ? $in['konversi'] : explode(',', (string) $in['konversi']);
+            foreach ($rawKonv as $kv) {
+                $idLineK = (int) (is_array($kv) ? ($kv['id_line'] ?? 0) : $kv);
+                if ($idLineK > 0) {
+                    $konversiIds[] = $idLineK;
+                }
+            }
+            $konversiIds = array_values(array_unique($konversiIds));
+            foreach ($konversiIds as $idLineK) {
+                $resKonv = $this->konversiLine($idPenggunaLokasi, $idLineK, $idProduk);
+                if (isset($resKonv['error'])) {
+                    return $this->fail('Konversi line gagal: '.$resKonv['error'], 422);
+                }
+            }
+        }
+
         // Otomatis ubah satuan ke PCS dan siapkan multiplier untuk REJECT (Kecuali Gallon)
         $multiplier = 1;
         if ($tipePenerimaan === 'REJECT' && strtoupper($satuan) !== 'GALLON' && strtoupper($satuan) !== 'PCS') {
@@ -227,7 +246,7 @@ class BarangMasukController extends Controller
             }
             $alokasi = $hasil['alokasi'];
         } else {
-            $auto = $this->rekomendasiAuto($idPenggunaLokasi, $idProduk, $jumlah, $bestBefore, $tipePenerimaan);
+            $auto = $this->rekomendasiAuto($idPenggunaLokasi, $idProduk, $jumlah, $bestBefore, $tipePenerimaan, false);
             if (isset($auto['error'])) {
                 return $this->fail($auto['error'], $auto['code'] ?? 422);
             }
@@ -1449,7 +1468,7 @@ class BarangMasukController extends Controller
     // =========================================================================
     //  REKOMENDASI AUTO (Ref: cari_lokasi_block.php mode=auto_inbound)
     // =========================================================================
-    private function rekomendasiAuto(string $idPenggunaLokasi, int $idProduk, float $qty, ?string $bestBefore, string $tipePenerimaan): array
+    private function rekomendasiAuto(string $idPenggunaLokasi, int $idProduk, float $qty, ?string $bestBefore, string $tipePenerimaan, bool $libatkanKonversi = true): array
     {
         $isSecondary = $tipePenerimaan === 'Secondary';
         $previewMode = $qty <= 0;
@@ -1750,6 +1769,14 @@ class BarangMasukController extends Controller
             $totalLeftPrior += max(0.0, $cap - $filled);
         }
 
+        // Peta pemilik per line (dari prioritas_lokasi_produk)
+        $lineOwnerMap = DB::table('prioritas_lokasi_produk')
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->whereNotNull('id_line')->where('id_line', '>', 0)
+            ->selectRaw('id_line, MAX(id_produk) AS id_produk')
+            ->groupBy('id_line')
+            ->pluck('id_produk', 'id_line');
+
         // Pinjam line lain kalau kapasitas prioritas kurang
         if ($punyaLayoutPrioritas && $totalLeftPrior < $qty) {
             $borrowLineIds = [];
@@ -1759,6 +1786,11 @@ class BarangMasukController extends Controller
                     continue;
                 }
                 if (in_array($idLine, $priorLineIds, true)) {
+                    continue;
+                }
+                // Line kosong milik produk lain dikelola via konversi (dgn konfirmasi), bukan numpang.
+                $ownerLine = $lineOwnerMap[$idLine] ?? null;
+                if ($ownerLine !== null && (int) $ownerLine !== $idProduk) {
                     continue;
                 }
                 $kapTotal = (int) $info->kapasitas_total;
@@ -1827,6 +1859,53 @@ class BarangMasukController extends Controller
             $bbMaxDeepMap[(int) $row->id_deep] = $row->bb_max ?? null;
         }
 
+        // Proposisi & alokasi line kosong milik produk lain (konversi dgn konfirmasi frontend)
+        $konversiList = [];
+        if ($libatkanKonversi && $tipePenerimaan !== 'REJECT' && ! $previewMode) {
+            $shortfall = $qty;
+            foreach ($finalCandidates as $r) {
+                $idDeepF = (int) $r['id_deep'];
+                $capF = (float) $r['kapasitas'];
+                $filledF = $terisiMap[$idDeepF] ?? 0.0;
+                $shortfall -= max(0.0, $capF - $filledF);
+                if ($shortfall <= 0) {
+                    break;
+                }
+            }
+            if ($shortfall > 0) {
+                $kapasitasTarget = $this->kapasitasRateProduk($idPenggunaLokasi, $idProduk);
+                if ($kapasitasTarget > 0) {
+                    $kLines = $this->cariLineKosongKonversi($idPenggunaLokasi, $idProduk, $tipePenerimaan, array_keys($priorLokasiIds));
+                    foreach ($kLines as $kl) {
+                        if ($shortfall <= 0) {
+                            break;
+                        }
+                        $deepsKonv = $this->deepsLineByIdLine($idPenggunaLokasi, $kl['id_line']);
+                        if (empty($deepsKonv)) {
+                            continue;
+                        }
+                        $deepsKonv = array_map(function ($dk) use ($kapasitasTarget) {
+                            $dk['kapasitas'] = $kapasitasTarget;
+                            return $dk;
+                        }, $deepsKonv);
+                        $finalCandidates = array_merge($finalCandidates, $deepsKonv);
+                        $konversiList[] = [
+                            'id_line' => $kl['id_line'],
+                            'kode_block' => $kl['kode_block'],
+                            'nomor_line' => $kl['nomor_line'],
+                            'label_line' => $kl['kode_block'].'-'.$kl['nomor_line'],
+                            'produk_lama' => $kl['produk_lama'],
+                            'levels' => $kl['levels'],
+                            'jumlah_deep' => $kl['jumlah_deep'],
+                            'kapasitas_baru' => $kapasitasTarget,
+                            'kapasitas_total' => $kl['jumlah_deep'] * $kapasitasTarget,
+                        ];
+                        $shortfall -= $kl['jumlah_deep'] * $kapasitasTarget;
+                    }
+                }
+            }
+        }
+
         // Mode preview: cukup opsi block & line
         if ($previewMode) {
             $previewBlocks = [];
@@ -1859,6 +1938,7 @@ class BarangMasukController extends Controller
             return array_merge($previewEmpty, [
                 'opsi_block' => array_values($previewBlocks),
                 'opsi_line' => array_values($previewLines),
+                'konversi' => $konversiList,
                 'message' => 'Preview block berhasil dibuat.',
             ]);
         }
@@ -1931,6 +2011,7 @@ class BarangMasukController extends Controller
             'qty_sisa' => $need,
             'rekomendasi' => $alloc,
             'ringkasan_line' => $ringkasan,
+            'konversi' => $konversiList,
             'lokasi_line' => isset($alloc[0]) ? $alloc[0]['label_line'] : '',
         ];
     }
@@ -2294,6 +2375,247 @@ class BarangMasukController extends Controller
             ->first();
 
         return $row ? ['kode_block' => trim((string) $row->kode_block), 'nama_lokasi' => trim((string) $row->nama_lokasi)] : null;
+    }
+
+    private function kapasitasRateProduk(string $idPenggunaLokasi, int $idProduk): ?int
+    {
+        $rate = DB::table('prioritas_lokasi_produk as p')
+            ->join('line as ln', function ($j) use ($idPenggunaLokasi) {
+                $j->on('ln.id_line', '=', 'p.id_line')
+                    ->on('ln.id_pengguna_lokasi', '=', 'p.id_pengguna_lokasi');
+            })
+            ->join('level as lv', function ($j) use ($idPenggunaLokasi) {
+                $j->on('lv.id_line', '=', 'ln.id_line')
+                    ->on('lv.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            })
+            ->join('deep as d', function ($j) use ($idPenggunaLokasi) {
+                $j->on('d.id_level', '=', 'lv.id_level')
+                    ->on('d.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+            })
+            ->where('p.id_produk', $idProduk)
+            ->where('p.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->min('d.kapasitas');
+
+        return ($rate !== null && (int) $rate > 0) ? (int) $rate : null;
+    }
+
+    private function deepsLineByIdLine(string $idPenggunaLokasi, int $idLine): array
+    {
+        return $this->baseDeep($idPenggunaLokasi)
+            ->where('ln.id_line', $idLine)
+            ->orderByRaw('d.deep ASC, CAST(lv.level AS UNSIGNED) ASC')
+            ->get()->map(fn ($r) => (array) $r)->all();
+    }
+
+    private function cariLineKosongKonversi(string $idPenggunaLokasi, int $idProduk, string $tipePenerimaan, array $priorLokasiIds): array
+    {
+        $q = DB::table('line as ln')
+            ->join('block as b', function ($j) use ($idPenggunaLokasi) {
+                $j->on('b.id_block', '=', 'ln.id_block')
+                    ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            })
+            ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
+            ->join('prioritas_lokasi_produk as p', function ($j) use ($idPenggunaLokasi) {
+                $j->on('p.id_line', '=', 'ln.id_line')
+                    ->on('p.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            })
+            ->join('produk as pr', 'pr.id_produk', '=', 'p.id_produk')
+            ->leftJoin('level as lv', function ($j) use ($idPenggunaLokasi) {
+                $j->on('lv.id_line', '=', 'ln.id_line')
+                    ->on('lv.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            })
+            ->leftJoin('deep as d', function ($j) use ($idPenggunaLokasi) {
+                $j->on('d.id_level', '=', 'lv.id_level')
+                    ->on('d.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+            })
+            ->leftJoin('stok_gudang_deep as sd', function ($j) use ($idPenggunaLokasi) {
+                $j->on('sd.id_deep', '=', 'd.id_deep')
+                    ->on('sd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
+            })
+            ->leftJoin('stok_gudang as s', function ($j) use ($idPenggunaLokasi) {
+                $j->on('s.id_stok', '=', 'sd.id_stok_header')
+                    ->on('s.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi')
+                    ->where('s.jumlah_sisa', '>', DB::raw('0'));
+            })
+            ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('p.id_produk', '<>', $idProduk)
+            ->where('p.id_lokasi', '>', 0)
+            ->where($this->whereNormalBlockActive($tipePenerimaan));
+
+        $kategori = $this->kategoriLokasi($tipePenerimaan);
+        if ($kategori) {
+            $q->where($kategori);
+        }
+        if (! empty($priorLokasiIds)) {
+            $q->whereIn('l.id_lokasi', $priorLokasiIds);
+        }
+
+        $q->selectRaw('ln.id_line, b.kode_block, ln.nomor_line, pr.nama_produk AS produk_lama,
+                COALESCE(SUM(CASE WHEN s.id_stok IS NOT NULL THEN sd.jumlah ELSE 0 END),0) AS terisi_line,
+                COUNT(d.id_deep) AS jumlah_deep')
+            ->groupBy('ln.id_line', 'b.kode_block', 'ln.nomor_line', 'pr.nama_produk')
+            ->having('terisi_line', '=', 0)
+            ->having('jumlah_deep', '>', 0)
+            ->orderBy('l.nama_lokasi')
+            ->orderBy('b.kode_block')
+            ->orderBy('ln.nomor_line');
+
+        $lines = [];
+        foreach ($q->get() as $r) {
+            $levelsRaw = DB::table('level as lv')
+                ->join('deep as d', function ($j) use ($idPenggunaLokasi) {
+                    $j->on('d.id_level', '=', 'lv.id_level')
+                        ->on('d.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+                })
+                ->where('lv.id_line', $r->id_line)
+                ->where('lv.id_pengguna_lokasi', $idPenggunaLokasi)
+                ->selectRaw('lv.level, COUNT(d.id_deep) AS jumlah_deep')
+                ->groupBy('lv.level')
+                ->orderBy('lv.level')
+                ->get();
+            $levels = [];
+            foreach ($levelsRaw as $lv) {
+                $levels[] = ['level' => (int) $lv->level, 'jumlah_deep' => (int) $lv->jumlah_deep];
+            }
+            $lines[] = [
+                'id_line' => (int) $r->id_line,
+                'kode_block' => strtoupper(trim((string) $r->kode_block)),
+                'nomor_line' => (int) $r->nomor_line,
+                'produk_lama' => trim((string) $r->produk_lama),
+                'levels' => $levels,
+                'jumlah_deep' => (int) $r->jumlah_deep,
+            ];
+        }
+
+        // Preferensi: tetap di satu block — utamakan line kosong di block yang
+        // sudah dipakai produk (line sebelahnya), baru block lain.
+        $produkLokasi = DB::table('prioritas_lokasi_produk as p')
+            ->join('line as ln', function ($j) use ($idPenggunaLokasi) {
+                $j->on('ln.id_line', '=', 'p.id_line')
+                    ->on('ln.id_pengguna_lokasi', '=', 'p.id_pengguna_lokasi');
+            })
+            ->join('block as b', function ($j) use ($idPenggunaLokasi) {
+                $j->on('b.id_block', '=', 'ln.id_block')
+                    ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            })
+            ->where('p.id_produk', $idProduk)
+            ->where('p.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->get(['b.kode_block', 'ln.nomor_line']);
+
+        $blockProduk = [];
+        foreach ($produkLokasi as $pl) {
+            $kode = strtoupper(trim((string) $pl->kode_block));
+            if (! isset($blockProduk[$kode])) {
+                $blockProduk[$kode] = [];
+            }
+            $blockProduk[$kode][] = (int) $pl->nomor_line;
+        }
+
+        usort($lines, function ($a, $b) use ($blockProduk) {
+            $ka = $a['kode_block'];
+            $kb = $b['kode_block'];
+            $pa = isset($blockProduk[$ka]);
+            $pb = isset($blockProduk[$kb]);
+            if ($pa !== $pb) {
+                return $pa ? -1 : 1;
+            }
+            $da = $pa ? min(array_map(fn ($n) => abs($n - $a['nomor_line']), $blockProduk[$ka])) : PHP_INT_MAX;
+            $db = $pb ? min(array_map(fn ($n) => abs($n - $b['nomor_line']), $blockProduk[$kb])) : PHP_INT_MAX;
+            if ($da !== $db) {
+                return $da <=> $db;
+            }
+            if ($ka !== $kb) {
+                return strcmp($ka, $kb);
+            }
+
+            return $a['nomor_line'] <=> $b['nomor_line'];
+        });
+
+        return $lines;
+    }
+
+    private function konversiLine(string $idPenggunaLokasi, int $idLine, int $idProdukTarget): array
+    {
+        $rate = $this->kapasitasRateProduk($idPenggunaLokasi, $idProdukTarget);
+        if ($rate === null) {
+            return ['error' => 'Produk tujuan belum punya line, kapasitas tidak bisa disalin'];
+        }
+
+        $terisi = (int) DB::table('stok_gudang_deep as sd')
+            ->join('stok_gudang as s', function ($j) use ($idPenggunaLokasi) {
+                $j->on('s.id_stok', '=', 'sd.id_stok_header')
+                    ->on('s.id_pengguna_lokasi', '=', 'sd.id_pengguna_lokasi')
+                    ->where('s.jumlah_sisa', '>', DB::raw('0'));
+            })
+            ->join('deep as d', function ($j) use ($idPenggunaLokasi) {
+                $j->on('d.id_deep', '=', 'sd.id_deep')
+                    ->on('d.id_pengguna_lokasi', '=', 'sd.id_pengguna_lokasi');
+            })
+            ->join('level as lv', function ($j) use ($idPenggunaLokasi) {
+                $j->on('lv.id_level', '=', 'd.id_level')
+                    ->on('lv.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+            })
+            ->where('lv.id_line', $idLine)
+            ->where('sd.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->sum('sd.jumlah');
+        if ($terisi > 0) {
+            return ['error' => 'Line tidak lagi kosong, konversi dibatalkan'];
+        }
+
+        try {
+            DB::transaction(function () use ($idPenggunaLokasi, $idLine, $idProdukTarget, $rate) {
+                $rowPrioritas = DB::table('prioritas_lokasi_produk')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_line', $idLine)
+                    ->first();
+                if ($rowPrioritas) {
+                    DB::table('prioritas_lokasi_produk')
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->where('id_line', $idLine)
+                        ->update(['id_produk' => $idProdukTarget]);
+                } else {
+                    $ln = DB::table('line as ln')
+                        ->join('block as b', function ($j) use ($idPenggunaLokasi) {
+                            $j->on('b.id_block', '=', 'ln.id_block')
+                                ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+                        })
+                        ->where('ln.id_line', $idLine)
+                        ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->select('b.id_block', 'b.id_lokasi')
+                        ->first();
+                    if (! $ln) {
+                        throw new \RuntimeException('Line tidak ditemukan');
+                    }
+                    DB::table('prioritas_lokasi_produk')->insert([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_produk' => $idProdukTarget,
+                        'id_lokasi' => (int) $ln->id_lokasi,
+                        'id_block' => (int) $ln->id_block,
+                        'id_line' => $idLine,
+                        'id_level' => null,
+                        'id_deep' => null,
+                        'created_at' => now(),
+                    ]);
+                }
+
+                $deepIds = DB::table('deep as d')
+                    ->join('level as lv', function ($j) use ($idPenggunaLokasi) {
+                        $j->on('lv.id_level', '=', 'd.id_level')
+                            ->on('lv.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+                    })
+                    ->where('lv.id_line', $idLine)
+                    ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->pluck('d.id_deep');
+                DB::table('deep')
+                    ->whereIn('id_deep', $deepIds)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->update(['kapasitas' => $rate]);
+            });
+        } catch (\Throwable $e) {
+            return ['error' => $e->getMessage()];
+        }
+
+        return ['ok' => true, 'kapasitas' => $rate];
     }
 
     private function whereNormalBlockActive(string $tipePenerimaan): \Closure

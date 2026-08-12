@@ -272,17 +272,19 @@ class StokOpnameController extends Controller
 
     private function history(Request $request): JsonResponse
     {
-        $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi', ''));
+        $lokasiIds = $this->resolveLokasiIds($request);
         $tanggalAwal = trim((string) $request->query('tanggal_awal', ''));
         $tanggalAkhir = trim((string) $request->query('tanggal_akhir', ''));
 
-        if ($idPenggunaLokasi === '') {
+        if (empty($lokasiIds)) {
             return $this->jsonResponse(false, 'id_pengguna_lokasi wajib diisi.');
         }
 
-        $sql = 'SELECT tanggal_opname, created_at, jenis_opname, COUNT(*) AS jumlah_produk, SUM(CASE WHEN selisih <> 0 THEN 1 ELSE 0 END) AS jumlah_selisih
-                FROM stok_opname WHERE id_pengguna_lokasi = ?';
-        $bind = [$idPenggunaLokasi];
+        $lokWhere = $this->lokasiWhere('id_pengguna_lokasi', $lokasiIds);
+
+        $sql = "SELECT tanggal_opname, created_at, jenis_opname, COUNT(*) AS jumlah_produk, SUM(CASE WHEN selisih <> 0 THEN 1 ELSE 0 END) AS jumlah_selisih
+                FROM stok_opname WHERE {$lokWhere['sql']}";
+        $bind = $lokWhere['bind'];
 
         if ($tanggalAwal !== '' && $tanggalAkhir !== '') {
             $sql .= ' AND tanggal_opname BETWEEN ? AND ?';
@@ -307,20 +309,22 @@ class StokOpnameController extends Controller
 
     private function detail(Request $request): JsonResponse
     {
-        $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi', ''));
+        $lokasiIds = $this->resolveLokasiIds($request);
         $tanggalOpname = trim((string) $request->query('tanggal_opname', ''));
         $createdAt = trim((string) $request->query('created_at', ''));
 
-        if ($idPenggunaLokasi === '') {
+        if (empty($lokasiIds)) {
             return $this->jsonResponse(false, 'id_pengguna_lokasi wajib diisi.');
         }
         if ($createdAt === '' && $tanggalOpname === '') {
             return $this->jsonResponse(false, 'created_at atau tanggal_opname wajib diisi.');
         }
 
-        $sql = 'SELECT id_opname, id_pengguna_lokasi, tanggal_opname, id_pengguna, id_produk, nama_produk, lokasi_block, best_before, satuan, stok_fisik, stok_sistem, selisih, alasan, jenis_opname, created_at, stok_sebelumnya, dirubah_oleh
-                FROM stok_opname WHERE id_pengguna_lokasi = ?';
-        $bind = [$idPenggunaLokasi];
+        $lokWhere = $this->lokasiWhere('id_pengguna_lokasi', $lokasiIds);
+
+        $sql = "SELECT id_opname, id_pengguna_lokasi, tanggal_opname, id_pengguna, id_produk, nama_produk, lokasi_block, best_before, satuan, stok_fisik, stok_sistem, selisih, alasan, jenis_opname, created_at, stok_sebelumnya, dirubah_oleh
+                FROM stok_opname WHERE {$lokWhere['sql']}";
+        $bind = $lokWhere['bind'];
 
         if ($createdAt !== '') {
             $sql .= ' AND created_at = ?';
@@ -350,11 +354,13 @@ class StokOpnameController extends Controller
 
     private function stokCatalog(Request $request): JsonResponse
     {
-        $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi', ''));
+        $lokasiIds = $this->resolveLokasiIds($request);
 
-        if ($idPenggunaLokasi === '') {
+        if (empty($lokasiIds)) {
             return $this->jsonResponse(false, 'id_pengguna_lokasi wajib diisi.');
         }
+
+        $placeholders = implode(',', array_fill(0, count($lokasiIds), '?'));
 
         $rows = DB::select(
             "SELECT sg.id_produk, p.nama_produk, UPPER(TRIM(COALESCE(p.satuan, ''))) AS satuan, CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block, sd.best_before, SUM(sd.jumlah) AS stok_sistem
@@ -365,10 +371,10 @@ class StokOpnameController extends Controller
              JOIN line ln ON ln.id_line = lv.id_line AND ln.id_pengguna_lokasi = lv.id_pengguna_lokasi
              JOIN block b ON b.id_block = ln.id_block AND b.id_pengguna_lokasi = ln.id_pengguna_lokasi
              JOIN produk p ON p.id_produk = sg.id_produk
-             WHERE sd.id_pengguna_lokasi = ? AND sd.jumlah > 0
+             WHERE sd.id_pengguna_lokasi IN ($placeholders) AND sd.jumlah > 0
              GROUP BY sg.id_produk, p.nama_produk, UPPER(TRIM(COALESCE(p.satuan, ''))), CONCAT(b.kode_block, '-', ln.nomor_line), sd.best_before
              ORDER BY lokasi_block ASC, p.nama_produk ASC, sd.best_before ASC",
-            [$idPenggunaLokasi]
+            $lokasiIds
         );
 
         $data = [];
@@ -428,6 +434,29 @@ class StokOpnameController extends Controller
         }
 
         return $this->jsonResponse(false, 'Gagal memperbarui data.');
+    }
+
+    private function resolveLokasiIds(Request $request): array
+    {
+        $multi = trim((string) $request->query('id_pengguna_lokasi_multi', ''));
+        if ($multi !== '') {
+            return array_values(array_filter(array_map('trim', explode(',', $multi)), fn ($id) => $id !== ''));
+        }
+
+        $single = trim((string) $request->query('id_pengguna_lokasi', ''));
+
+        return $single !== '' ? [$single] : [];
+    }
+
+    private function lokasiWhere(string $column, array $ids): array
+    {
+        if (count($ids) === 1) {
+            return ['sql' => $column.' = ?', 'bind' => [$ids[0]]];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        return ['sql' => $column.' IN ('.$placeholders.')', 'bind' => $ids];
     }
 
     private function parseItems(mixed $rawItems): array
