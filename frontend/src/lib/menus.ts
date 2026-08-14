@@ -51,6 +51,7 @@ export const MENUS: Record<string, MenuItem[]> = {
     singles[6],
   ],
   Checker: [singles[0], singles[1], { ...layoutGudang }, singles[4], singles[5]],
+  Auditor: [singles[5]],
   Support: [
     {
       ...masterData,

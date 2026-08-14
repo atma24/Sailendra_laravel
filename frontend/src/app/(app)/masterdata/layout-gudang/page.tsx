@@ -82,6 +82,8 @@ const css = `
 .legend-reject .legend-dot { background: #C62828; }
 .legend-badstok { color: #424242; background: rgba(97, 97, 97, 0.12); border-color: rgba(97, 97, 97, 0.40); }
 .legend-badstok .legend-dot { background: #424242; }
+.legend-qa { color: #F9A825; background: rgba(255, 214, 0, 0.12); border-color: rgba(255, 214, 0, 0.40); }
+.legend-qa .legend-dot { background: #FFD600; }
 
 .warehouse-search-wrap { position: relative; margin-bottom: 7px; }
 .warehouse-search-icon {
@@ -192,6 +194,8 @@ const css = `
 .deep-cell.reject .deep-fill { background: rgba(211, 47, 47, 0.25); }
 .deep-cell.badstok { background: #F7F8FA; border-color: rgba(97, 97, 97, 0.50); color: #424242; }
 .deep-cell.badstok .deep-fill { background: rgba(97, 97, 97, 0.22); }
+.deep-cell.qa { background: #FFFDCC; border-color: rgba(255, 214, 0, 0.70); color: #F9A825; }
+.deep-cell.qa .deep-fill { background: rgba(255, 214, 0, 0.28); }
 
 .layout-empty-card { padding: 12px; color: var(--text-soft); font-size: 12px; font-weight: 700; }
 
@@ -226,6 +230,7 @@ const css = `
 .deep-detail-icon.empty-gallon { background: rgba(126, 87, 194, 0.12); color: #7E57C2; }
 .deep-detail-icon.reject { background: rgba(211, 47, 47, 0.12); color: #C62828; }
 .deep-detail-icon.badstok { background: rgba(97, 97, 97, 0.12); color: #424242; }
+.deep-detail-icon.qa { background: rgba(255, 214, 0, 0.18); color: #F9A825; }
 
 .deep-detail-badge { border-radius: 999px; padding: 6px 10px; font-size: 11px; font-weight: 800; border: 1px solid transparent; }
 .deep-detail-badge.release { color: #2E7D32; background: rgba(46, 125, 50, 0.12); border-color: rgba(46, 125, 50, 0.40); }
@@ -235,6 +240,7 @@ const css = `
 .deep-detail-badge.empty-gallon { color: #7E57C2; background: rgba(126, 87, 194, 0.12); border-color: rgba(126, 87, 194, 0.40); }
 .deep-detail-badge.reject { color: #C62828; background: rgba(211, 47, 47, 0.12); border-color: rgba(211, 47, 47, 0.40); }
 .deep-detail-badge.badstok { color: #424242; background: rgba(97, 97, 97, 0.12); border-color: rgba(97, 97, 97, 0.40); }
+.deep-detail-badge.qa { color: #F9A825; background: rgba(255, 214, 0, 0.18); border-color: rgba(255, 214, 0, 0.45); }
 
 .modal-loading {
   position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center;
@@ -269,7 +275,7 @@ const angka = (v: unknown) => {
 const statusClass = (status: unknown, terpakai: unknown, kapasitas: unknown) => {
   const s = String(status ?? "").trim().toLowerCase();
   if (s === "gallon") return "empty-gallon";
-  if (s === "release" || s === "hold" || s === "full" || s === "reject" || s === "badstok") return s;
+  if (s === "release" || s === "hold" || s === "full" || s === "reject" || s === "badstok" || s === "qa") return s;
   const t = angka(terpakai);
   if (t <= 0) return "blank";
   if (angka(kapasitas) > 0 && t >= angka(kapasitas)) return "full";
@@ -284,6 +290,7 @@ const statusLabel = (status: unknown) => {
   if (s === "gallon") return "Gallon Kosong";
   if (s === "reject") return "Reject";
   if (s === "badstok") return "Bad Stock";
+  if (s === "qa") return "QA";
   if (s === "" || s === "blank") return "-";
   return "Blank";
 };
@@ -295,7 +302,7 @@ const sortDeepsLikeApp = (deeps: Deep[]) => {
   const hasHold = deeps.some((d) => String(d.status ?? "").trim().toLowerCase() === "hold");
   const w = (status: unknown) => {
     const s = String(status ?? "").trim().toLowerCase();
-    return { hold: 0, release: 1, full: 2, reject: 3, badstok: 4 }[s] ?? 5;
+    return { hold: 0, release: 1, full: 2, reject: 3, qa: 4, badstok: 5 }[s] ?? 6;
   };
   return [...deeps].sort((a, b) => {
     if (hasHold) {
@@ -605,6 +612,7 @@ export default function LayoutGudangPage() {
             <div className="legend-pill legend-empty-gallon"><span className="legend-dot"></span><span>Gallon Kosong</span></div>
             <div className="legend-pill legend-reject"><span className="legend-dot"></span><span>Reject</span></div>
             <div className="legend-pill legend-badstok"><span className="legend-dot"></span><span>Bad Stock</span></div>
+            <div className="legend-pill legend-qa"><span className="legend-dot"></span><span>QA</span></div>
           </div>
 
           <div className="warehouse-search-wrap">

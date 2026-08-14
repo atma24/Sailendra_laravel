@@ -26,6 +26,7 @@ class StokOpnameController extends Controller
                 'detail' => $this->detail($request),
                 'stok_catalog' => $this->stokCatalog($request),
                 'edit_item' => $this->editItem($request),
+                'compare' => $this->compare($request),
                 default => $this->jsonResponse(false, 'Mode stock opname tidak dikenal.'),
             };
         } catch (\Throwable $e) {
@@ -232,14 +233,26 @@ class StokOpnameController extends Controller
             return $this->jsonResponse(false, 'Tidak ada data valid untuk disimpan.');
         }
 
+        $sumber = $this->sumberPengguna($idPengguna);
         $now = now()->format('Y-m-d H:i:s');
 
+        $checkerCreatedAt = null;
+        if ($sumber === 'Auditor') {
+            $checker = DB::selectOne(
+                'SELECT created_at FROM stok_opname
+                 WHERE id_pengguna_lokasi = ? AND tanggal_opname = ? AND sumber_opname = \'Checker\'
+                 ORDER BY created_at DESC LIMIT 1',
+                [$idPenggunaLokasi, $tanggalOpname]
+            );
+            $checkerCreatedAt = $checker ? (string) $checker->created_at : null;
+        }
+
         try {
-            DB::transaction(function () use ($validRows, $tanggalOpname, $idPengguna, $jenisOpname, $now) {
+            DB::transaction(function () use ($validRows, $tanggalOpname, $idPengguna, $jenisOpname, $sumber, $checkerCreatedAt, $now) {
                 foreach ($validRows as $row) {
                     DB::insert(
-                        'INSERT INTO stok_opname (id_pengguna_lokasi, tanggal_opname, id_pengguna, id_produk, nama_produk, lokasi_block, best_before, satuan, stok_fisik, stok_sistem, selisih, alasan, jenis_opname, created_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        'INSERT INTO stok_opname (id_pengguna_lokasi, tanggal_opname, id_pengguna, id_produk, nama_produk, lokasi_block, best_before, satuan, stok_fisik, stok_sistem, selisih, alasan, jenis_opname, sumber_opname, created_at, checker_created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                         [
                             $row['id_pengguna_lokasi'],
                             $tanggalOpname,
@@ -254,7 +267,9 @@ class StokOpnameController extends Controller
                             $row['selisih'],
                             $row['alasan'],
                             $jenisOpname,
+                            $sumber,
                             $now,
+                            $checkerCreatedAt,
                         ]
                     );
                 }
@@ -263,11 +278,29 @@ class StokOpnameController extends Controller
             return $this->jsonResponse(
                 true,
                 'Stock opname berhasil disimpan.',
-                ['tanggal_opname' => $tanggalOpname, 'created_at' => $now, 'jumlah_item' => count($validRows)]
+                [
+                    'tanggal_opname' => $tanggalOpname,
+                    'created_at' => $now,
+                    'jumlah_item' => count($validRows),
+                    'sumber_opname' => $sumber,
+                    'checker_created_at' => $checkerCreatedAt,
+                    'linked' => $sumber === 'Auditor' && $checkerCreatedAt !== null,
+                ]
             );
         } catch (\Throwable $e) {
             return $this->jsonResponse(false, 'Gagal menyimpan stock opname: '.$e->getMessage());
         }
+    }
+
+    private function sumberPengguna(int $idPengguna): string
+    {
+        $row = DB::selectOne('SELECT role FROM pengguna WHERE id_pengguna = ? LIMIT 1', [$idPengguna]);
+
+        if ($row && strcasecmp((string) $row->role, 'Auditor') === 0) {
+            return 'Auditor';
+        }
+
+        return 'Checker';
     }
 
     private function history(Request $request): JsonResponse
@@ -275,24 +308,32 @@ class StokOpnameController extends Controller
         $lokasiIds = $this->resolveLokasiIds($request);
         $tanggalAwal = trim((string) $request->query('tanggal_awal', ''));
         $tanggalAkhir = trim((string) $request->query('tanggal_akhir', ''));
+        $sumber = trim((string) $request->query('sumber', ''));
 
         if (empty($lokasiIds)) {
             return $this->jsonResponse(false, 'id_pengguna_lokasi wajib diisi.');
         }
 
-        $lokWhere = $this->lokasiWhere('id_pengguna_lokasi', $lokasiIds);
+        $lokWhere = $this->lokasiWhere('so.id_pengguna_lokasi', $lokasiIds);
 
-        $sql = "SELECT tanggal_opname, created_at, jenis_opname, COUNT(*) AS jumlah_produk, SUM(CASE WHEN selisih <> 0 THEN 1 ELSE 0 END) AS jumlah_selisih
-                FROM stok_opname WHERE {$lokWhere['sql']}";
+        $sql = "SELECT so.tanggal_opname, so.created_at, so.jenis_opname, so.sumber_opname, p.username AS petugas, COUNT(*) AS jumlah_produk, SUM(CASE WHEN so.selisih <> 0 THEN 1 ELSE 0 END) AS jumlah_selisih
+                FROM stok_opname so
+                JOIN pengguna p ON p.id_pengguna = so.id_pengguna
+                WHERE {$lokWhere['sql']}";
         $bind = $lokWhere['bind'];
 
         if ($tanggalAwal !== '' && $tanggalAkhir !== '') {
-            $sql .= ' AND tanggal_opname BETWEEN ? AND ?';
+            $sql .= ' AND so.tanggal_opname BETWEEN ? AND ?';
             $bind[] = $tanggalAwal;
             $bind[] = $tanggalAkhir;
         }
 
-        $sql .= ' GROUP BY tanggal_opname, created_at, jenis_opname ORDER BY created_at DESC, tanggal_opname DESC';
+        if ($sumber !== '') {
+            $sql .= ' AND so.sumber_opname = ?';
+            $bind[] = $sumber;
+        }
+
+        $sql .= ' GROUP BY so.tanggal_opname, so.created_at, so.jenis_opname, so.sumber_opname, p.username ORDER BY so.created_at DESC, so.tanggal_opname DESC';
 
         $rows = DB::select($sql, $bind);
 
@@ -301,6 +342,8 @@ class StokOpnameController extends Controller
             $row->jumlah_produk = (int) $row->jumlah_produk;
             $row->jumlah_selisih = (int) $row->jumlah_selisih;
             $row->jenis_opname = $row->jenis_opname ?? 'Akurasi';
+            $row->sumber_opname = $row->sumber_opname ?? 'Checker';
+            $row->petugas = trim((string) ($row->petugas ?? ''));
             $data[] = (array) $row;
         }
 
@@ -322,7 +365,7 @@ class StokOpnameController extends Controller
 
         $lokWhere = $this->lokasiWhere('id_pengguna_lokasi', $lokasiIds);
 
-        $sql = "SELECT id_opname, id_pengguna_lokasi, tanggal_opname, id_pengguna, id_produk, nama_produk, lokasi_block, best_before, satuan, stok_fisik, stok_sistem, selisih, alasan, jenis_opname, created_at, stok_sebelumnya, dirubah_oleh
+        $sql = "SELECT id_opname, id_pengguna_lokasi, tanggal_opname, id_pengguna, id_produk, nama_produk, lokasi_block, best_before, satuan, stok_fisik, stok_sistem, selisih, alasan, jenis_opname, sumber_opname, created_at, stok_sebelumnya, dirubah_oleh, checker_created_at
                 FROM stok_opname WHERE {$lokWhere['sql']}";
         $bind = $lokWhere['bind'];
 
@@ -434,6 +477,126 @@ class StokOpnameController extends Controller
         }
 
         return $this->jsonResponse(false, 'Gagal memperbarui data.');
+    }
+
+    private function compare(Request $request): JsonResponse
+    {
+        $lokasiIds = $this->resolveLokasiIds($request);
+        $tanggalAwal = trim((string) $request->query('tanggal_awal', ''));
+        $tanggalAkhir = trim((string) $request->query('tanggal_akhir', ''));
+
+        if (empty($lokasiIds)) {
+            return $this->jsonResponse(false, 'id_pengguna_lokasi wajib diisi.');
+        }
+
+        $lokWhere = $this->lokasiWhere('id_pengguna_lokasi', $lokasiIds);
+
+        $sql = "SELECT tanggal_opname, created_at, checker_created_at
+                FROM stok_opname WHERE sumber_opname = 'Auditor' AND {$lokWhere['sql']}";
+        $bind = $lokWhere['bind'];
+
+        if ($tanggalAwal !== '' && $tanggalAkhir !== '') {
+            $sql .= ' AND tanggal_opname BETWEEN ? AND ?';
+            $bind[] = $tanggalAwal;
+            $bind[] = $tanggalAkhir;
+        }
+
+        $sql .= ' GROUP BY tanggal_opname, created_at, checker_created_at ORDER BY tanggal_opname DESC, created_at DESC';
+
+        $batches = DB::select($sql, $bind);
+
+        $data = [];
+        foreach ($batches as $batch) {
+            $auditorRows = DB::select(
+                'SELECT so.id_produk, so.nama_produk, so.lokasi_block, so.best_before, so.satuan, so.stok_fisik, p.username AS pengguna
+                 FROM stok_opname so
+                 JOIN pengguna p ON p.id_pengguna = so.id_pengguna
+                 WHERE so.id_pengguna_lokasi IN ('.$this->placeholders($lokasiIds).')
+                 AND so.tanggal_opname = ? AND so.created_at = ? AND so.sumber_opname = \'Auditor\'
+                 ORDER BY so.lokasi_block ASC, so.nama_produk ASC, so.best_before ASC, so.id_opname ASC',
+                array_merge($lokasiIds, [(string) $batch->tanggal_opname, (string) $batch->created_at])
+            );
+
+            $checkerByKey = [];
+            $checkerItems = [];
+            $checkerUsername = null;
+            if ($batch->checker_created_at !== null) {
+                $checkerRows = DB::select(
+                    'SELECT so.id_produk, so.nama_produk, so.lokasi_block, so.best_before, so.satuan, so.stok_fisik, p.username AS pengguna
+                     FROM stok_opname so
+                     JOIN pengguna p ON p.id_pengguna = so.id_pengguna
+                     WHERE so.id_pengguna_lokasi IN ('.$this->placeholders($lokasiIds).')
+                     AND so.tanggal_opname = ? AND so.created_at = ? AND so.sumber_opname = \'Checker\'
+                     ORDER BY so.id_opname ASC',
+                    array_merge($lokasiIds, [(string) $batch->tanggal_opname, (string) $batch->checker_created_at])
+                );
+                foreach ($checkerRows as $cr) {
+                    $key = (int) $cr->id_produk.'|'.$cr->lokasi_block.'|'.$cr->best_before;
+                    $checkerByKey[$key] = $cr;
+                    $checkerItems[$key] = $cr;
+                    $checkerUsername = $checkerUsername ?? trim((string) $cr->pengguna);
+                }
+            }
+
+            $auditorByKey = [];
+            foreach ($auditorRows as $ar) {
+                $key = (int) $ar->id_produk.'|'.$ar->lokasi_block.'|'.$ar->best_before;
+                $auditorByKey[$key] = $ar;
+            }
+
+            $keys = array_values(array_unique(array_merge(
+                array_keys($checkerByKey),
+                array_keys($auditorByKey)
+            )));
+
+            usort($keys, function ($a, $b) {
+                $aa = explode('|', $a, 3);
+                $bb = explode('|', $b, 3);
+                return strcmp($aa[1], $bb[1]) ?: strcmp($aa[2], $bb[2]) ?: strcmp($aa[0], $bb[0]);
+            });
+
+            $items = [];
+            foreach ($keys as $key) {
+                $checker = $checkerByKey[$key] ?? null;
+                $auditor = $auditorByKey[$key] ?? null;
+                $both = $checker !== null && $auditor !== null;
+                $src = $checker ?? $auditor;
+                $items[] = [
+                    'id_produk' => (int) $src->id_produk,
+                    'nama_produk' => $src->nama_produk,
+                    'lokasi_block' => $src->lokasi_block,
+                    'best_before' => $src->best_before,
+                    'satuan' => $src->satuan,
+                    'checker_fisik' => $checker ? (int) $checker->stok_fisik : null,
+                    'auditor_fisik' => $auditor ? (int) $auditor->stok_fisik : null,
+                    'selisih' => $both ? (int) $auditor->stok_fisik - (int) $checker->stok_fisik : null,
+                    'matched' => $both,
+                ];
+            }
+
+            $auditorUsername = null;
+            foreach ($auditorRows as $ar2) {
+                $auditorUsername = $auditorUsername ?? trim((string) $ar2->pengguna);
+            }
+
+            $data[] = [
+                'tanggal_opname' => $batch->tanggal_opname,
+                'created_at' => $batch->created_at,
+                'checker_created_at' => $batch->checker_created_at,
+                'auditor' => $auditorUsername,
+                'checker' => $checkerUsername,
+                'linked' => $batch->checker_created_at !== null,
+                'jumlah_item' => count($items),
+                'items' => $items,
+            ];
+        }
+
+        return $this->jsonResponse(true, 'Perbandingan Checker vs Auditor berhasil diambil.', $data);
+    }
+
+    private function placeholders(array $ids): string
+    {
+        return implode(',', array_fill(0, count($ids), '?'));
     }
 
     private function resolveLokasiIds(Request $request): array

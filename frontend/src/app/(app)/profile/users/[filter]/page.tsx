@@ -14,6 +14,7 @@ const ROLE_LABEL: Record<string, string> = {
   superadmin: "Super Admin",
   checker: "Checker",
   forklift: "Forklift",
+  auditor: "Auditor",
 };
 
 function roleLabel(r: string) {
@@ -54,6 +55,7 @@ const FILTERS: Record<string, { title: string; filter?: (r: string) => boolean }
   supervisor: { title: "Daftar Supervisor", filter: (r) => r === "supervisor" || r === "support" },
   checker: { title: "Daftar Checker", filter: (r) => r === "checker" },
   forklift: { title: "Daftar Forklift", filter: (r) => r === "forklift" },
+  auditor: { title: "Daftar Auditor", filter: (r) => r === "auditor" },
 };
 
 export default function UserListPage() {

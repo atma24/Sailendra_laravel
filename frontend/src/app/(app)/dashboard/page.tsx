@@ -92,8 +92,9 @@ const ZONAS: [string, string][] = [
   ["festive", "Festive"],
   ["transit", "Transit"],
   ["hold", "Hold"],
+  ["qa", "QA"],
 ];
-const ZONA_COLORS = ["#10B981", "#EF4444", "#F59E0B", "#3B82F6", "#8B5CF6", "#14B8A6", "#64748B"];
+const ZONA_COLORS = ["#10B981", "#EF4444", "#F59E0B", "#3B82F6", "#8B5CF6", "#14B8A6", "#64748B", "#FFD600"];
 
 export default function DashboardPage() {
   const session = useSession();

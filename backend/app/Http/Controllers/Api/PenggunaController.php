@@ -13,7 +13,7 @@ class PenggunaController extends Controller
 {
     use ApiResponse;
 
-    private const ROLE = ['Supervisor', 'Checker', 'Forklift', 'Support', 'SuperAdmin'];
+    private const ROLE = ['Supervisor', 'Checker', 'Forklift', 'Support', 'SuperAdmin', 'Auditor'];
 
     private const STATUS = ['Aktif', 'Nonaktif'];
 
@@ -63,7 +63,7 @@ class PenggunaController extends Controller
         }
 
         if (! in_array($role, self::ROLE, true)) {
-            return $this->fail('Role tidak valid (Supervisor/Checker/Forklift/Support/SuperAdmin)');
+            return $this->fail('Role tidak valid (Supervisor/Checker/Forklift/Support/SuperAdmin/Auditor)');
         }
 
         if (! in_array($status, self::STATUS, true)) {
@@ -119,7 +119,7 @@ class PenggunaController extends Controller
         $status = $request->has('status') ? trim((string) $request->input('status')) : null;
 
         if ($role !== null && ! in_array($role, self::ROLE, true)) {
-            return $this->fail('Role tidak valid. Gunakan: Supervisor/Checker/Forklift/Support/SuperAdmin');
+            return $this->fail('Role tidak valid. Gunakan: Supervisor/Checker/Forklift/Support/SuperAdmin/Auditor');
         }
 
         if ($status !== null && ! in_array($status, self::STATUS, true)) {
