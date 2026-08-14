@@ -14,6 +14,6 @@ class StokGudang extends Model
 
     protected $fillable = [
         'id_pengguna_lokasi', 'id_produk', 'nama_produk', 'id_barang_masuk',
-        'jumlah_sisa', 'batch', 'best_before', 'satuan', 'lokasi_block', 'created_at',
+        'jumlah_sisa', 'batch', 'best_before', 'satuan', 'lokasi_block', 'status', 'created_at',
     ];
 }

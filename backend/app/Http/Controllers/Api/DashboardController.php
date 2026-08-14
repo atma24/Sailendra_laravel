@@ -202,6 +202,7 @@ class DashboardController extends Controller
             ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
             ->where('sd.jumlah', '>', 0)
             ->selectRaw("CASE
+                WHEN UPPER(COALESCE(sg.status, 'normal')) = 'QA' THEN 'qa'
                 WHEN $kategoriExpr IN ('BAD STOCK','BADSTOCK') OR $lokasiExpr LIKE 'BAD STOCK-%' OR $lokasiExpr LIKE 'BADSTOCK-%' OR $lokasiExpr LIKE 'BS-%' THEN 'bad'
                 WHEN $kategoriExpr = 'REJECT' OR $lokasiExpr LIKE 'REJECT-%' THEN 'reject'
                 WHEN $kategoriExpr = 'RECEH' OR $lokasiExpr LIKE 'RECEH-%' THEN 'receh'
@@ -214,7 +215,7 @@ class DashboardController extends Controller
         $zonaQuery = $this->withLokasiFilter($zonaQuery, 'sg.id_pengguna_lokasi', $filter);
         $zonaRows = $zonaQuery->groupBy(DB::raw('zona'))->get();
 
-        $zones = ['normal' => 0, 'bad' => 0, 'reject' => 0, 'receh' => 0, 'festive' => 0, 'transit' => 0, 'hold' => 0];
+        $zones = ['normal' => 0, 'bad' => 0, 'reject' => 0, 'receh' => 0, 'festive' => 0, 'transit' => 0, 'hold' => 0, 'qa' => 0];
         foreach ($zonaRows as $row) {
             $zones[$row->zona] = (int) $row->qty;
         }

@@ -24,7 +24,13 @@ const STATUS_OPTIONS: Record<string, string> = {
   BAD_GS: "Bad Stock - Goods Stock",
   GS_REJ: "Goods Stock - Reject",
   BAD_REJ: "Bad Stock - Reject",
+  GS_QA: "Goods Stock - QA",
+  QA_GS: "QA - Goods Stock",
+  QA_BAD: "QA - Bad Stock",
+  BAD_QA: "Bad Stock - QA",
 };
+
+const QA_MUTASI = ["GS_QA", "QA_GS"];
 
 const css = `
 .mutasi-page { display: flex; flex-direction: column; gap: 7px; padding-bottom: 12px; }
@@ -204,7 +210,13 @@ useEffect(() => {
   const fetchBB = async (idLine: number, idProdukVal: number) => {
     if (!idLine || !idProdukVal) return;
     try {
-      const r = await apiGet<{ bb_list?: string[] }>(`/mutasi/bb-line?id_pengguna_lokasi=${idPenggunaLokasi()}&id_line=${idLine}&id_produk=${idProdukVal}`);
+      const qs = new URLSearchParams();
+      qs.set("id_pengguna_lokasi", idPenggunaLokasi());
+      qs.set("id_line", String(idLine));
+      qs.set("id_produk", String(idProdukVal));
+      if (jenis === "QA_GS" || jenis === "QA_BAD") qs.set("status", "qa");
+      else if (isQa) qs.set("status", "normal");
+      const r = await apiGet<{ bb_list?: string[] }>(`/mutasi/bb-line?${qs.toString()}`);
       setBbList(r.data?.bb_list || []);
       setBbOpen(true);
     } catch {
@@ -242,18 +254,20 @@ useEffect(() => {
     return (l.kategori || l.nama_lokasi || "").trim().toUpperCase();
   };
 
+  const isQa = QA_MUTASI.includes(jenis);
+
   const validate = () => {
     if (!idProduk) { notify("error", "Pilih produk terlebih dahulu."); return false; }
     if (!satuan) { notify("error", "Satuan produk belum terbaca. Pilih ulang produk."); return false; }
     if (!dariLabel || !dariLine) { notify("error", "Pilih lokasi sumber terlebih dahulu."); return false; }
     if (!bestBefore) { notify("error", "Pilih tanggal best before terlebih dahulu."); return false; }
-    if (!keLabel || !keLine) { notify("error", "Pilih lokasi tujuan terlebih dahulu."); return false; }
-    if (String(dariLine) === String(keLine)) { notify("error", "Lokasi sumber dan lokasi tujuan tidak boleh sama."); return false; }
+    if (!isQa && (!keLabel || !keLine)) { notify("error", "Pilih lokasi tujuan terlebih dahulu."); return false; }
+    if (!isQa && String(dariLine) === String(keLine)) { notify("error", "Lokasi sumber dan lokasi tujuan tidak boleh sama."); return false; }
     if (norm(catatan) === "") { notify("error", "Catatan wajib diisi."); return false; }
     const isGallonSps = (a: number, b: number) =>
       (lokasiLabel(a).includes("GALLON") && lokasiLabel(b).includes("SPS")) ||
       (lokasiLabel(a).includes("SPS") && lokasiLabel(b).includes("GALLON"));
-    if (isGallonSps(dariLokasi, keLokasi)) { notify("error", "GALLON dan SPS tidak bisa saling transfer mutasi."); return false; }
+    if (!isQa && isGallonSps(dariLokasi, keLokasi)) { notify("error", "GALLON dan SPS tidak bisa saling transfer mutasi."); return false; }
     return true;
   };
 
@@ -269,9 +283,9 @@ useEffect(() => {
       jenis_mutasi: jenis,
       best_before: bestBefore,
       lokasi_sumber: dariLabel,
-      lokasi_tujuan: keLabel,
+      lokasi_tujuan: isQa ? dariLabel : keLabel,
       id_line_sumber: dariLine,
-      id_line_tujuan: keLine,
+      id_line_tujuan: isQa ? dariLine : keLine,
       catatan,
     };
     setBusy(true);
@@ -299,7 +313,7 @@ useEffect(() => {
     bbSearch.trim() === "" || bb.toLocaleLowerCase().includes(bbSearch.trim().toLowerCase()));
 
   const summaryDari = `${dariLabel || "-"}`;
-  const summaryKe = `${keLabel || "-"}`;
+  const summaryKe = `${isQa ? (dariLabel || "-") : (keLabel || "-")}`;
 
   return (
     <div className="mutasi-page">
@@ -382,41 +396,56 @@ useEffect(() => {
         </div>
       </div>
 
-      <div className="mutasi-card">
-        <div className="mutasi-section-title">Ke</div>
-        <div className="mutasi-stack">
-          <div className="mutasi-select-wrap">
-            <select className="mutasi-select" value={keLokasi} onChange={(e) => { setKeLokasi(angka(e.target.value)); setKeBlock(0); setKeLine(0); setKeLabel(""); }}>
-              <option value="0">Lokasi</option>
-              {lokasiList.map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{lokasiLabel(l.id_lokasi)}</option>)}
-            </select>
-            <i className="bi bi-chevron-down mutasi-select-icon"></i>
-          </div>
-          <div className="mutasi-row-2">
+      {!isQa && (
+        <div className="mutasi-card">
+          <div className="mutasi-section-title">Ke</div>
+          <div className="mutasi-stack">
             <div className="mutasi-select-wrap">
-              <select className="mutasi-select" value={keBlock} disabled={!keLokasi}
-                onChange={(e) => { setKeBlock(angka(e.target.value)); setKeLine(0); setKeLabel(""); }}>
-                <option value="0">Block</option>
-                {blocksFor(keLokasi).map((b) => <option key={b.id_block} value={b.id_block}>{b.kode_block}</option>)}
+              <select className="mutasi-select" value={keLokasi} onChange={(e) => { setKeLokasi(angka(e.target.value)); setKeBlock(0); setKeLine(0); setKeLabel(""); }}>
+                <option value="0">Lokasi</option>
+                {lokasiList.map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{lokasiLabel(l.id_lokasi)}</option>)}
               </select>
               <i className="bi bi-chevron-down mutasi-select-icon"></i>
             </div>
-            <div className="mutasi-select-wrap">
-              <select className="mutasi-select" value={keLine} disabled={!keBlock}
-                onChange={(e) => {
-                  const idLine = angka(e.target.value);
-                  setKeLine(idLine);
-                  const ln = lineList.find((l) => l.id_line === idLine);
-                  setKeLabel(ln?.label_line || "");
-                }}>
-                <option value="0">Line</option>
-                {linesFor(keBlock).map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
-              </select>
-              <i className="bi bi-chevron-down mutasi-select-icon"></i>
+            <div className="mutasi-row-2">
+              <div className="mutasi-select-wrap">
+                <select className="mutasi-select" value={keBlock} disabled={!keLokasi}
+                  onChange={(e) => { setKeBlock(angka(e.target.value)); setKeLine(0); setKeLabel(""); }}>
+                  <option value="0">Block</option>
+                  {blocksFor(keLokasi).map((b) => <option key={b.id_block} value={b.id_block}>{b.kode_block}</option>)}
+                </select>
+                <i className="bi bi-chevron-down mutasi-select-icon"></i>
+              </div>
+              <div className="mutasi-select-wrap">
+                <select className="mutasi-select" value={keLine} disabled={!keBlock}
+                  onChange={(e) => {
+                    const idLine = angka(e.target.value);
+                    setKeLine(idLine);
+                    const ln = lineList.find((l) => l.id_line === idLine);
+                    setKeLabel(ln?.label_line || "");
+                  }}>
+                  <option value="0">Line</option>
+                  {linesFor(keBlock).map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
+                </select>
+                <i className="bi bi-chevron-down mutasi-select-icon"></i>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {isQa && (
+        <div className="mutasi-card">
+          <div className="mutasi-section-title">Ke</div>
+          <div className="mutasi-stack">
+            <div className="mutasi-summary" style={{ borderColor: "#FFD600", background: "#FFFDCC" }}>
+              <div className="mutasi-summary-title" style={{ color: "#B45309" }}>Status QA - Stok tidak dipindahkan</div>
+              <div className="mutasi-summary-row"><div className="mutasi-summary-key">Ke</div><div className="mutasi-summary-value">{summaryKe}</div></div>
+              <div className="mutasi-summary-row" style={{ fontSize: 10, color: "#8a93a3" }}>Produk tetap di lokasi yang sama, hanya status yang berubah.</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mutasi-card">
         <div className="mutasi-summary">

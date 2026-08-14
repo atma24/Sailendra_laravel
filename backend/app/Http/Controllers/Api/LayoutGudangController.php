@@ -66,6 +66,7 @@ class LayoutGudangController extends Controller
             ->selectRaw('COALESCE(SUM(CASE WHEN sh.id_produk = ? THEN sd.jumlah ELSE 0 END),0) AS qty_produk', [$idProduk])
             ->selectRaw('MIN(CASE WHEN sd.jumlah > 0 THEN sh.best_before END) AS min_bb_deep')
             ->selectRaw('MIN(CASE WHEN sh.id_produk = ? AND sd.jumlah > 0 THEN sh.best_before END) AS min_bb_produk', [$idProduk])
+            ->selectRaw('MAX(CASE WHEN sd.jumlah > 0 THEN sh.status END) AS status_deep')
             ->selectRaw('MIN(COALESCE(sd.batch, sh.batch)) AS batch_produk')
             ->groupBy('b.id_block', 'b.id_lokasi', 'b.kode_block', 'ln.id_line', 'ln.nomor_line', 'lv.id_level', 'lv.level', 'd.id_deep', 'd.deep', 'd.kapasitas')
             ->orderBy('b.kode_block')
@@ -141,6 +142,7 @@ class LayoutGudangController extends Controller
                 'id_stok_header' => (int) ($row->id_stok_header ?? 0),
                 'id_stok' => (int) ($row->id_stok_header ?? 0),
                 'status' => 'blank',
+                'status_deep' => (string) ($row->status_deep ?? 'normal'),
             ];
 
             $byBlock[$blockId]['total_kapasitas'] += $kap;
@@ -199,7 +201,9 @@ class LayoutGudangController extends Controller
                             $deep['batch_produk'] = '-';
                         }
 
-                        if ($isSpecialBlock) {
+                        if (strtolower((string) ($deep['status_deep'] ?? 'normal')) === 'qa') {
+                            $deep['status'] = 'qa';
+                        } elseif ($isSpecialBlock) {
                             $kode = strtoupper(trim($block['kode_block']));
                             if ($kode === 'REJECT') {
                                 $deep['status'] = 'reject';
@@ -408,6 +412,7 @@ class LayoutGudangController extends Controller
             ->where('sh.jumlah_sisa', '>', 0)
             ->where('sd.jumlah', '>', 0)
             ->whereNotIn(DB::raw('UPPER(TRIM(b.kode_block))'), ['BS', 'BAD', 'BADSTOCK', 'REJECT'])
+            ->where('sh.status', '!=', 'qa')
             ->select('sh.id_produk')
             ->selectRaw('MIN(sh.best_before) AS bb')
             ->groupBy('sh.id_produk')
@@ -1702,6 +1707,7 @@ class LayoutGudangController extends Controller
                         'satuan' => $satuanTujuan,
                         'best_before' => $bestBefore,
                         'lokasi_block' => $lokasiBlockTujuan,
+                        'status' => trim((string) ($stokHeader->status ?? 'normal')) === '' ? 'normal' : $stokHeader->status,
                         'batch' => $batch,
                         'created_at' => now(),
                     ]);

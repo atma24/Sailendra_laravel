@@ -11,6 +11,7 @@ type ListRow = {
   kategori_lokasi: string;
   satuan: string;
   total_qty: number;
+  qty_qa: number;
   best_before_terdekat: string;
 };
 type KapRow = {
@@ -25,6 +26,7 @@ type DetailRow = {
   qty_sisa: number;
   best_before: string;
   satuan: string;
+  status: string;
 };
 type Produk = {
   id_produk: number;
@@ -32,6 +34,7 @@ type Produk = {
   kategori_lokasi: string;
   satuan: string;
   qty: number;
+  qty_qa: number;
   kapasitas: number;
   persen: number;
 };
@@ -71,8 +74,8 @@ const css = `
 .stock-summary-top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
 .stock-summary-title { font-size: 12px; font-weight: 900; color: #172033; letter-spacing: -0.15px; }
 .stock-percent-pill { min-width: 32px; min-height: 23px; border-radius: 999px; background: #eef2ff; color: #191970; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px; font-size: 10px; font-weight: 900; }
-.stock-progress { width: 100%; height: 5px; border-radius: 999px; background: #e8ecf4; overflow: hidden; }
-.stock-progress-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #191970, #77a7ff); width: 0%; }
+.stock-progress { width: 100%; height: 5px; border-radius: 999px; background: #e8ecf4; overflow: hidden; display: flex; }
+.stock-progress-fill { height: 100%; border-radius: 999px; width: 0%; transition: width 0.3s ease; }
 .stock-summary-bottom { font-size: 11px; font-weight: 850; line-height: 1.2; }
 
 .stock-special-list { display: flex; flex-direction: column; gap: 7px; }
@@ -112,6 +115,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
   const isNormal = zona === "normal";
+  const showBar = zona !== "reject"; // Tampilkan bar kecuali di zona reject
   const zonaLabel = STOCK_ZONES.find(([z]) => z === zona)?.[1] || "Stock";
   const [list, setList] = useState<ListRow[]>([]);
   const [kaps, setKaps] = useState<Map<number, number>>(new Map());
@@ -120,6 +124,32 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const [modal, setModal] = useState<{ id: number; nama: string } | null>(null);
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Helper fungsi buat nentuin warna progress bar berdasarkan zona
+  const getBarColor = (z: string) => {
+    switch (z) {
+      case "normal": return "linear-gradient(90deg, #16a34a, #4ade80)"; // Hijau cerah untuk Goodstock
+      case "qa": return "linear-gradient(90deg, #ca8a04, #facc15)"; // Kuning untuk QA
+      case "bad": return "linear-gradient(90deg, #dc2626, #f87171)"; // Merah untuk Badstock
+      default: return "linear-gradient(90deg, #191970, #77a7ff)"; // Default Biru
+    }
+  };
+  const barBg = getBarColor(zona);
+
+  const barFill = (qty: number, qa: number, kap: number) => {
+    if (!isNormal || qa <= 0 || kap <= 0) {
+      return <div className="stock-progress-fill" style={{ width: persen(qty, kap) + "%", background: barBg }} />;
+    }
+    const normal = Math.max(0, qty - qa);
+    const normalPct = Math.min(100, (normal / kap) * 100);
+    const qaPct = Math.min(100, (qa / kap) * 100);
+    return (
+      <>
+        {normalPct > 0 && <div className="stock-progress-fill" style={{ width: normalPct + "%", background: "linear-gradient(90deg, #16a34a, #4ade80)" }} />}
+        {qaPct > 0 && <div className="stock-progress-fill" style={{ width: qaPct + "%", background: "linear-gradient(90deg, #ca8a04, #facc15)" }} />}
+      </>
+    );
+  };
 
   const paramsOf = useCallback(() => {
     if (!session) return "";
@@ -139,7 +169,8 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
     (async () => {
       try {
         const b = paramsOf();
-        if (isNormal) {
+        // Load kapasitas juga untuk zona selain reject supaya bar bisa ngitung persen
+        if (showBar) {
           const [lr, kr] = await Promise.all([
             apiGet<ListRow[]>(`/stok?zona=${zona}&${b}`),
             apiGet<KapRow[]>(`/stok?mode=kapasitas_produk&${b}`),
@@ -160,7 +191,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, paramsOf, zona, isNormal]);
+  }, [session, paramsOf, zona, showBar]);
 
   const openModal = (id: number, nama: string) => {
     if (!session) return;
@@ -176,7 +207,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const products: Produk[] = list.map((r) => {
     const kap = kaps.get(r.id_produk) || 0;
     const qty = angka(r.total_qty);
-    return { id_produk: r.id_produk, nama_produk: norm(r.nama_produk), kategori_lokasi: norm(r.kategori_lokasi), satuan: norm(r.satuan), qty, kapasitas: kap, persen: persen(qty, kap) };
+    return { id_produk: r.id_produk, nama_produk: norm(r.nama_produk), kategori_lokasi: norm(r.kategori_lokasi), satuan: norm(r.satuan), qty, qty_qa: angka(r.qty_qa), kapasitas: kap, persen: persen(qty, kap) };
   });
 
   const ql = q.trim().toLowerCase();
@@ -192,16 +223,17 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   });
 
   const sumQty = (p: Produk[]) => p.reduce((s, x) => s + x.qty, 0);
+  const sumQa = (p: Produk[]) => p.reduce((s, x) => s + x.qty_qa, 0);
   const sumKap = (p: Produk[]) => p.reduce((s, x) => s + x.kapasitas, 0);
   const tQ = sumQty(filtered); const tK = sumKap(filtered);
-  const gab = { qty: tQ, kap: tK, persen: persen(tQ, tK) };
+  const gab = { qty: tQ, qa: sumQa(filtered), kap: tK, persen: persen(tQ, tK) };
 
   const groupTotal = (c: string) => {
     const p = byCat[c]; const qty = sumQty(p); const kap = sumKap(p);
-    return { qty, kap, persen: persen(qty, kap) };
+    return { qty, qa: sumQa(p), kap, persen: persen(qty, kap) };
   };
 
-  const sections = detail.reduce<{ parent: string; blocks: Record<string, { total: number; rows: { bb: string; qty: number }[] }> }[]>((acc, d) => {
+  const sections = detail.reduce<{ parent: string; blocks: Record<string, { total: number; rows: { bb: string; qty: number; status: string }[] }> }[]>((acc, d) => {
     const loc = norm(d.lokasi_block) || "-";
     const prefix = loc === "-" ? "Lainnya" : "Block " + loc.split("-")[0];
     let sec = acc.find((s) => s.parent === prefix);
@@ -209,9 +241,10 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
     const b = sec.blocks[loc] = sec.blocks[loc] || { total: 0, rows: [] };
     const bb = norm(d.best_before) || "-";
     const qty = angka(d.qty_sisa);
+    const status = norm(d.status).toLowerCase();
     b.total += qty;
     const ex = b.rows.find((r) => r.bb === bb);
-    if (ex) ex.qty += qty; else b.rows.push({ bb, qty });
+    if (ex) ex.qty += qty; else b.rows.push({ bb, qty, status });
     return acc;
   }, []);
 
@@ -242,11 +275,12 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
         </div>
       </div>
 
-      {isNormal && (
+      {/* Menampilkan kotak summary jika showBar true (berlaku buat normal, qa, bad) */}
+      {showBar && (
         <div className="stock-summary-grid">
           <div className="stock-summary-card wide">
             <div className="stock-summary-top"><div className="stock-summary-title">Gabungan</div><div className="stock-percent-pill">{gab.persen}%</div></div>
-            <div className="stock-progress"><div className="stock-progress-fill" style={{ width: gab.persen + "%" }}></div></div>
+            <div className="stock-progress">{barFill(gab.qty, gab.qa, gab.kap)}</div>
             <div className="stock-summary-bottom">Stok: {num(gab.qty)} / {num(gab.kap)}</div>
           </div>
           {cats.map((c) => {
@@ -254,7 +288,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
             return (
               <div key={c} className={"stock-summary-card" + (s.persen >= 60 ? " wide" : "")}>
                 <div className="stock-summary-top"><div className="stock-summary-title">{c}</div><div className="stock-percent-pill">{s.persen}%</div></div>
-                <div className="stock-progress"><div className="stock-progress-fill" style={{ width: s.persen + "%" }}></div></div>
+                <div className="stock-progress">{barFill(s.qty, s.qa, s.kap)}</div>
                 <div className="stock-summary-bottom">Stok: {num(s.qty)} / {num(s.kap)}</div>
               </div>
             );
@@ -295,11 +329,16 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
             <div className="stock-product-grid">
               {byCat[c].map((p) => (
                 <div key={p.id_produk} className="stock-product-card" onClick={() => openModal(p.id_produk, p.nama_produk)}>
-                  <div className="stock-product-name" title={p.nama_produk}>{p.nama_produk}</div>
-                  {isNormal && <div className="stock-progress"><div className="stock-progress-fill" style={{ width: p.persen + "%" }}></div></div>}
+                  <div className="stock-product-name" title={p.nama_produk} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nama_produk}</span>
+                    {p.qty_qa > 0 && <span style={{ flexShrink: 0, background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 900 }}>QA</span>}
+                  </div>
+                  {/* Menampilkan progress bar di product item jika showBar true */}
+                  {showBar && <div className="stock-progress">{barFill(p.qty, p.qty_qa, p.kapasitas)}</div>}
                   <div className="stock-product-meta">
                     <span>Stok: {num(p.qty)} {p.satuan}</span>
-                    {isNormal && <span className="stock-product-muted">{num(p.qty)} / {num(p.kapasitas)} &nbsp; {p.persen}%</span>}
+                    {/* Menampilkan kapasitas dan persentase di product item jika showBar true */}
+                    {showBar && <span className="stock-product-muted">{num(p.qty)} / {num(p.kapasitas)} &nbsp; {p.persen}%</span>}
                   </div>
                 </div>
               ))}
@@ -341,8 +380,11 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
                           </div>
                           <div style={{ padding: "8px 14px" }}>
                             {blk.rows.map((r, i) => (
-                              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px dashed #f0f2f5", fontSize: 11 }}>
-                                <span style={{ color: "#8a93a3", fontWeight: 700 }}>{r.bb}</span>
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px dashed #f0f2f5", fontSize: 11, alignItems: "center" }}>
+                                <span style={{ color: "#8a93a3", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                                  {r.bb}
+                                  {r.status === "qa" && <span style={{ background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>QA</span>}
+                                </span>
                                 <span style={{ fontWeight: 850 }}>{num(r.qty)}</span>
                               </div>
                             ))}

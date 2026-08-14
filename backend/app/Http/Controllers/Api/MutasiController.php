@@ -17,12 +17,13 @@ class MutasiController extends Controller
         $id_pengguna_lokasi = trim($request->input('id_pengguna_lokasi', ''));
         $id_line = (int) $request->input('id_line', 0);
         $id_produk = (int) $request->input('id_produk', 0);
+        $status = strtolower(trim((string) $request->input('status', '')));
 
         if ($id_pengguna_lokasi === '' || $id_line <= 0 || $id_produk <= 0) {
             return $this->fail('Field wajib: id_pengguna_lokasi, id_line, id_produk');
         }
 
-        $rows = DB::table('stok_gudang as sg')
+        $query = DB::table('stok_gudang as sg')
             ->join('stok_gudang_deep as sd', function ($join) {
                 $join->on('sd.id_stok_header', '=', 'sg.id_stok')
                     ->on('sd.id_pengguna_lokasi', '=', 'sg.id_pengguna_lokasi');
@@ -43,8 +44,13 @@ class MutasiController extends Controller
             ->where('ln.id_line', $id_line)
             ->where('sg.id_produk', $id_produk)
             ->where('sg.jumlah_sisa', '>', 0)
-            ->where('sd.jumlah', '>', 0)
-            ->select('sg.best_before')
+            ->where('sd.jumlah', '>', 0);
+
+        if (in_array($status, ['normal', 'qa'], true)) {
+            $query->where('sg.status', $status);
+        }
+
+        $rows = $query->select('sg.best_before')
             ->distinct()
             ->orderBy('sg.best_before', 'ASC')
             ->pluck('best_before');
@@ -134,6 +140,21 @@ class MutasiController extends Controller
             }
         }
 
+        if (in_array($jenis_mutasi, ['GS_QA', 'QA_GS'], true)) {
+            return $this->storeQaMutasi(
+                $id_pengguna_lokasi,
+                $id_pengguna,
+                $id_produk,
+                $jumlah_sumber,
+                $satuan_sumber,
+                $best_before,
+                $jenis_mutasi,
+                $id_line_sumber,
+                $catatan,
+                $mode
+            );
+        }
+
         if ($id_line_sumber > 0 && $id_line_tujuan > 0) {
             if ($id_line_sumber === $id_line_tujuan) {
                 return $this->fail('Lokasi sumber dan lokasi tujuan tidak boleh sama.');
@@ -197,7 +218,7 @@ class MutasiController extends Controller
         }
 
         // Stok Sumber
-        $sourceRows = $this->get_source_rows($id_pengguna_lokasi, $lineSumber['id_line'], $id_produk, $best_before);
+        $sourceRows = $this->get_source_rows($id_pengguna_lokasi, $lineSumber['id_line'], $id_produk, $best_before, $jenis_mutasi === 'QA_BAD' ? 'qa' : null);
         if (empty($sourceRows)) {
             return $this->fail('Data stok sumber tidak ditemukan, silakan periksa produk, Best Before, dan lokasi sumber.', 422);
         }
@@ -283,13 +304,18 @@ class MutasiController extends Controller
             $nama_produk_ref = $pengambilanSumber[0]['nama_produk'];
             $batch_ref = trim((string) ($pengambilanSumber[0]['batch_deep'] ?? $pengambilanSumber[0]['batch_header'] ?? ''));
 
-            $id_stok_tujuan = DB::table('stok_gudang')
+            $targetStatus = $jenis_mutasi === 'BAD_QA' ? 'qa' : null;
+
+            $queryTujuan = DB::table('stok_gudang')
                 ->where('id_pengguna_lokasi', $id_pengguna_lokasi)
                 ->where('id_produk', $id_produk)
                 ->where('lokasi_block', $lokasi_tujuan)
-                ->where('best_before', $best_before)
-                ->orderBy('id_stok', 'ASC')
-                ->value('id_stok');
+                ->where('best_before', $best_before);
+            if ($targetStatus !== null) {
+                $queryTujuan->where('status', $targetStatus);
+            }
+
+            $id_stok_tujuan = $queryTujuan->orderBy('id_stok', 'ASC')->value('id_stok');
 
             if ($id_stok_tujuan) {
                 DB::table('stok_gudang')
@@ -300,7 +326,7 @@ class MutasiController extends Controller
                         'satuan' => $satuan_tujuan,
                     ]);
             } else {
-                $id_stok_tujuan = DB::table('stok_gudang')->insertGetId([
+                $insertTujuan = [
                     'id_pengguna_lokasi' => $id_pengguna_lokasi,
                     'id_produk' => $id_produk,
                     'nama_produk' => $nama_produk_ref,
@@ -311,7 +337,11 @@ class MutasiController extends Controller
                     'lokasi_block' => $lokasi_tujuan,
                     'batch' => $batch_ref,
                     'created_at' => now(),
-                ]);
+                ];
+                if ($targetStatus !== null) {
+                    $insertTujuan['status'] = $targetStatus;
+                }
+                $id_stok_tujuan = DB::table('stok_gudang')->insertGetId($insertTujuan);
             }
 
             // 3. Alokasi Stok Tujuan Deep
@@ -381,6 +411,191 @@ class MutasiController extends Controller
     }
 
     // =========================================================================
+    // 3b. PROSES SIMPAN MUTASI QA (GS_QA / QA_GS) - TIDAK PINDAH LOKASI
+    // =========================================================================
+    private function storeQaMutasi($idPenggunaLokasi, $idPengguna, $idProduk, $jumlah, $satuan, $bestBefore, $jenisMutasi, $idLineSumber, $catatan, $mode)
+    {
+        $isToQa = $jenisMutasi === 'GS_QA';
+        $statusSumber = $isToQa ? 'normal' : 'qa';
+        $statusTujuan = $isToQa ? 'qa' : 'normal';
+
+        $lineSumber = $idLineSumber > 0 ? $this->get_line_info_by_id($idPenggunaLokasi, $idLineSumber) : null;
+
+        if (! $lineSumber) {
+            return $this->fail('Lokasi sumber tidak ditemukan.');
+        }
+
+        if (($lineSumber['mode'] ?? '') !== 'goods') {
+            return $this->fail('Mutasi QA hanya bisa dilakukan pada lokasi normal (good stock).');
+        }
+
+        $lokasi = $this->normalize_line_label($lineSumber['label']);
+
+        $sourceRows = $this->get_source_rows($idPenggunaLokasi, $lineSumber['id_line'], $idProduk, $bestBefore, $statusSumber);
+        if (empty($sourceRows)) {
+            return $this->fail('Data stok sumber '.strtoupper($statusSumber).' tidak ditemukan, silakan periksa produk, Best Before, dan lokasi sumber.', 422);
+        }
+
+        $totalSumber = array_sum(array_column($sourceRows, 'jumlah_deep'));
+        if ($totalSumber < $jumlah) {
+            return $this->fail('Jumlah mutasi melebihi stok sumber yang tersedia.', 422);
+        }
+
+        if ($mode === 'preview') {
+            return $this->ok([
+                'lokasi_sumber' => $lokasi,
+                'lokasi_tujuan' => $lokasi,
+                'best_before' => $bestBefore,
+                'jumlah' => $jumlah,
+                'jumlah_tujuan' => $jumlah,
+                'satuan_tujuan' => $satuan,
+                'alokasi_tujuan' => [],
+            ], 'Preview mutasi QA berhasil.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $pengambilanSumber = $this->consume_source_rows($sourceRows, $jumlah);
+            if (empty($pengambilanSumber)) {
+                throw new Exception('Gagal membentuk alokasi pengambilan dari sumber.');
+            }
+
+            foreach ($pengambilanSumber as $src) {
+                $ambil = (int) $src['ambil'];
+                if ($ambil <= 0) {
+                    continue;
+                }
+
+                if ($ambil < $src['jumlah_deep']) {
+                    DB::table('stok_gudang_deep')
+                        ->where('id_detail_stok', $src['id_detail_stok'])
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->decrement('jumlah', $ambil);
+                } else {
+                    DB::table('stok_gudang_deep')
+                        ->where('id_detail_stok', $src['id_detail_stok'])
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->delete();
+                }
+
+                DB::table('stok_gudang')
+                    ->where('id_stok', $src['id_stok'])
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->decrement('jumlah_sisa', $ambil);
+            }
+
+            $idBarangMasukRef = (int) $pengambilanSumber[0]['id_barang_masuk'];
+            $namaProdukRef = $pengambilanSumber[0]['nama_produk'];
+            $batchRef = trim((string) ($pengambilanSumber[0]['batch_deep'] ?? $pengambilanSumber[0]['batch_header'] ?? ''));
+
+            $idStokTujuan = DB::table('stok_gudang')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('id_produk', $idProduk)
+                ->where('lokasi_block', $lokasi)
+                ->where('best_before', $bestBefore)
+                ->where('status', $statusTujuan)
+                ->orderBy('id_stok', 'ASC')
+                ->value('id_stok');
+
+            if ($idStokTujuan) {
+                DB::table('stok_gudang')
+                    ->where('id_stok', $idStokTujuan)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->update([
+                        'jumlah_sisa' => DB::raw("jumlah_sisa + $jumlah"),
+                        'satuan' => $satuan,
+                    ]);
+            } else {
+                $idStokTujuan = DB::table('stok_gudang')->insertGetId([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'id_produk' => $idProduk,
+                    'nama_produk' => $namaProdukRef,
+                    'id_barang_masuk' => $idBarangMasukRef,
+                    'jumlah_sisa' => $jumlah,
+                    'best_before' => $bestBefore,
+                    'satuan' => $satuan,
+                    'lokasi_block' => $lokasi,
+                    'status' => $statusTujuan,
+                    'batch' => $batchRef,
+                    'created_at' => now(),
+                ]);
+            }
+
+            $targetDeeps = $this->get_target_deeps($idPenggunaLokasi, $lineSumber['id_line'], $idProduk, $bestBefore);
+            if (empty($targetDeeps)) {
+                throw new Exception('Line tidak memiliki deep kosong atau kapasitas tersedia.');
+            }
+
+            $alokasiTujuan = $this->build_target_allocation($targetDeeps, $jumlah);
+            if (empty($alokasiTujuan)) {
+                throw new Exception('Kapasitas line tidak mencukupi untuk jumlah mutasi.');
+            }
+
+            foreach ($alokasiTujuan as $al) {
+                $idDeepTujuan = (int) $al['id_deep'];
+                $qtyTujuan = (int) $al['jumlah'];
+
+                $detail = DB::table('stok_gudang_deep')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_stok_header', $idStokTujuan)
+                    ->where('id_deep', $idDeepTujuan)
+                    ->where('best_before', $bestBefore)
+                    ->first();
+
+                if ($detail) {
+                    DB::table('stok_gudang_deep')
+                        ->where('id_detail_stok', $detail->id_detail_stok)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->update([
+                            'jumlah' => DB::raw("jumlah + $qtyTujuan"),
+                            'lokasi_block' => $lokasi,
+                        ]);
+                } else {
+                    DB::table('stok_gudang_deep')->insert([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_stok_header' => $idStokTujuan,
+                        'id_deep' => $idDeepTujuan,
+                        'jumlah' => $qtyTujuan,
+                        'best_before' => $bestBefore,
+                        'lokasi_block' => $lokasi,
+                        'batch' => $batchRef,
+                    ]);
+                }
+            }
+
+            Mutasi::create([
+                'id_pengguna_lokasi' => $idPenggunaLokasi,
+                'id_pengguna' => $idPengguna,
+                'id_produk' => $idProduk,
+                'lokasi_sumber' => $lokasi,
+                'lokasi_tujuan' => $lokasi,
+                'jumlah' => $jumlah,
+                'best_before' => $bestBefore,
+                'jenis_mutasi' => $jenisMutasi,
+                'satuan' => $satuan,
+                'catatan' => $catatan,
+                'created_at' => now(),
+            ]);
+
+            DB::commit();
+
+            return $this->ok([
+                'lokasi_sumber' => $lokasi,
+                'lokasi_tujuan' => $lokasi,
+                'best_before' => $bestBefore,
+                'jumlah' => $jumlah,
+                'jumlah_tujuan' => $jumlah,
+                'alokasi_tujuan' => $alokasiTujuan,
+            ], 'Mutasi QA stok berhasil disimpan.');
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            return $this->fail('Mutasi gagal disimpan: '.$e->getMessage(), 500);
+        }
+    }
+
+    // =========================================================================
     // PRIVATE HELPER FUNCTIONS
     // =========================================================================
 
@@ -429,6 +644,10 @@ class MutasiController extends Controller
             'BAD_GS' => ['source_mode' => 'bad',   'target_mode' => 'goods'],
             'GS_REJ' => ['source_mode' => 'goods', 'target_mode' => 'reject'],
             'BAD_REJ' => ['source_mode' => 'bad',   'target_mode' => 'reject'],
+            'GS_QA' => ['source_mode' => 'goods', 'target_mode' => 'qa'],
+            'QA_GS' => ['source_mode' => 'qa',   'target_mode' => 'goods'],
+            'QA_BAD' => ['source_mode' => 'goods', 'target_mode' => 'bad'],
+            'BAD_QA' => ['source_mode' => 'bad',   'target_mode' => 'goods'],
         ];
 
         return $rules[strtoupper(trim($jenisMutasi))] ?? null;
@@ -508,9 +727,9 @@ class MutasiController extends Controller
         return ($sumber === 'GALLON' && $tujuan === 'SPS') || ($sumber === 'SPS' && $tujuan === 'GALLON');
     }
 
-    private function get_source_rows($idPenggunaLokasi, $idLine, $idProduk, $bestBefore)
+    private function get_source_rows($idPenggunaLokasi, $idLine, $idProduk, $bestBefore, $statusFilter = null)
     {
-        return DB::table('stok_gudang_deep as sd')
+        $query = DB::table('stok_gudang_deep as sd')
             ->join('stok_gudang as sg', function ($j) {
                 $j->on('sg.id_stok', '=', 'sd.id_stok_header')
                     ->on('sg.id_pengguna_lokasi', '=', 'sd.id_pengguna_lokasi');
@@ -532,7 +751,13 @@ class MutasiController extends Controller
             ->where('sg.id_produk', $idProduk)
             ->where('sg.best_before', $bestBefore)
             ->where('sg.jumlah_sisa', '>', 0)
-            ->where('sd.jumlah', '>', 0)
+            ->where('sd.jumlah', '>', 0);
+
+        if ($statusFilter !== null) {
+            $query->where('sg.status', $statusFilter);
+        }
+
+        return $query
             ->select(
                 'sg.id_stok', 'sg.nama_produk', 'sg.id_barang_masuk', 'sg.jumlah_sisa',
                 'sg.satuan', 'sg.best_before', 'sg.batch as batch_header',

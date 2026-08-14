@@ -34,6 +34,10 @@ const STATUS_LABEL: Record<string, string> = {
   BAD_GS: "Bad Stock - Goods Stock",
   GS_REJ: "Goods Stock - Reject",
   BAD_REJ: "Bad Stock - Reject",
+  GS_QA: "Goods Stock - QA",
+  QA_GS: "QA - Goods Stock",
+  QA_BAD: "QA - Bad Stock",
+  BAD_QA: "Bad Stock - QA",
 };
 
 const css = `
