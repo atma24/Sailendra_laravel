@@ -30,7 +30,7 @@ const css = `
 @media (max-width: 576px) { .user-form-row { grid-template-columns: 1fr; } }
 `;
 
-const ROLES = ["Supervisor", "Checker", "Forklift"];
+const ROLES = ["Supervisor", "Checker", "Forklift", "Auditor"];
 const STATUSES = ["Aktif", "Nonaktif"];
 
 function tokenHeaders(): HeadersInit {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
 
@@ -8,6 +8,8 @@ type HistRow = {
   tanggal_opname: string;
   created_at: string;
   jenis_opname: string;
+  sumber_opname: string;
+  petugas: string;
   jumlah_produk: number;
   jumlah_selisih: number;
 };
@@ -24,6 +26,7 @@ type DetailRow = {
   alasan: string;
   stok_sebelumnya: number | null;
   dirubah_oleh: string | null;
+  sumber_opname?: string;
 };
 type CatalogRow = {
   id_produk: number;
@@ -32,6 +35,27 @@ type CatalogRow = {
   lokasi_block: string;
   best_before: string;
   stok_sistem: number;
+};
+type CompareRow = {
+  id_produk: number;
+  nama_produk: string;
+  lokasi_block: string;
+  best_before: string;
+  satuan: string;
+  checker_fisik: number | null;
+  auditor_fisik: number | null;
+  selisih: number | null;
+  matched: boolean;
+};
+type CompareBatch = {
+  tanggal_opname: string;
+  created_at: string;
+  checker_created_at: string | null;
+  auditor: string | null;
+  checker: string | null;
+  linked: boolean;
+  jumlah_item: number;
+  items: CompareRow[];
 };
 type ProdukRow = { id_produk: number; nama_produk: string };
 type ManualRow = {
@@ -116,9 +140,11 @@ export default function StockOpnamePage() {
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
   const isChecker = !!session && session.user.role === "Checker";
+  const isAuditor = !!session && session.user.role === "Auditor";
+  const canCompare = !!session && ["SuperAdmin", "Supervisor", "Auditor"].includes(session.user.role);
   const isEditable = !!session && !isChecker && (session.user.role === "SuperAdmin" || session.user.role === "Supervisor");
 
-  const [view, setView] = useState<"history" | "form" | "preview" | "detail">("history");
+  const [view, setView] = useState<"history" | "form" | "preview" | "detail" | "compare">("history");
   const [jenis, setJenis] = useState<"Manual" | "Akurasi">("Akurasi");
   const [hist, setHist] = useState<HistRow[]>([]);
   const [qManual, setQManual] = useState("");
@@ -131,6 +157,8 @@ export default function StockOpnamePage() {
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [detailMeta, setDetailMeta] = useState({ tanggal: "", waktu: "" });
   const [editVals, setEditVals] = useState<Record<string, { fisik: string; alasan: string }>>({});
+  const [compare, setCompare] = useState<CompareBatch[]>([]);
+  const [compareSelected, setCompareSelected] = useState<CompareBatch | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
@@ -154,12 +182,22 @@ export default function StockOpnamePage() {
     return sp;
   }, [session]);
 
+  const fetchCompare = useCallback(() => {
+    if (!session || !canCompare) return;
+    apiGet<CompareBatch[]>(`/stok-opname?mode=compare&${paramsOf().toString()}`)
+      .then((r) => setCompare(r.data || []))
+      .catch(() => setCompare([]));
+  }, [session, canCompare, paramsOf]);
+
   const reload = useCallback(() => {
     if (!session) return;
-    apiGet<HistRow[]>(`/stok-opname?mode=history&${paramsOf().toString()}`)
+    const sp = paramsOf();
+    if (isAuditor) sp.set("sumber", "Auditor");
+    apiGet<HistRow[]>(`/stok-opname?mode=history&${sp.toString()}`)
       .then((r) => setHist(r.data || []))
       .catch(() => setHist([]));
-  }, [session, paramsOf]);
+    fetchCompare();
+  }, [session, paramsOf, isAuditor, fetchCompare]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -290,15 +328,22 @@ export default function StockOpnamePage() {
     body.tanggal_opname = tanggal;
     body.jenis_opname = jenis;
     body.items = items;
-    apiPost<{ tanggal_opname: string; created_at: string; jumlah_item: number }>(`/stok-opname?mode=save`, body)
+    apiPost<{ tanggal_opname: string; created_at: string; jumlah_item: number; sumber_opname?: string; linked?: boolean; checker_created_at?: string | null }>(`/stok-opname?mode=save`, body)
       .then((r) => {
-        setMsg(`Stock opname ${r.data.tanggal_opname} tersimpan (${r.data.jumlah_item} item).`);
+        const d = r.data;
+        let m = `Stock opname ${d.tanggal_opname} tersimpan (${d.jumlah_item} item).`;
+        if (d.sumber_opname === "Auditor") {
+          m += d.linked
+            ? " Terhubung dengan data Checker hari ini untuk perbandingan."
+            : " Belum ada data Checker hari ini, data disimpan tanpa perbandingan.";
+        }
+        setMsg(m);
         setView("detail");
         setDetailMeta({ tanggal: r.data.tanggal_opname, waktu: r.data.created_at });
         return apiGet<DetailRow[]>(`/stok-opname?mode=detail&${paramsOf().toString()}&created_at=${encodeURIComponent(r.data.created_at)}`)
           .then((dr) => setDetail(dr.data || []));
       })
-      .then(() => setView("detail"))
+      .then(() => reload())
       .catch((e) => setErr(e.message || "Gagal menyimpan."))
       .finally(() => setLoading(false));
   };
@@ -344,6 +389,12 @@ export default function StockOpnamePage() {
 
   const canEdit = isEditable;
 
+  const openCompareBatch = (b: CompareBatch) => {
+    setErr(""); setMsg("");
+    setCompareSelected(b);
+    setView("compare");
+  };
+
   const downloadForm = async () => {
     if (!session) return;
     try {
@@ -370,6 +421,46 @@ export default function StockOpnamePage() {
 
       {view === "history" && (
         <>
+          {canCompare && (
+            <div className="so-card">
+              <div className="so-head"><h2 className="so-title">Perbandingan Checker vs Auditor</h2></div>
+              {compare.length === 0 ? (
+                <div className="so-empty">Belum ada data Auditor untuk dibandingkan.</div>
+              ) : (
+                <div className="so-table-wrap">
+                  <table className="so-table">
+                    <thead><tr><th style={{width:40}}>No</th><th>Tanggal</th><th>Auditor</th><th>Checker</th><th style={{textAlign:"center"}}>Item</th><th>Status</th><th style={{textAlign:"right"}}>Aksi</th></tr></thead>
+                    <tbody>
+                      {compare.map((b, i) => (
+                        <tr key={b.created_at}>
+                          <td>{i + 1}</td>
+                          <td><strong style={{color:"#111827"}}>{b.tanggal_opname}</strong></td>
+                          <td>
+                            <div>{String(b.created_at).slice(11, 16)}</div>
+                            <div style={{ fontWeight: 700, color: "#191970" }}>{norm(b.auditor) || "-"}</div>
+                          </td>
+                          <td>
+                            {b.linked ? (
+                              <>
+                                <div>{String(b.checker_created_at).slice(11, 16)}</div>
+                                <div style={{ fontWeight: 700, color: "#166534" }}>{norm(b.checker) || "-"}</div>
+                              </>
+                            ) : (
+                              <span className="badge-err">Checker belum ada</span>
+                            )}
+                          </td>
+                          <td style={{textAlign:"center"}}>{b.jumlah_item}</td>
+                          <td>{b.linked ? <span className="badge-ok">Terhubung</span> : <span className="badge-err">Belum terhubung</span>}</td>
+                          <td style={{textAlign:"right"}}><button type="button" className="btn-action" onClick={() => openCompareBatch(b)}>Bandingkan</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="so-card">
             <div className="so-head"><h2 className="so-title">Riwayat Stock Opname</h2></div>
             <div className="so-toolbar">
@@ -386,7 +477,7 @@ export default function StockOpnamePage() {
             ) : (
               <div className="so-table-wrap">
                 <table className="so-table">
-                  <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th><th style={{textAlign:"right"}}>Aksi</th></tr></thead>
+                  <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th>{canCompare && <th>Petugas</th>}<th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                   <tbody>
                     {fManual.map((h, i) => (
                       <tr key={i}>
@@ -395,6 +486,7 @@ export default function StockOpnamePage() {
                         <td style={{textAlign:"center"}}>{String(h.created_at).slice(11, 16)}</td>
                         <td>{h.jumlah_produk} Produk</td>
                         <td><span className={h.jumlah_selisih > 0 ? "badge-err" : "badge-ok"}>{h.jumlah_selisih > 0 ? h.jumlah_selisih + " Selish" : "Semua"}</span></td>
+                        {canCompare && <td><PetugasCell sumber={h.sumber_opname} nama={h.petugas} /></td>}
                         <td style={{textAlign:"right"}}><button type="button" className="btn-action" onClick={() => openDetail(h)}>Detail</button></td>
                       </tr>
                     ))}
@@ -420,7 +512,7 @@ export default function StockOpnamePage() {
             ) : (
               <div className="so-table-wrap">
                 <table className="so-table">
-                  <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th><th style={{textAlign:"right"}}>Aksi</th></tr></thead>
+                  <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th>{canCompare && <th>Petugas</th>}<th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                   <tbody>
                     {fAkurasi.map((h, i) => (
                       <tr key={i}>
@@ -429,6 +521,7 @@ export default function StockOpnamePage() {
                         <td style={{textAlign:"center"}}>{String(h.created_at).slice(11, 16)}</td>
                         <td>{h.jumlah_produk} Produk</td>
                         <td><span className={h.jumlah_selisih > 0 ? "badge-err" : "badge-ok"}>{h.jumlah_selisih > 0 ? h.jumlah_selisih + " Selish" : "Sesuai"}</span></td>
+                        {canCompare && <td><PetugasCell sumber={h.sumber_opname} nama={h.petugas} /></td>}
                         <td style={{textAlign:"right"}}><button type="button" className="btn-action" onClick={() => openDetail(h)}>Detail</button></td>
                       </tr>
                     ))}
@@ -567,7 +660,31 @@ export default function StockOpnamePage() {
             {detail.length === 0 ? (
               <div className="so-empty">Detail kosong.</div>
             ) : (
-              <DetailTable rows={detail} editable={canEdit} vals={editVals} setVals={setEditVals} onSave={editItem} />
+              <DetailTable rows={detail} editable={canEdit} vals={editVals} setVals={setEditVals} onSave={editItem} showSumber={canCompare} />
+            )}
+          </div>
+        </div>
+      )}
+
+      {view === "compare" && (
+        <div className="so-card">
+          <div className="so-section">
+            {err && <div className="so-err" style={{ marginBottom: 10 }}>{err}</div>}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900 }}>
+                Perbandingan Checker vs Auditor
+                {compareSelected && (
+                  <span style={{ fontSize: 10, fontWeight: 750, color: "#8a93a3" }}>
+                    {" "}· {compareSelected.tanggal_opname} · {norm(compareSelected.auditor) || "Auditor"} vs {norm(compareSelected.checker) || "Checker"}
+                  </span>
+                )}
+              </div>
+              <button type="button" className="so-btn so-btn-secondary" onClick={() => setView("history")}><i className="bi bi-arrow-left"></i> Kembali ke Perbandingan</button>
+            </div>
+            {compareSelected ? (
+              <CompareBatchCard batch={compareSelected} />
+            ) : (
+              <div className="so-empty">Pilih batch dari daftar perbandingan.</div>
             )}
           </div>
         </div>
@@ -592,7 +709,7 @@ function PreviewTable({ rows }: { rows: DetailRow[] }) {
         <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th><th>Stok Online</th><th>Stok Fisik</th><th>Selisih</th></tr></thead>
         <tbody>
           {groups.map((g) => (
-            <>
+            <Fragment key={g.name}>
               {g.rows.map((r, i) => (
                 <tr key={i}>
                   <td>{r.nama_produk}</td><td>{r.lokasi_block}</td><td>{r.best_before}</td>
@@ -604,7 +721,7 @@ function PreviewTable({ rows }: { rows: DetailRow[] }) {
                 <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
                 <td>{nf(g.s)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
               </tr>
-            </>
+            </Fragment>
           ))}
           <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
             <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gs)}</td><td>{nf(gf)}</td><td className={clsSelisih(gse)}>{fmtPlus(gse)}</td>
@@ -615,12 +732,13 @@ function PreviewTable({ rows }: { rows: DetailRow[] }) {
   );
 }
 
-function DetailTable({ rows, editable, vals, setVals, onSave }: {
+function DetailTable({ rows, editable, vals, setVals, onSave, showSumber }: {
   rows: DetailRow[];
   editable: boolean;
   vals: Record<string, { fisik: string; alasan: string }>;
   setVals: (v: Record<string, { fisik: string; alasan: string }>) => void;
   onSave: (d: DetailRow) => void;
+  showSumber?: boolean;
 }) {
   const groups = groupRows(rows).map((g) => ({
     ...g,
@@ -639,12 +757,13 @@ function DetailTable({ rows, editable, vals, setVals, onSave }: {
             <th>Produk</th><th>Lokasi</th><th>Batch / BB</th><th>Stok Online</th>
             <th>{editable ? "Stok Fisik (Edit)" : "Stok Fisik"}</th><th>Selisih</th>
             <th>{editable ? "Catatan Wajib" : "Catatan"}</th><th>Stok Sebelumnya</th><th>Diubah Oleh</th>
+            {showSumber && <th>Petugas</th>}
             {editable && <th>Aksi</th>}
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => (
-            <>
+            <Fragment key={g.name}>
               {g.rows.map((d) => {
                 const ev = vals[d.id_opname] ?? { fisik: String(d.stok_fisik), alasan: d.alasan ?? "" };
                 return (
@@ -670,6 +789,7 @@ function DetailTable({ rows, editable, vals, setVals, onSave }: {
                     </td>
                     <td>{d.stok_sebelumnya !== null ? nf(d.stok_sebelumnya) : "-"}</td>
                     <td><div style={{ maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }}>{norm(d.dirubah_oleh) || "-"}</div></td>
+                    {showSumber && <td><SumberBadge sumber={d.sumber_opname} /></td>}
                     {editable && <td><button type="button" className="btn-aksi" onClick={() => onSave(d)}><i className="bi bi-save"></i></button></td>}
                   </tr>
                 );
@@ -677,16 +797,123 @@ function DetailTable({ rows, editable, vals, setVals, onSave }: {
               <tr className="so-block" style={{ background: "#eef0ff", fontWeight: 900 }}>
                 <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
                 <td>{nf(g.s)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
-                <td colSpan={editable ? 4 : 3}></td>
+                <td colSpan={editable && showSumber ? 5 : editable || showSumber ? 4 : 3}></td>
               </tr>
-            </>
+            </Fragment>
           ))}
           <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
             <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gs)}</td><td>{nf(gf)}</td>
-            <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td><td colSpan={editable ? 4 : 3}></td>
+            <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td><td colSpan={editable && showSumber ? 5 : editable || showSumber ? 4 : 3}></td>
           </tr>
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function SumberBadge({ sumber }: { sumber?: string }) {
+  const isAuditor = String(sumber || "").toLowerCase() === "auditor";
+  return (
+    <span className={isAuditor ? "badge-err" : "badge-ok"} style={{ fontSize: 9 }}>
+      {isAuditor ? "Auditor" : "Checker"}
+    </span>
+  );
+}
+
+function PetugasCell({ sumber, nama }: { sumber?: string; nama?: string }) {
+  const isAuditor = String(sumber || "").toLowerCase() === "auditor";
+  return (
+    <div style={{ lineHeight: 1.4 }}>
+      <div style={{ fontWeight: 700, fontSize: 11 }}>
+        {norm(nama) || "-"}
+      </div>
+    </div>
+  );
+}
+
+function CompareBatchCard({ batch }: { batch: CompareBatch }) {
+  const groups: { name: string; rows: CompareRow[]; c: number; f: number; se: number; na: number; nc: number }[] = [];
+  const map: Record<string, CompareRow[]> = {};
+  batch.items.forEach((it) => {
+    const b = blockOf(it.lokasi_block);
+    (map[b] = map[b] || []).push(it);
+  });
+  Object.entries(map).forEach(([name, rows]) => {
+    groups.push({
+      name,
+      rows,
+      c: rows.reduce((a, r) => a + (r.checker_fisik ?? 0), 0),
+      f: rows.reduce((a, r) => a + (r.auditor_fisik ?? 0), 0),
+      se: rows.reduce((a, r) => a + (r.selisih ?? 0), 0),
+      na: rows.filter((r) => r.auditor_fisik === null).length,
+      nc: rows.filter((r) => r.checker_fisik === null).length,
+    });
+  });
+  const gc = groups.reduce((a, g) => a + g.c, 0);
+  const gf = groups.reduce((a, g) => a + g.f, 0);
+  const gse = groups.reduce((a, g) => a + g.se, 0);
+  const naTotal = batch.items.filter((it) => it.auditor_fisik === null).length;
+  const ncTotal = batch.items.filter((it) => it.checker_fisik === null).length;
+
+  return (
+    <div style={{ border: "1px solid #e9edf5", borderRadius: 10, marginBottom: 10, overflow: "hidden" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 11px", background: "#fbfcff", borderBottom: "1px solid #e9edf5", flexWrap: "wrap", gap: 6 }}>
+        <div style={{ fontWeight: 900, fontSize: 12 }}>
+          {batch.tanggal_opname}
+          <span style={{ fontWeight: 700, color: "#8a93a3", marginLeft: 8, fontSize: 10 }}>Auditor simpan {String(batch.created_at).slice(11, 19)}</span>
+          {batch.linked && (
+            <span style={{ fontWeight: 700, color: "#8a93a3", marginLeft: 8, fontSize: 10 }}>Checker simpan {String(batch.checker_created_at).slice(11, 19)}</span>
+          )}
+        </div>
+        {batch.linked ? (
+          <span className="badge-ok">terhubung</span>
+        ) : (
+          <span className="badge-err">Checker belum ada</span>
+        )}
+      </div>
+      <div className="so-table-wrap">
+        <table className="so-table">
+          <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th><th>Checker Fisik</th><th>Auditor Fisik</th><th>Selisih</th></tr></thead>
+          <tbody>
+            {groups.map((g) => (
+              <Fragment key={g.name}>
+                {g.rows.map((it) => (
+                  <tr key={`${it.id_produk}|${it.lokasi_block}|${it.best_before}`}>
+                    <td>{it.nama_produk}</td><td>{it.lokasi_block}</td><td>{it.best_before}</td>
+                    <td>{it.checker_fisik !== null ? <span style={{ fontWeight: 700 }}>{nf(it.checker_fisik)}</span> : <span style={{ color: "#8a93a3", fontWeight: 700 }}>-</span>}</td>
+                    <td>{it.auditor_fisik !== null ? <span style={{ fontWeight: 700 }}>{nf(it.auditor_fisik)}</span> : <span style={{ color: "#8a93a3", fontWeight: 700 }}>-</span>}</td>
+                    <td>
+                      {it.selisih !== null ? (
+                        <span className={clsSelisih(it.selisih)}>{fmtPlus(it.selisih)}</span>
+                      ) : it.checker_fisik === null ? (
+                        <span style={{ color: "#b45309", fontWeight: 700 }}>Tidak di Checker</span>
+                      ) : (
+                        <span style={{ color: "#b45309", fontWeight: 700 }}>Tidak di Auditor</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
+                  <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
+                  <td>{nf(g.c)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
+                </tr>
+              </Fragment>
+            ))}
+            <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
+              <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gc)}</td><td>{nf(gf)}</td>
+              <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td>
+            </tr>
+            {(ncTotal > 0 || naTotal > 0) && (
+              <tr>
+                <td colSpan={6} style={{ color: "#856404", background: "#fff8e1", fontWeight: 700 }}>
+                  {ncTotal > 0 && `${ncTotal} item tidak dicatat Checker. `}
+                  {naTotal > 0 && `${naTotal} item tidak dicatat Auditor.`}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
