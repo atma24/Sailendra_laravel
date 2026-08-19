@@ -633,7 +633,7 @@ export default function StockOpnamePage() {
             {detail.length === 0 ? (
               <div className="so-empty">Tidak ada data valid untuk ditampilkan.</div>
             ) : (
-              <PreviewTable rows={detail} />
+              <PreviewTable rows={detail} showOnline={!isChecker} />
             )}
             {detail.length > 0 && (
               <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 12 }}>
@@ -693,7 +693,7 @@ export default function StockOpnamePage() {
   );
 }
 
-function PreviewTable({ rows }: { rows: DetailRow[] }) {
+function PreviewTable({ rows, showOnline = true }: { rows: DetailRow[]; showOnline?: boolean }) {
   const groups = groupRows(rows).map((g) => ({
     ...g,
     s: g.rows.reduce((a, r) => a + r.stok_sistem, 0),
@@ -706,25 +706,31 @@ function PreviewTable({ rows }: { rows: DetailRow[] }) {
   return (
     <div className="so-table-wrap">
       <table className="so-table">
-        <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th><th>Stok Online</th><th>Stok Fisik</th><th>Selisih</th></tr></thead>
+        <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th>{showOnline && <th>Stok Online</th>}<th>Stok Fisik</th>{showOnline && <th>Selisih</th>}</tr></thead>
         <tbody>
           {groups.map((g) => (
             <Fragment key={g.name}>
               {g.rows.map((r, i) => (
                 <tr key={i}>
                   <td>{r.nama_produk}</td><td>{r.lokasi_block}</td><td>{r.best_before}</td>
-                  <td>{nf(r.stok_sistem)}</td><td>{nf(r.stok_fisik)}</td>
-                  <td className={clsSelisih(r.selisih)}>{fmtPlus(r.selisih)}</td>
+                  {showOnline && <td>{nf(r.stok_sistem)}</td>}
+                  <td>{nf(r.stok_fisik)}</td>
+                  {showOnline && <td className={clsSelisih(r.selisih)}>{fmtPlus(r.selisih)}</td>}
                 </tr>
               ))}
               <tr className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
                 <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
-                <td>{nf(g.s)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
+                {showOnline && <td>{nf(g.s)}</td>}
+                <td>{nf(g.f)}</td>
+                {showOnline && <td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>}
               </tr>
             </Fragment>
           ))}
           <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
-            <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gs)}</td><td>{nf(gf)}</td><td className={clsSelisih(gse)}>{fmtPlus(gse)}</td>
+            <td colSpan={3}>TOTAL KESELURUHAN</td>
+            {showOnline && <td>{nf(gs)}</td>}
+            <td>{nf(gf)}</td>
+            {showOnline && <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td>}
           </tr>
         </tbody>
       </table>

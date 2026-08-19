@@ -47,6 +47,11 @@ class MutasiController extends Controller
                 })
                 ->where('ln.id_line', $id_line)
                 ->where('sd.jumlah', '>', 0);
+        } else {
+            // GS_QI: hanya lokasi good stock (bukan REJECT / BAD / zona khusus lain)
+            foreach (['BAD STOCK-%', 'BADSTOCK-%', 'BS-%', 'BAD-%', 'REJECT-%', 'RECEH-%', 'FESTIVE-%', 'TRANSIT-%', 'HOLD-%'] as $pattern) {
+                $query->whereNotLike('sg.lokasi_block', $pattern);
+            }
         }
 
         if (in_array($status, ['normal', 'qi'], true)) {
@@ -630,6 +635,8 @@ class MutasiController extends Controller
             ->where('status', 'normal')
             ->where('jumlah_sisa', '>', 0);
 
+        $this->applyGoodBlockOnly($base);
+
         $totalQty = (int) (clone $base)->sum('jumlah_sisa');
 
         if ($totalQty <= 0) {
@@ -653,13 +660,15 @@ class MutasiController extends Controller
         DB::beginTransaction();
 
         try {
-            DB::table('stok_gudang')
+            $update = DB::table('stok_gudang')
                 ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                 ->where('id_produk', $idProduk)
                 ->where('best_before', $bestBefore)
                 ->where('status', 'normal')
-                ->where('jumlah_sisa', '>', 0)
-                ->update(['status' => 'qi']);
+                ->where('jumlah_sisa', '>', 0);
+            $this->applyGoodBlockOnly($update);
+
+            $update->update(['status' => 'qi']);
 
             Mutasi::create([
                 'id_pengguna_lokasi' => $idPenggunaLokasi,
@@ -696,6 +705,16 @@ class MutasiController extends Controller
     // =========================================================================
     // PRIVATE HELPER FUNCTIONS
     // =========================================================================
+
+    // Batasi hanya lokasi good stock (bukannya REJECT / BAD / zona khusus lain)
+    private function applyGoodBlockOnly($query)
+    {
+        foreach (['BAD STOCK-%', 'BADSTOCK-%', 'BS-%', 'BAD-%', 'REJECT-%', 'RECEH-%', 'FESTIVE-%', 'TRANSIT-%', 'HOLD-%'] as $pattern) {
+            $query->whereNotLike('lokasi_block', $pattern);
+        }
+
+        return $query;
+    }
 
     private function normalize_line_label($label)
     {
