@@ -19,34 +19,37 @@ class MutasiController extends Controller
         $id_produk = (int) $request->input('id_produk', 0);
         $status = strtolower(trim((string) $request->input('status', '')));
 
-        if ($id_pengguna_lokasi === '' || $id_line <= 0 || $id_produk <= 0) {
-            return $this->fail('Field wajib: id_pengguna_lokasi, id_line, id_produk');
+        if ($id_pengguna_lokasi === '' || $id_produk <= 0) {
+            return $this->fail('Field wajib: id_pengguna_lokasi, id_produk');
         }
 
         $query = DB::table('stok_gudang as sg')
-            ->join('stok_gudang_deep as sd', function ($join) {
-                $join->on('sd.id_stok_header', '=', 'sg.id_stok')
-                    ->on('sd.id_pengguna_lokasi', '=', 'sg.id_pengguna_lokasi');
-            })
-            ->join('deep as d', function ($join) {
-                $join->on('d.id_deep', '=', 'sd.id_deep')
-                    ->on('d.id_pengguna_lokasi', '=', 'sd.id_pengguna_lokasi');
-            })
-            ->join('level as lv', function ($join) {
-                $join->on('lv.id_level', '=', 'd.id_level')
-                    ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
-            })
-            ->join('line as ln', function ($join) {
-                $join->on('ln.id_line', '=', 'lv.id_line')
-                    ->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
-            })
             ->where('sg.id_pengguna_lokasi', $id_pengguna_lokasi)
-            ->where('ln.id_line', $id_line)
             ->where('sg.id_produk', $id_produk)
-            ->where('sg.jumlah_sisa', '>', 0)
-            ->where('sd.jumlah', '>', 0);
+            ->where('sg.jumlah_sisa', '>', 0);
 
-        if (in_array($status, ['normal', 'qa'], true)) {
+        if ($id_line > 0) {
+            $query->join('stok_gudang_deep as sd', function ($join) {
+                    $join->on('sd.id_stok_header', '=', 'sg.id_stok')
+                        ->on('sd.id_pengguna_lokasi', '=', 'sg.id_pengguna_lokasi');
+                })
+                ->join('deep as d', function ($join) {
+                    $join->on('d.id_deep', '=', 'sd.id_deep')
+                        ->on('d.id_pengguna_lokasi', '=', 'sd.id_pengguna_lokasi');
+                })
+                ->join('level as lv', function ($join) {
+                    $join->on('lv.id_level', '=', 'd.id_level')
+                        ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
+                })
+                ->join('line as ln', function ($join) {
+                    $join->on('ln.id_line', '=', 'lv.id_line')
+                        ->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+                })
+                ->where('ln.id_line', $id_line)
+                ->where('sd.jumlah', '>', 0);
+        }
+
+        if (in_array($status, ['normal', 'qi'], true)) {
             $query->where('sg.status', $status);
         }
 
@@ -124,23 +127,12 @@ class MutasiController extends Controller
             return $this->fail('id_pengguna_lokasi wajib');
         }
 
-        if ($id_produk <= 0 || $jumlah_sumber <= 0 || $jenis_mutasi === '' || $best_before === '') {
-            return $this->fail('Field wajib: id_produk, jumlah, jenis_mutasi, best_before');
+        if ($id_produk <= 0 || $jenis_mutasi === '' || $best_before === '') {
+            return $this->fail('Field wajib: id_produk, jenis_mutasi, best_before');
         }
 
-        if ($id_line_sumber <= 0 || $id_line_tujuan <= 0) {
-            if ($lokasi_sumber === '' || $lokasi_tujuan === '') {
-                return $this->fail('Field wajib: lokasi_sumber & lokasi_tujuan (atau id_line_sumber & id_line_tujuan)');
-            }
-        }
-
-        if ($mode !== 'preview') {
-            if ($id_pengguna <= 0 || $satuan_sumber === '') {
-                return $this->fail('Field wajib: id_pengguna dan satuan');
-            }
-        }
-
-        if (in_array($jenis_mutasi, ['GS_QA', 'QA_GS'], true)) {
+        // GS_QI (Goods -> QI) tidak perlu jumlah, QI_GS tetap seperti biasa (membutuhkan jumlah)
+        if (in_array($jenis_mutasi, ['GS_QI', 'QI_GS'], true)) {
             return $this->storeQaMutasi(
                 $id_pengguna_lokasi,
                 $id_pengguna,
@@ -153,6 +145,22 @@ class MutasiController extends Controller
                 $catatan,
                 $mode
             );
+        }
+
+        if ($jumlah_sumber <= 0) {
+            return $this->fail('Field wajib: jumlah');
+        }
+
+        if ($id_line_sumber <= 0 || $id_line_tujuan <= 0) {
+            if ($lokasi_sumber === '' || $lokasi_tujuan === '') {
+                return $this->fail('Field wajib: lokasi_sumber & lokasi_tujuan (atau id_line_sumber & id_line_tujuan)');
+            }
+        }
+
+        if ($mode !== 'preview') {
+            if ($id_pengguna <= 0 || $satuan_sumber === '') {
+                return $this->fail('Field wajib: id_pengguna dan satuan');
+            }
         }
 
         if ($id_line_sumber > 0 && $id_line_tujuan > 0) {
@@ -217,8 +225,9 @@ class MutasiController extends Controller
             return $this->fail('Lokasi tujuan tidak sesuai dengan jenis mutasi.');
         }
 
-        // Stok Sumber
-        $sourceRows = $this->get_source_rows($id_pengguna_lokasi, $lineSumber['id_line'], $id_produk, $best_before, $jenis_mutasi === 'QA_BAD' ? 'qa' : null);
+        // Stok Sumber (QI hanya boleh dipindah lewat QI_BAD, sisanya harus good stock normal)
+        $sourceStatus = $jenis_mutasi === 'QI_BAD' ? 'qi' : 'normal';
+        $sourceRows = $this->get_source_rows($id_pengguna_lokasi, $lineSumber['id_line'], $id_produk, $best_before, $sourceStatus);
         if (empty($sourceRows)) {
             return $this->fail('Data stok sumber tidak ditemukan, silakan periksa produk, Best Before, dan lokasi sumber.', 422);
         }
@@ -304,7 +313,7 @@ class MutasiController extends Controller
             $nama_produk_ref = $pengambilanSumber[0]['nama_produk'];
             $batch_ref = trim((string) ($pengambilanSumber[0]['batch_deep'] ?? $pengambilanSumber[0]['batch_header'] ?? ''));
 
-            $targetStatus = $jenis_mutasi === 'BAD_QA' ? 'qa' : null;
+            $targetStatus = $jenis_mutasi === 'BAD_QI' ? 'qi' : null;
 
             $queryTujuan = DB::table('stok_gudang')
                 ->where('id_pengguna_lokasi', $id_pengguna_lokasi)
@@ -411,13 +420,23 @@ class MutasiController extends Controller
     }
 
     // =========================================================================
-    // 3b. PROSES SIMPAN MUTASI QA (GS_QA / QA_GS) - TIDAK PINDAH LOKASI
+    // 3b. PROSES SIMPAN MUTASI QI (GS_QI / QI_GS) - TIDAK PINDAH LOKASI
     // =========================================================================
     private function storeQaMutasi($idPenggunaLokasi, $idPengguna, $idProduk, $jumlah, $satuan, $bestBefore, $jenisMutasi, $idLineSumber, $catatan, $mode)
     {
-        $isToQa = $jenisMutasi === 'GS_QA';
-        $statusSumber = $isToQa ? 'normal' : 'qa';
-        $statusTujuan = $isToQa ? 'qa' : 'normal';
+        // GS_QI: tanpa jumlah, seluruh stok normal produk + BB terpilih (semua lokasi) diubah jadi QI
+        if ($jenisMutasi === 'GS_QI') {
+            return $this->storeGsToQi($idPenggunaLokasi, $idPengguna, $idProduk, $bestBefore, $satuan, $catatan, $mode);
+        }
+
+        // QI_GS (QI -> Goods): tetap qty-based
+        if ($idPengguna <= 0 || $jumlah <= 0) {
+            return $this->fail('Field wajib: id_pengguna dan jumlah');
+        }
+
+        $isToQa = false;
+        $statusSumber = 'qi';
+        $statusTujuan = 'normal';
 
         $lineSumber = $idLineSumber > 0 ? $this->get_line_info_by_id($idPenggunaLokasi, $idLineSumber) : null;
 
@@ -426,7 +445,7 @@ class MutasiController extends Controller
         }
 
         if (($lineSumber['mode'] ?? '') !== 'goods') {
-            return $this->fail('Mutasi QA hanya bisa dilakukan pada lokasi normal (good stock).');
+            return $this->fail('Mutasi QI hanya bisa dilakukan pada lokasi normal (good stock).');
         }
 
         $lokasi = $this->normalize_line_label($lineSumber['label']);
@@ -450,7 +469,7 @@ class MutasiController extends Controller
                 'jumlah_tujuan' => $jumlah,
                 'satuan_tujuan' => $satuan,
                 'alokasi_tujuan' => [],
-            ], 'Preview mutasi QA berhasil.');
+            ], 'Preview mutasi QI berhasil.');
         }
 
         DB::beginTransaction();
@@ -587,7 +606,86 @@ class MutasiController extends Controller
                 'jumlah' => $jumlah,
                 'jumlah_tujuan' => $jumlah,
                 'alokasi_tujuan' => $alokasiTujuan,
-            ], 'Mutasi QA stok berhasil disimpan.');
+            ], 'Mutasi QI stok berhasil disimpan.');
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            return $this->fail('Mutasi gagal disimpan: '.$e->getMessage(), 500);
+        }
+    }
+
+    // =========================================================================
+    // 3c. MUTASI GOODS -> QI (GS_QI): TANPA JUMLAH, KONVERSI SEMUA STOK PRODUK + BB
+    // =========================================================================
+    private function storeGsToQi($idPenggunaLokasi, $idPengguna, $idProduk, $bestBefore, $satuan, $catatan, $mode)
+    {
+        if ($mode !== 'preview' && $idPengguna <= 0) {
+            return $this->fail('Field wajib: id_pengguna');
+        }
+
+        $base = DB::table('stok_gudang')
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('id_produk', $idProduk)
+            ->where('best_before', $bestBefore)
+            ->where('status', 'normal')
+            ->where('jumlah_sisa', '>', 0);
+
+        $totalQty = (int) (clone $base)->sum('jumlah_sisa');
+
+        if ($totalQty <= 0) {
+            return $this->fail('Tidak ada stok good stock untuk produk & Best Before terpilih.', 422);
+        }
+
+        $lokasi = '-';
+
+        if ($mode === 'preview') {
+            return $this->ok([
+                'lokasi_sumber' => $lokasi,
+                'lokasi_tujuan' => $lokasi,
+                'best_before' => $bestBefore,
+                'jumlah' => $totalQty,
+                'jumlah_tujuan' => $totalQty,
+                'satuan_tujuan' => $satuan,
+                'alokasi_tujuan' => [],
+            ], 'Preview mutasi QI berhasil.');
+        }
+
+        DB::beginTransaction();
+
+        try {
+            DB::table('stok_gudang')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('id_produk', $idProduk)
+                ->where('best_before', $bestBefore)
+                ->where('status', 'normal')
+                ->where('jumlah_sisa', '>', 0)
+                ->update(['status' => 'qi']);
+
+            Mutasi::create([
+                'id_pengguna_lokasi' => $idPenggunaLokasi,
+                'id_pengguna' => $idPengguna,
+                'id_produk' => $idProduk,
+                'lokasi_sumber' => $lokasi,
+                'lokasi_tujuan' => $lokasi,
+                'jumlah' => $totalQty,
+                'best_before' => $bestBefore,
+                'jenis_mutasi' => 'GS_QI',
+                'satuan' => $satuan,
+                'catatan' => $catatan,
+                'created_at' => now(),
+            ]);
+
+            DB::commit();
+
+            return $this->ok([
+                'lokasi_sumber' => $lokasi,
+                'lokasi_tujuan' => $lokasi,
+                'best_before' => $bestBefore,
+                'jumlah' => $totalQty,
+                'jumlah_tujuan' => $totalQty,
+                'satuan_tujuan' => $satuan,
+                'alokasi_tujuan' => [],
+            ], 'Mutasi QI stok berhasil disimpan.');
         } catch (Exception $e) {
             DB::rollBack();
 
@@ -644,10 +742,10 @@ class MutasiController extends Controller
             'BAD_GS' => ['source_mode' => 'bad',   'target_mode' => 'goods'],
             'GS_REJ' => ['source_mode' => 'goods', 'target_mode' => 'reject'],
             'BAD_REJ' => ['source_mode' => 'bad',   'target_mode' => 'reject'],
-            'GS_QA' => ['source_mode' => 'goods', 'target_mode' => 'qa'],
-            'QA_GS' => ['source_mode' => 'qa',   'target_mode' => 'goods'],
-            'QA_BAD' => ['source_mode' => 'goods', 'target_mode' => 'bad'],
-            'BAD_QA' => ['source_mode' => 'bad',   'target_mode' => 'goods'],
+            'GS_QI' => ['source_mode' => 'goods', 'target_mode' => 'qi'],
+            'QI_GS' => ['source_mode' => 'qi',   'target_mode' => 'goods'],
+            'QI_BAD' => ['source_mode' => 'goods', 'target_mode' => 'bad'],
+            'BAD_QI' => ['source_mode' => 'bad',   'target_mode' => 'goods'],
         ];
 
         return $rules[strtoupper(trim($jenisMutasi))] ?? null;

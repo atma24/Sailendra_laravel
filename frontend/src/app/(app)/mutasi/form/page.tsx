@@ -24,13 +24,13 @@ const STATUS_OPTIONS: Record<string, string> = {
   BAD_GS: "Bad Stock - Goods Stock",
   GS_REJ: "Goods Stock - Reject",
   BAD_REJ: "Bad Stock - Reject",
-  GS_QA: "Goods Stock - QA",
-  QA_GS: "QA - Goods Stock",
-  QA_BAD: "QA - Bad Stock",
-  BAD_QA: "Bad Stock - QA",
+  GS_QI: "Goods Stock - QI",
+  QI_GS: "QI - Goods Stock",
+  QI_BAD: "QI - Bad Stock",
+  BAD_QI: "Bad Stock - QI",
 };
 
-const QA_MUTASI = ["GS_QA", "QA_GS"];
+const QA_MUTASI = ["GS_QI", "QI_GS"];
 
 const css = `
 .mutasi-page { display: flex; flex-direction: column; gap: 7px; padding-bottom: 12px; }
@@ -205,23 +205,37 @@ useEffect(() => {
     }
     setBbList([]);
     setBbOpen(false);
+
+    if (jenis === "GS_QI" && !PRODUK_TANPA_BATCH.includes(p.id_produk)) {
+      fetchBB(0, p.id_produk);
+    }
   };
 
   const fetchBB = async (idLine: number, idProdukVal: number) => {
-    if (!idLine || !idProdukVal) return;
+    if (!idProdukVal) return;
     try {
       const qs = new URLSearchParams();
       qs.set("id_pengguna_lokasi", idPenggunaLokasi());
-      qs.set("id_line", String(idLine));
+      if (idLine) qs.set("id_line", String(idLine));
       qs.set("id_produk", String(idProdukVal));
-      if (jenis === "QA_GS" || jenis === "QA_BAD") qs.set("status", "qa");
-      else if (isQa) qs.set("status", "normal");
+      if (jenis === "QI_GS" || jenis === "QI_BAD") qs.set("status", "qi");
+      else qs.set("status", "normal");
       const r = await apiGet<{ bb_list?: string[] }>(`/mutasi/bb-line?${qs.toString()}`);
       setBbList(r.data?.bb_list || []);
       setBbOpen(true);
     } catch {
       setBbList([]);
       setBbOpen(true);
+    }
+  };
+
+  const onJenisChange = (v: string) => {
+    setJenis(v);
+    setBestBefore("");
+    setBbList([]);
+    setBbOpen(false);
+    if (v === "GS_QI" && idProduk) {
+      fetchBB(0, idProduk);
     }
   };
 
@@ -232,7 +246,7 @@ useEffect(() => {
     setBbOpen(false);
     const ln = lineList.find((l) => l.id_line === idLine);
     setDariLabel(ln?.label_line || "");
-    if (idLine && idProduk) {
+    if (idLine && idProduk && jenis !== "GS_QI") {
       fetchBB(idLine, idProduk);
     }
   };
@@ -255,11 +269,12 @@ useEffect(() => {
   };
 
   const isQa = QA_MUTASI.includes(jenis);
+  const isGsQi = jenis === "GS_QI";
 
   const validate = () => {
     if (!idProduk) { notify("error", "Pilih produk terlebih dahulu."); return false; }
-    if (!satuan) { notify("error", "Satuan produk belum terbaca. Pilih ulang produk."); return false; }
-    if (!dariLabel || !dariLine) { notify("error", "Pilih lokasi sumber terlebih dahulu."); return false; }
+    if (!isGsQi && !satuan) { notify("error", "Satuan produk belum terbaca. Pilih ulang produk."); return false; }
+    if (!isGsQi && (!dariLabel || !dariLine)) { notify("error", "Pilih lokasi sumber terlebih dahulu."); return false; }
     if (!bestBefore) { notify("error", "Pilih tanggal best before terlebih dahulu."); return false; }
     if (!isQa && (!keLabel || !keLine)) { notify("error", "Pilih lokasi tujuan terlebih dahulu."); return false; }
     if (!isQa && String(dariLine) === String(keLine)) { notify("error", "Lokasi sumber dan lokasi tujuan tidak boleh sama."); return false; }
@@ -278,14 +293,14 @@ useEffect(() => {
       id_pengguna_lokasi: idPenggunaLokasi(),
       id_pengguna: session!.user.id_pengguna,
       id_produk: idProduk,
-      jumlah: angka(jumlah),
+      jumlah: isGsQi ? 0 : angka(jumlah),
       satuan,
       jenis_mutasi: jenis,
       best_before: bestBefore,
-      lokasi_sumber: dariLabel,
-      lokasi_tujuan: isQa ? dariLabel : keLabel,
-      id_line_sumber: dariLine,
-      id_line_tujuan: isQa ? dariLine : keLine,
+      lokasi_sumber: isGsQi ? "" : dariLabel,
+      lokasi_tujuan: isGsQi ? "" : (isQa ? dariLabel : keLabel),
+      id_line_sumber: isGsQi ? 0 : dariLine,
+      id_line_tujuan: isGsQi ? 0 : (isQa ? dariLine : keLine),
       catatan,
     };
     setBusy(true);
@@ -312,8 +327,8 @@ useEffect(() => {
   const bbOptions = bbList.filter((bb) =>
     bbSearch.trim() === "" || bb.toLocaleLowerCase().includes(bbSearch.trim().toLowerCase()));
 
-  const summaryDari = `${dariLabel || "-"}`;
-  const summaryKe = `${isQa ? (dariLabel || "-") : (keLabel || "-")}`;
+  const summaryDari = `${isGsQi ? "Semua lokasi" : (dariLabel || "-")}`;
+  const summaryKe = `${isGsQi ? "Semua lokasi" : (isQa ? (dariLabel || "-") : (keLabel || "-"))}`;
 
   return (
     <div className="mutasi-page">
@@ -344,7 +359,7 @@ useEffect(() => {
       <div className="mutasi-card">
         <div className="mutasi-stack">
           <div className="mutasi-select-wrap">
-            <select className="mutasi-select" value={jenis} onChange={(e) => setJenis(e.target.value)}>
+            <select className="mutasi-select" value={jenis} onChange={(e) => onJenisChange(e.target.value)}>
               <option value="">Pilih status mutasi</option>
               {Object.entries(STATUS_OPTIONS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
@@ -353,38 +368,49 @@ useEffect(() => {
 
           <ProdukPicker produkList={produkList} value={produkLabel} onChange={pickProduk} />
 
-          <input type="number" min={1} className="mutasi-input" placeholder="Jumlah yang mau dipindah"
-            value={jumlah} onChange={(e) => setJumlah(e.target.value)} />
+          {!isGsQi && (
+            <input type="number" min={1} className="mutasi-input" placeholder="Jumlah yang mau dipindah"
+              value={jumlah} onChange={(e) => setJumlah(e.target.value)} />
+          )}
+          {isGsQi && (
+            <div className="mutasi-alert" style={{ background: "#FFF7E6", color: "#B45309", border: "1px solid #FCD34D" }}>
+              Mutasi Goods Stock → QI: tanpa isi jumlah. Semua stok produk ini dengan Best Before terpilih (di semua lokasi) otomatis diubah statusnya jadi QI.
+            </div>
+          )}
         </div>
       </div>
 
       <div className="mutasi-card">
-        <div className="mutasi-section-title">Dari</div>
+        <div className="mutasi-section-title">{isGsQi ? "Best Before & Lokasi" : "Dari"}</div>
         <div className="mutasi-stack">
-          <div className="mutasi-select-wrap">
-            <select className="mutasi-select" value={dariLokasi} onChange={(e) => { setDariLokasi(angka(e.target.value)); resetSumber(); }}>
-              <option value="0">Lokasi</option>
-              {lokasiList.map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{lokasiLabel(l.id_lokasi)}</option>)}
-            </select>
-            <i className="bi bi-chevron-down mutasi-select-icon"></i>
-          </div>
-          <div className="mutasi-row-2">
-            <div className="mutasi-select-wrap">
-              <select className="mutasi-select" value={dariBlock} disabled={!dariLokasi}
-                onChange={(e) => { setDariBlock(angka(e.target.value)); setDariLine(0); setDariLabel(""); setBestBefore(""); setBbList([]); setBbOpen(false); }}>
-                <option value="0">Block</option>
-                {blocksFor(dariLokasi).map((b) => <option key={b.id_block} value={b.id_block}>{b.kode_block}</option>)}
-              </select>
-              <i className="bi bi-chevron-down mutasi-select-icon"></i>
-            </div>
-            <div className="mutasi-select-wrap">
-              <select className="mutasi-select" value={dariLine} disabled={!dariBlock} onChange={(e) => onDariLineChange(angka(e.target.value))}>
-                <option value="0">Line</option>
-                {linesFor(dariBlock).map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
-              </select>
-              <i className="bi bi-chevron-down mutasi-select-icon"></i>
-            </div>
-          </div>
+          {!isGsQi && (
+            <>
+              <div className="mutasi-select-wrap">
+                <select className="mutasi-select" value={dariLokasi} onChange={(e) => { setDariLokasi(angka(e.target.value)); resetSumber(); }}>
+                  <option value="0">Lokasi</option>
+                  {lokasiList.map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{lokasiLabel(l.id_lokasi)}</option>)}
+                </select>
+                <i className="bi bi-chevron-down mutasi-select-icon"></i>
+              </div>
+              <div className="mutasi-row-2">
+                <div className="mutasi-select-wrap">
+                  <select className="mutasi-select" value={dariBlock} disabled={!dariLokasi}
+                    onChange={(e) => { setDariBlock(angka(e.target.value)); setDariLine(0); setDariLabel(""); setBestBefore(""); setBbList([]); setBbOpen(false); }}>
+                    <option value="0">Block</option>
+                    {blocksFor(dariLokasi).map((b) => <option key={b.id_block} value={b.id_block}>{b.kode_block}</option>)}
+                  </select>
+                  <i className="bi bi-chevron-down mutasi-select-icon"></i>
+                </div>
+                <div className="mutasi-select-wrap">
+                  <select className="mutasi-select" value={dariLine} disabled={!dariBlock} onChange={(e) => onDariLineChange(angka(e.target.value))}>
+                    <option value="0">Line</option>
+                    {linesFor(dariBlock).map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
+                  </select>
+                  <i className="bi bi-chevron-down mutasi-select-icon"></i>
+                </div>
+              </div>
+            </>
+          )}
 
           <div>
             <label className="mutasi-label">Best Before</label>
@@ -439,9 +465,9 @@ useEffect(() => {
           <div className="mutasi-section-title">Ke</div>
           <div className="mutasi-stack">
             <div className="mutasi-summary" style={{ borderColor: "#FFD600", background: "#FFFDCC" }}>
-              <div className="mutasi-summary-title" style={{ color: "#B45309" }}>Status QA - Stok tidak dipindahkan</div>
+              <div className="mutasi-summary-title" style={{ color: "#B45309" }}>Status QI - Stok tidak dipindahkan</div>
               <div className="mutasi-summary-row"><div className="mutasi-summary-key">Ke</div><div className="mutasi-summary-value">{summaryKe}</div></div>
-              <div className="mutasi-summary-row" style={{ fontSize: 10, color: "#8a93a3" }}>Produk tetap di lokasi yang sama, hanya status yang berubah.</div>
+              <div className="mutasi-summary-row" style={{ fontSize: 10, color: "#8a93a3" }}>{isGsQi ? "Semua stok produk & Best Before terpilih (di semua lokasi) diubah statusnya jadi QI." : "Produk tetap di lokasi yang sama, hanya status yang berubah."}</div>
             </div>
           </div>
         </div>
@@ -453,7 +479,7 @@ useEffect(() => {
           <div className="mutasi-summary-row"><div className="mutasi-summary-key">BB</div><div className="mutasi-summary-value">{bestBefore || "-"}</div></div>
           <div className="mutasi-summary-row"><div className="mutasi-summary-key">Dari</div><div className="mutasi-summary-value">{summaryDari}</div></div>
           <div className="mutasi-summary-row"><div className="mutasi-summary-key">Ke</div><div className="mutasi-summary-value">{summaryKe}</div></div>
-          <div className="mutasi-summary-row"><div className="mutasi-summary-key">Jumlah</div><div className="mutasi-summary-value">{angka(jumlah) > 0 ? `${angka(jumlah)} ${satuan}` : "-"}</div></div>
+          <div className="mutasi-summary-row"><div className="mutasi-summary-key">Jumlah</div><div className="mutasi-summary-value">{isGsQi ? "Semua stok (BB terpilih)" : (angka(jumlah) > 0 ? `${angka(jumlah)} ${satuan}` : "-")}</div></div>
         </div>
       </div>
 

@@ -11,7 +11,8 @@ type ListRow = {
   kategori_lokasi: string;
   satuan: string;
   total_qty: number;
-  qty_qa: number;
+  qty_qi: number;
+  qty_bad: number;
   best_before_terdekat: string;
 };
 type KapRow = {
@@ -34,7 +35,8 @@ type Produk = {
   kategori_lokasi: string;
   satuan: string;
   qty: number;
-  qty_qa: number;
+  qty_qi: number;
+  qty_bad: number;
   kapasitas: number;
   persen: number;
 };
@@ -129,24 +131,26 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const getBarColor = (z: string) => {
     switch (z) {
       case "normal": return "linear-gradient(90deg, #16a34a, #4ade80)"; // Hijau cerah untuk Goodstock
-      case "qa": return "linear-gradient(90deg, #ca8a04, #facc15)"; // Kuning untuk QA
+      case "qi": return "linear-gradient(90deg, #ca8a04, #facc15)"; // Kuning untuk QI
       case "bad": return "linear-gradient(90deg, #dc2626, #f87171)"; // Merah untuk Badstock
       default: return "linear-gradient(90deg, #191970, #77a7ff)"; // Default Biru
     }
   };
   const barBg = getBarColor(zona);
 
-  const barFill = (qty: number, qa: number, kap: number) => {
-    if (!isNormal || qa <= 0 || kap <= 0) {
+  const barFill = (qty: number, qa: number, bad: number, kap: number) => {
+    if (!isNormal || kap <= 0) {
       return <div className="stock-progress-fill" style={{ width: persen(qty, kap) + "%", background: barBg }} />;
     }
     const normal = Math.max(0, qty - qa);
     const normalPct = Math.min(100, (normal / kap) * 100);
     const qaPct = Math.min(100, (qa / kap) * 100);
+    const badPct = Math.min(100, (bad / kap) * 100);
     return (
       <>
         {normalPct > 0 && <div className="stock-progress-fill" style={{ width: normalPct + "%", background: "linear-gradient(90deg, #16a34a, #4ade80)" }} />}
         {qaPct > 0 && <div className="stock-progress-fill" style={{ width: qaPct + "%", background: "linear-gradient(90deg, #ca8a04, #facc15)" }} />}
+        {badPct > 0 && <div className="stock-progress-fill" style={{ width: badPct + "%", background: "linear-gradient(90deg, #dc2626, #f87171)" }} />}
       </>
     );
   };
@@ -207,7 +211,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const products: Produk[] = list.map((r) => {
     const kap = kaps.get(r.id_produk) || 0;
     const qty = angka(r.total_qty);
-    return { id_produk: r.id_produk, nama_produk: norm(r.nama_produk), kategori_lokasi: norm(r.kategori_lokasi), satuan: norm(r.satuan), qty, qty_qa: angka(r.qty_qa), kapasitas: kap, persen: persen(qty, kap) };
+    return { id_produk: r.id_produk, nama_produk: norm(r.nama_produk), kategori_lokasi: norm(r.kategori_lokasi), satuan: norm(r.satuan), qty, qty_qi: angka(r.qty_qi), qty_bad: angka(r.qty_bad), kapasitas: kap, persen: persen(qty, kap) };
   });
 
   const ql = q.trim().toLowerCase();
@@ -223,14 +227,15 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   });
 
   const sumQty = (p: Produk[]) => p.reduce((s, x) => s + x.qty, 0);
-  const sumQa = (p: Produk[]) => p.reduce((s, x) => s + x.qty_qa, 0);
+  const sumQa = (p: Produk[]) => p.reduce((s, x) => s + x.qty_qi, 0);
+  const sumBad = (p: Produk[]) => p.reduce((s, x) => s + x.qty_bad, 0);
   const sumKap = (p: Produk[]) => p.reduce((s, x) => s + x.kapasitas, 0);
   const tQ = sumQty(filtered); const tK = sumKap(filtered);
-  const gab = { qty: tQ, qa: sumQa(filtered), kap: tK, persen: persen(tQ, tK) };
+  const gab = { qty: tQ, qa: sumQa(filtered), bad: sumBad(filtered), kap: tK, persen: persen(tQ, tK) };
 
   const groupTotal = (c: string) => {
     const p = byCat[c]; const qty = sumQty(p); const kap = sumKap(p);
-    return { qty, qa: sumQa(p), kap, persen: persen(qty, kap) };
+    return { qty, qa: sumQa(p), bad: sumBad(p), kap, persen: persen(qty, kap) };
   };
 
   const sections = detail.reduce<{ parent: string; blocks: Record<string, { total: number; rows: { bb: string; qty: number; status: string }[] }> }[]>((acc, d) => {
@@ -243,7 +248,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
     const qty = angka(d.qty_sisa);
     const status = norm(d.status).toLowerCase();
     b.total += qty;
-    const ex = b.rows.find((r) => r.bb === bb);
+    const ex = b.rows.find((r) => r.bb === bb && r.status === status);
     if (ex) ex.qty += qty; else b.rows.push({ bb, qty, status });
     return acc;
   }, []);
@@ -263,7 +268,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
     <div className="stock-page">
       <style>{css}</style>
 
-      <div className="stock-card" style={{ padding: 8, display: "flex", gap: 8, alignItems: "center" }}>
+      <div className="stock-card" style={{ padding: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         {!isNormal && (
           <Link href="/stock" className="stock-special-link" style={{ minHeight: 31, padding: "0 10px", textDecoration: "none" }}>
             <i className="bi bi-arrow-left" style={{ marginRight: 6 }}></i>
@@ -273,6 +278,13 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
           <i className="bi bi-search" style={{ position: "absolute", top: "50%", left: 11, transform: "translateY(-50%)", color: "#8a93a3", fontSize: 13 }}></i>
           <input type="text" className="stock-search-input" placeholder={`Cari produk di ${zonaLabel}`} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        {isNormal && (
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0, fontSize: 9, fontWeight: 900, color: "#8a93a3" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#16a34a", display: "inline-block" }} />Good</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#ca8a04", display: "inline-block" }} />QI</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#dc2626", display: "inline-block" }} />Bad</span>
+          </div>
+        )}
       </div>
 
       {/* Menampilkan kotak summary jika showBar true (berlaku buat normal, qa, bad) */}
@@ -280,16 +292,16 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
         <div className="stock-summary-grid">
           <div className="stock-summary-card wide">
             <div className="stock-summary-top"><div className="stock-summary-title">Gabungan</div><div className="stock-percent-pill">{gab.persen}%</div></div>
-            <div className="stock-progress">{barFill(gab.qty, gab.qa, gab.kap)}</div>
-            <div className="stock-summary-bottom">Stok: {num(gab.qty)} / {num(gab.kap)}</div>
+            <div className="stock-progress">{barFill(gab.qty, gab.qa, gab.bad, gab.kap)}</div>
+            <div className="stock-summary-bottom">Stok: {num(gab.qty)} / {num(gab.kap)} {gab.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(gab.bad)}</span>}</div>
           </div>
           {cats.map((c) => {
             const s = groupTotal(c);
             return (
               <div key={c} className={"stock-summary-card" + (s.persen >= 60 ? " wide" : "")}>
                 <div className="stock-summary-top"><div className="stock-summary-title">{c}</div><div className="stock-percent-pill">{s.persen}%</div></div>
-                <div className="stock-progress">{barFill(s.qty, s.qa, s.kap)}</div>
-                <div className="stock-summary-bottom">Stok: {num(s.qty)} / {num(s.kap)}</div>
+                <div className="stock-progress">{barFill(s.qty, s.qa, s.bad, s.kap)}</div>
+                <div className="stock-summary-bottom">Stok: {num(s.qty)} / {num(s.kap)} {s.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(s.bad)}</span>}</div>
               </div>
             );
           })}
@@ -331,12 +343,13 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
                 <div key={p.id_produk} className="stock-product-card" onClick={() => openModal(p.id_produk, p.nama_produk)}>
                   <div className="stock-product-name" title={p.nama_produk} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nama_produk}</span>
-                    {p.qty_qa > 0 && <span style={{ flexShrink: 0, background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 900 }}>QA</span>}
+                    {p.qty_qi > 0 && <span style={{ flexShrink: 0, background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 900 }}>QI</span>}
+                    {p.qty_bad > 0 && <span style={{ flexShrink: 0, background: "#FEE2E2", color: "#B91C1C", border: "1px solid rgba(220,38,38,0.55)", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 900 }}>BAD</span>}
                   </div>
                   {/* Menampilkan progress bar di product item jika showBar true */}
-                  {showBar && <div className="stock-progress">{barFill(p.qty, p.qty_qa, p.kapasitas)}</div>}
+                  {showBar && <div className="stock-progress">{barFill(p.qty, p.qty_qi, p.qty_bad, p.kapasitas)}</div>}
                   <div className="stock-product-meta">
-                    <span>Stok: {num(p.qty)} {p.satuan}</span>
+                    <span>Stok: {num(p.qty)} {p.satuan}{p.qty_bad > 0 && <span style={{ color: "#B91C1C" }}> · Bad {num(p.qty_bad)}</span>}</span>
                     {/* Menampilkan kapasitas dan persentase di product item jika showBar true */}
                     {showBar && <span className="stock-product-muted">{num(p.qty)} / {num(p.kapasitas)} &nbsp; {p.persen}%</span>}
                   </div>
@@ -383,7 +396,9 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
                               <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px dashed #f0f2f5", fontSize: 11, alignItems: "center" }}>
                                 <span style={{ color: "#8a93a3", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                                   {r.bb}
-                                  {r.status === "qa" && <span style={{ background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>QA</span>}
+                                  {r.status === "normal" && <span style={{ background: "#E7F6EC", color: "#15803D", border: "1px solid rgba(22,163,74,0.5)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>GOOD</span>}
+                                  {r.status === "qi" && <span style={{ background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>QI</span>}
+                                  {r.status === "bad" && <span style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid rgba(220,38,38,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>BAD</span>}
                                 </span>
                                 <span style={{ fontWeight: 850 }}>{num(r.qty)}</span>
                               </div>

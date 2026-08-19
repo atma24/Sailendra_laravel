@@ -201,8 +201,8 @@ class LayoutGudangController extends Controller
                             $deep['batch_produk'] = '-';
                         }
 
-                        if (strtolower((string) ($deep['status_deep'] ?? 'normal')) === 'qa') {
-                            $deep['status'] = 'qa';
+                        if (strtolower((string) ($deep['status_deep'] ?? 'normal')) === 'qi') {
+                            $deep['status'] = 'qi';
                         } elseif ($isSpecialBlock) {
                             $kode = strtoupper(trim($block['kode_block']));
                             if ($kode === 'REJECT') {
@@ -412,7 +412,7 @@ class LayoutGudangController extends Controller
             ->where('sh.jumlah_sisa', '>', 0)
             ->where('sd.jumlah', '>', 0)
             ->whereNotIn(DB::raw('UPPER(TRIM(b.kode_block))'), ['BS', 'BAD', 'BADSTOCK', 'REJECT'])
-            ->where('sh.status', '!=', 'qa')
+            ->where('sh.status', '!=', 'qi')
             ->select('sh.id_produk')
             ->selectRaw('MIN(sh.best_before) AS bb')
             ->groupBy('sh.id_produk')

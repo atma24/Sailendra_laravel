@@ -12,7 +12,7 @@ class StokController extends Controller
 {
     use ApiResponse;
 
-    private const INT_KEYS = ['id_stok', 'id_produk', 'id_barang_masuk', 'id_lokasi', 'id_block', 'id_line', 'qty_sisa', 'total_qty', 'total_kapasitas'];
+    private const INT_KEYS = ['id_stok', 'id_produk', 'id_barang_masuk', 'id_lokasi', 'id_block', 'id_line', 'qty_sisa', 'total_qty', 'total_kapasitas', 'qty_bad', 'qty_qi'];
 
     private function normUnit(string $u): string
     {
@@ -54,7 +54,7 @@ class StokController extends Controller
             'festive' => " AND ( {$cat} = 'FESTIVE' OR {$loc} LIKE 'FESTIVE-%' ) ",
             'transit' => " AND ( {$cat} = 'TRANSIT' OR {$loc} LIKE 'TRANSIT-%' ) ",
             'hold' => " AND ( {$cat} = 'HOLD' OR {$loc} LIKE 'HOLD-%' ) ",
-            'qa' => " AND sg.status = 'qa' ",
+            'qi' => " AND sg.status = 'qi' ",
             'normal' => " AND NOT ( {$cat} IN ('BAD STOCK','BADSTOCK','REJECT','RECEH','FESTIVE','TRANSIT','HOLD')"
                 ." OR {$loc} LIKE 'BAD STOCK-%' OR {$loc} LIKE 'BADSTOCK-%' OR {$loc} LIKE 'BS-%'"
                 ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'FESTIVE-%'"
@@ -62,6 +62,46 @@ class StokController extends Controller
         ];
 
         return $zones[$zona] ?? '';
+    }
+
+    private function badBlockExpr(): string
+    {
+        $cat = "UPPER(TRIM(COALESCE(l.kategori,'')))";
+        $loc = "UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line)))";
+
+        return "( {$cat} IN ('BAD STOCK','BADSTOCK') OR {$loc} LIKE 'BAD STOCK-%' OR {$loc} LIKE 'BADSTOCK-%' OR {$loc} LIKE 'BS-%' ) ";
+    }
+
+    private function badStockSubquery(string $lokRestrict): string
+    {
+        $lokWhere = $lokRestrict === '' ? '' : ' AND '.$lokRestrict;
+
+        return "(
+            SELECT sg2.id_produk, SUM(sd2.jumlah) AS qty_bad
+            FROM stok_gudang_deep sd2
+            JOIN stok_gudang sg2 ON sg2.id_stok = sd2.id_stok_header
+            JOIN deep d2 ON d2.id_deep = sd2.id_deep
+            JOIN level lv2 ON lv2.id_level = d2.id_level
+            JOIN line ln2 ON ln2.id_line = lv2.id_line
+            JOIN block b2 ON b2.id_block = ln2.id_block
+            JOIN lokasi l2 ON l2.id_lokasi = b2.id_lokasi
+            WHERE sd2.jumlah > 0{$lokWhere}
+              AND ( UPPER(TRIM(COALESCE(l2.kategori,''))) IN ('BAD STOCK','BADSTOCK')
+                 OR UPPER(TRIM(CONCAT(b2.kode_block, '-', ln2.nomor_line))) LIKE 'BAD STOCK-%'
+                 OR UPPER(TRIM(CONCAT(b2.kode_block, '-', ln2.nomor_line))) LIKE 'BADSTOCK-%'
+                 OR UPPER(TRIM(CONCAT(b2.kode_block, '-', ln2.nomor_line))) LIKE 'BS-%' )
+            GROUP BY sg2.id_produk
+        )";
+    }
+
+    private function normalSpecialsWhere(): string
+    {
+        $cat = "UPPER(TRIM(COALESCE(l.kategori,'')))";
+        $loc = "UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line)))";
+
+        return " AND NOT ( {$cat} IN ('REJECT','RECEH','FESTIVE','TRANSIT','HOLD')"
+            ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'FESTIVE-%'"
+            ." OR {$loc} LIKE 'TRANSIT-%' OR {$loc} LIKE 'HOLD-%' ) ";
     }
 
     private function satuanCaseSg(): string
@@ -92,7 +132,7 @@ class StokController extends Controller
             $idProduk = (int) $request->query('id_produk', 0);
             $zonaParam = strtolower(trim((string) $request->query('zona', 'normal')));
 
-            if (! in_array($zonaParam, ['normal', 'bad', 'reject', 'receh', 'festive', 'transit', 'hold', 'qa', 'all'], true)) {
+            if (! in_array($zonaParam, ['normal', 'bad', 'reject', 'receh', 'festive', 'transit', 'hold', 'qi', 'all'], true)) {
                 $zonaParam = 'normal';
             }
             $zona = $zonaParam;
@@ -181,7 +221,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND sg.status != 'qa' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND sg.status != 'qi' {$lokSgSd}{$zonaWhere}
                     GROUP BY l.id_lokasi, l.nama_lokasi, l.kategori
                     ORDER BY l.nama_lokasi ASC";
 
@@ -203,7 +243,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND b.id_lokasi = ? AND sg.status != 'qa' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND b.id_lokasi = ? AND sg.status != 'qi' {$lokSgSd}{$zonaWhere}
                     GROUP BY b.id_block, b.id_lokasi, b.kode_block
                     ORDER BY b.kode_block ASC";
 
@@ -225,7 +265,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_block = ? AND sg.status != 'qa' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_block = ? AND sg.status != 'qi' {$lokSgSd}{$zonaWhere}
                     GROUP BY ln.id_line, ln.id_block, ln.nomor_line
                     ORDER BY CAST(ln.nomor_line AS UNSIGNED) ASC, ln.nomor_line ASC";
 
@@ -261,7 +301,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? AND sg.status != 'qa' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? AND sg.status != 'qi' {$lokSgSd}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(sg.nama_produk, p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                         COALESCE(sd.batch, sg.batch),
@@ -301,13 +341,22 @@ class StokController extends Controller
                 return ['sql' => $sql, 'bind' => $baseBind];
 
             case 'list':
+                $badLok = '';
+                if ($lokCount === 1) {
+                    $badLok = 'sd2.id_pengguna_lokasi = ?';
+                } elseif ($lokCount > 1) {
+                    $badPh = implode(',', array_fill(0, $lokCount, '?'));
+                    $badLok = "sd2.id_pengguna_lokasi IN ($badPh)";
+                }
+                $bindBad = $badLok === '' ? $baseBind : array_merge($lokArr, $baseBind);
                 $sql = "SELECT
                     sg.id_produk,
                     COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
                     UPPER(COALESCE(l.kategori, l.nama_lokasi, 'LAINNYA')) AS kategori_lokasi,
                     {$satuan} AS satuan,
                     SUM(CASE WHEN sd.jumlah > 0 THEN sd.jumlah ELSE 0 END) AS total_qty,
-                    SUM(CASE WHEN sd.jumlah > 0 AND sg.status = 'qa' THEN sd.jumlah ELSE 0 END) AS qty_qa,
+                    SUM(CASE WHEN sd.jumlah > 0 AND sg.status = 'qi' THEN sd.jumlah ELSE 0 END) AS qty_qi,
+                    MAX(COALESCE(bad.qty_bad, 0)) AS qty_bad,
                     MIN(CASE WHEN sd.jumlah > 0 THEN sd.best_before END) AS best_before_terdekat
                     FROM stok_gudang_deep sd
                     JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
@@ -317,6 +366,8 @@ class StokController extends Controller
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
                     LEFT JOIN produk p ON p.id_produk = sg.id_produk
+                    LEFT JOIN {$this->badStockSubquery($badLok)} bad
+                        ON bad.id_produk = sg.id_produk
                     WHERE sd.jumlah > 0 {$lokSgSd}{$zonaWhere}
                     GROUP BY sg.id_produk,
                         COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
@@ -324,7 +375,7 @@ class StokController extends Controller
                         {$satuan}
                     ORDER BY nama_produk ASC, satuan ASC";
 
-                return ['sql' => $sql, 'bind' => $baseBind];
+                return ['sql' => $sql, 'bind' => $bindBad];
 
             case 'layout_list':
                 $whereProduk = $idProduk > 0 ? ' AND sg.id_produk = ?' : '';
@@ -390,31 +441,43 @@ class StokController extends Controller
                 if ($idProduk <= 0) {
                     return ['error' => 'id_produk wajib untuk mode=detail'];
                 }
+                $detailWhere = $zona === 'normal' ? $this->normalSpecialsWhere() : $zonaWhere;
+                $statusExpr = "CASE WHEN {$this->badBlockExpr()} THEN 'bad'
+                    WHEN UPPER(COALESCE(sg.status,'')) = 'qi' THEN 'qi'
+                    ELSE 'normal' END";
                 $sql = "SELECT
-                    MIN(sg.id_stok) AS id_stok,
-                    sg.id_produk,
-                    MIN(sg.id_barang_masuk) AS id_barang_masuk,
-                    COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
-                    SUM(sd.jumlah) AS qty_sisa,
-                    {$satuan} AS satuan,
-                    sd.best_before,
-                    MAX(sg.status) AS status,
-                    CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block
-                    FROM stok_gudang_deep sd
-                    JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
-                    JOIN deep d ON d.id_deep = sd.id_deep
-                    JOIN level lv ON lv.id_level = d.id_level
-                    JOIN line ln ON ln.id_line = lv.id_line
-                    JOIN block b ON b.id_block = ln.id_block
-                    JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokSgSd}{$zonaWhere}
-                    GROUP BY sg.id_produk,
-                        COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
-                        {$satuan},
-                        sd.best_before,
-                        b.kode_block, ln.nomor_line
-                    ORDER BY b.kode_block ASC, ln.nomor_line ASC, COALESCE(sd.best_before,'9999-12-31') ASC";
+                    MIN(x.id_stok_header) AS id_stok,
+                    x.id_produk,
+                    MIN(x.id_barang_masuk) AS id_barang_masuk,
+                    x.nama_produk,
+                    SUM(x.jumlah) AS qty_sisa,
+                    x.satuan,
+                    x.best_before,
+                    x.status,
+                    x.lokasi_block
+                    FROM (
+                        SELECT
+                            sd.id_stok_header,
+                            sg.id_produk,
+                            sg.id_barang_masuk,
+                            COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
+                            sd.jumlah,
+                            {$satuan} AS satuan,
+                            sd.best_before,
+                            {$statusExpr} AS status,
+                            CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block
+                        FROM stok_gudang_deep sd
+                        JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
+                        JOIN deep d ON d.id_deep = sd.id_deep
+                        JOIN level lv ON lv.id_level = d.id_level
+                        JOIN line ln ON ln.id_line = lv.id_line
+                        JOIN block b ON b.id_block = ln.id_block
+                        JOIN lokasi l ON l.id_lokasi = b.id_lokasi
+                        LEFT JOIN produk p ON p.id_produk = sg.id_produk
+                        WHERE sg.id_produk = ? AND sd.jumlah > 0 {$lokSgSd}{$detailWhere}
+                    ) x
+                    GROUP BY x.id_produk, x.nama_produk, x.satuan, x.best_before, x.lokasi_block, x.status
+                    ORDER BY x.lokasi_block ASC, x.best_before ASC, x.status ASC";
 
                 return ['sql' => $sql, 'bind' => array_merge([$idProduk], $baseBind)];
 

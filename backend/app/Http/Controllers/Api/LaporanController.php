@@ -372,10 +372,10 @@ class LaporanController extends Controller
             'BAD_GS' => 'Bad Stock - Goods Stock',
             'GS_REJ' => 'Goods Stock - Reject',
             'BAD_REJ' => 'Bad Stock - Reject',
-            'GS_QA' => 'Goods Stock - QA',
-            'QA_GS' => 'QA - Goods Stock',
-            'QA_BAD' => 'QA - Bad Stock',
-            'BAD_QA' => 'Bad Stock - QA',
+            'GS_QI' => 'Goods Stock - QI',
+            'QI_GS' => 'QI - Goods Stock',
+            'QI_BAD' => 'QI - Bad Stock',
+            'BAD_QI' => 'Bad Stock - QI',
         ];
 
         if ($format === 'json') {
