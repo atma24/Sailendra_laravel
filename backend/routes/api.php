@@ -127,6 +127,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/deep', [DeepController::class, 'index']);
 
     Route::get('/stok', StokController::class);
+    Route::get('/stok/export', [StokController::class, 'exportExcel']);
     Route::match(['get', 'post'], '/stok-opname', StokOpnameController::class);
 
     Route::get('/dashboard/summary', [DashboardController::class, 'summary']);

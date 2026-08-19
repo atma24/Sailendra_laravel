@@ -2219,8 +2219,6 @@ class LayoutGudangController extends Controller
                 continue;
             }
 
-            // Format dropdown template: "150 - Aqua 330ml". Ambil ID di depannya,
-            // fallback cari berdasarkan nama bila format bukan "id - nama".
             $idProduk = null;
             if (preg_match('/^\s*(\d+)\s*-/', $namaProduk, $m)) {
                 $idProduk = (int) $m[1];
@@ -2263,6 +2261,7 @@ class LayoutGudangController extends Controller
             return $this->fail('Tidak ada baris data yang valid di file');
         }
 
+        // --- PRECHECK DIUBAH: Hapus logika yang nge-reject kalau line bentrok ---
         $precheck = [];
         foreach ($blocks as $kodeBlock => $blk) {
             $idBlock = DB::table('block')
@@ -2271,21 +2270,7 @@ class LayoutGudangController extends Controller
                 ->whereRaw('UPPER(kode_block) = ?', [$kodeBlock])
                 ->value('id_block');
 
-            if ($idBlock) {
-                $terpakai = DB::table('line')
-                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                    ->where('id_block', $idBlock)
-                    ->pluck('nomor_line')
-                    ->map(fn ($n) => (int) $n)
-                    ->all();
-                $bentrok = array_values(array_intersect(array_keys($blk['lines']), $terpakai));
-                if (! empty($bentrok)) {
-                    return $this->fail("Block $kodeBlock: line ".implode(', ', $bentrok).' sudah terpakai. Perbaiki file lalu upload ulang.');
-                }
-                $precheck[$kodeBlock] = $idBlock;
-            } else {
-                $precheck[$kodeBlock] = null;
-            }
+            $precheck[$kodeBlock] = $idBlock;
         }
 
         try {
@@ -2305,6 +2290,42 @@ class LayoutGudangController extends Controller
 
                     ksort($blk['lines']);
                     foreach ($blk['lines'] as $nomorLine => $line) {
+
+                        // --- LOGIKA REPLACE START ---
+                        // Cek apakah line ini sudah ada sebelumnya
+                        $existingLine = DB::table('line')
+                            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                            ->where('id_block', $idBlock)
+                            ->where('nomor_line', $nomorLine)
+                            ->first();
+
+                        if ($existingLine) {
+                            $idLineLama = $existingLine->id_line;
+
+                            $adaStok = DB::table('stok_gudang_deep as sgd')
+                                ->join('deep as d', 'd.id_deep', '=', 'sgd.id_deep')
+                                ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+                                ->where('lv.id_line', $idLineLama)
+                                ->where('sgd.jumlah', '>', 0)
+                                ->exists();
+
+                            if ($adaStok) {
+                                throw new \Exception("Gagal mereplace: Block $kodeBlock Line $nomorLine masih berisi stok aktif. Kosongkan stok terlebih dahulu.");
+                            }
+
+                            // Hapus relasi layout lama secara berurutan
+                            DB::table('prioritas_lokasi_produk')->where('id_line', $idLineLama)->delete();
+
+                            $levelIds = DB::table('level')->where('id_line', $idLineLama)->pluck('id_level');
+                            if ($levelIds->isNotEmpty()) {
+                                DB::table('deep')->whereIn('id_level', $levelIds)->delete();
+                            }
+                            DB::table('level')->where('id_line', $idLineLama)->delete();
+                            DB::table('line')->where('id_line', $idLineLama)->delete();
+                        }
+                        // --- LOGIKA REPLACE END ---
+
+                        // Insert data line baru
                         $idLine = DB::table('line')->insertGetId([
                             'id_pengguna_lokasi' => $idPenggunaLokasi,
                             'id_block' => $idBlock,
@@ -2351,7 +2372,7 @@ class LayoutGudangController extends Controller
                 return $res;
             });
 
-            return $this->okMessage('Layout gudang berhasil diimpor', [
+            return $this->okMessage('Layout gudang berhasil diimpor (layout lama telah direplace)', [
                 'block' => $stats,
                 'jumlah_block' => count($stats),
             ]);

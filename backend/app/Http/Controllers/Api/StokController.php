@@ -7,7 +7,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 class StokController extends Controller
 {
     use ApiResponse;
@@ -642,5 +643,123 @@ class StokController extends Controller
             ORDER BY x.kategori_lokasi ASC, x.nama_produk ASC";
 
         return ['sql' => $sql, 'bind' => $repeatBind];
+    }
+    public function exportExcel(Request $request)
+    {
+        $lokasiIds = $this->resolveLokasiIds($request);
+        if (empty($lokasiIds)) {
+            return $this->fail('Parameter lokasi tidak valid.');
+        }
+
+        $lokCount = count($lokasiIds);
+        if ($lokCount === 1) {
+            $lokWhere = 'sg.id_pengguna_lokasi = ?';
+            $bind = [$lokasiIds[0]];
+        } else {
+            $ph = implode(',', array_fill(0, $lokCount, '?'));
+            $lokWhere = "sg.id_pengguna_lokasi IN ($ph)";
+            $bind = $lokasiIds;
+        }
+
+        // Logika kondisi badstock sama seperti badBlockExpr() di kode awal
+        $badCond = "(
+            UPPER(TRIM(COALESCE(l.kategori,''))) IN ('BAD STOCK','BADSTOCK') 
+            OR UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line))) LIKE 'BAD STOCK-%' 
+            OR UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line))) LIKE 'BADSTOCK-%' 
+            OR UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line))) LIKE 'BS-%'
+        )";
+
+        $sql = "SELECT 
+            sg.id_produk,
+            COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
+            CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi,
+            COALESCE(sd.batch, sg.batch, '-') AS batch,
+            sd.best_before,
+            
+            -- Goodstock: bukan QI dan bukan di lokasi Badstock
+            SUM(CASE 
+                WHEN UPPER(COALESCE(sg.status, '')) != 'QI' AND NOT {$badCond} THEN sd.jumlah 
+                ELSE 0 
+            END) AS qty_good,
+            
+            -- QI: status produknya 'qi'
+            SUM(CASE 
+                WHEN UPPER(COALESCE(sg.status, '')) = 'QI' THEN sd.jumlah 
+                ELSE 0 
+            END) AS qty_qi,
+            
+            -- Badstock: berada di lokasi/block badstock
+            SUM(CASE 
+                WHEN {$badCond} THEN sd.jumlah 
+                ELSE 0 
+            END) AS qty_bad
+
+            FROM stok_gudang_deep sd
+            JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
+            JOIN deep d ON d.id_deep = sd.id_deep
+            JOIN level lv ON lv.id_level = d.id_level
+            JOIN line ln ON ln.id_line = lv.id_line
+            JOIN block b ON b.id_block = ln.id_block
+            JOIN lokasi l ON l.id_lokasi = b.id_lokasi
+            LEFT JOIN produk p ON p.id_produk = sg.id_produk
+            
+            WHERE sd.jumlah > 0 AND {$lokWhere}
+            
+            GROUP BY 
+                sg.id_produk, 
+                COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
+                CONCAT(b.kode_block, '-', ln.nomor_line), 
+                COALESCE(sd.batch, sg.batch, '-'), 
+                sd.best_before
+                
+            ORDER BY nama_produk ASC, lokasi ASC, sd.best_before ASC";
+
+        $rows = DB::select($sql, $bind);
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Laporan Stok');
+
+        // Headers
+        $headers = ['id_produk', 'nama_produk', 'Lokasi', 'batch', 'best_before', 'jumlah goodstock', 'jumlah QI', 'jumlah badstock'];
+        $sheet->fromArray($headers, NULL, 'A1');
+
+        // Style Header
+        $headerStyle = $sheet->getStyle('A1:H1');
+        $headerStyle->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
+        $headerStyle->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)->getStartColor()->setARGB('FF191970');
+
+        // Insert Data
+        $rowNum = 2;
+        foreach ($rows as $r) {
+            $sheet->setCellValue('A' . $rowNum, $r->id_produk);
+            $sheet->setCellValue('B' . $rowNum, $r->nama_produk);
+            $sheet->setCellValue('C' . $rowNum, $r->lokasi);
+            $sheet->setCellValue('D' . $rowNum, $r->batch);
+            $sheet->setCellValue('E' . $rowNum, $r->best_before);
+            $sheet->setCellValue('F' . $rowNum, (int)$r->qty_good);
+            $sheet->setCellValue('G' . $rowNum, (int)$r->qty_qi);
+            $sheet->setCellValue('H' . $rowNum, (int)$r->qty_bad);
+            $rowNum++;
+        }
+
+        // Auto-size kolom
+        foreach (range('A', 'H') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'Export-Data-Stok-' . date('YmdHis') . '.xlsx';
+
+        if (ob_get_length()) {
+            ob_end_clean();
+        }
+
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+
+        $writer->save('php://output');
+        exit;
     }
 }

@@ -126,6 +126,8 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const [modal, setModal] = useState<{ id: number; nama: string } | null>(null);
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMsg, setExportMsg] = useState("");
 
   // Helper fungsi buat nentuin warna progress bar berdasarkan zona
   const getBarColor = (z: string) => {
@@ -166,7 +168,46 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
     }
     return sp.toString();
   }, [session, multi]);
-
+  const handleExportExcel = async () => {
+    if (!session) return;
+    const qParams = paramsOf();
+    let token = "";
+    try {
+      const raw = localStorage.getItem("sailendra_session");
+      if (raw) token = (JSON.parse(raw)?.token) || "";
+    } catch {
+      /* ignore */
+    }
+    setExportBusy(true);
+    setExportMsg("");
+    try {
+      const res = await fetch(`/api/stok/export?${qParams}`, {
+        headers: { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const msg = (await res.text()).slice(0, 200) || "Gagal mengekspor data stok.";
+        setExportMsg(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="([^"]+)"/.exec(cd);
+      const name = m ? m[1] : `Export-Data-Stok-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setExportMsg("Export berhasil diunduh.");
+    } catch {
+      setExportMsg("Gagal mengekspor data stok.");
+    } finally {
+      setExportBusy(false);
+    }
+  };
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -278,6 +319,24 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
           <i className="bi bi-search" style={{ position: "absolute", top: "50%", left: 11, transform: "translateY(-50%)", color: "#8a93a3", fontSize: 13 }}></i>
           <input type="text" className="stock-search-input" placeholder={`Cari produk di ${zonaLabel}`} value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
+        
+        {/* TOMBOL EXPORT EXCEL BARU */}
+        <button 
+          onClick={handleExportExcel}
+          disabled={exportBusy}
+          style={{
+            background: "#191970", color: "#FFFFFF", border: "none", borderRadius: 8, 
+            height: 31, padding: "0 12px", fontSize: 11, fontWeight: 800, 
+            display: "flex", alignItems: "center", gap: 6, cursor: "pointer", opacity: exportBusy ? 0.6 : 1
+          }}
+        >
+          <i className="bi bi-file-earmark-excel"></i> {exportBusy ? "Mengekspor..." : "Export Excel"}
+        </button>
+        {exportMsg && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: exportMsg.startsWith("Gagal") ? "#B91C1C" : "#15803D" }}>{exportMsg}</span>
+        )}
+        {/* AKHIR TOMBOL EXPORT EXCEL BARU */}
+
         {isNormal && (
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0, fontSize: 9, fontWeight: 900, color: "#8a93a3" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#16a34a", display: "inline-block" }} />Good</span>
