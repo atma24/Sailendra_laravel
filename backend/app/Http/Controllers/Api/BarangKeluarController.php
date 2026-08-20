@@ -1182,7 +1182,7 @@ $in = $request->all();
 
         // 6c1. TAMBAH ITEM PRODUK BARU (STATUS DRAFT)
         if ($aksi === 'tambah_item_draft') {
-            return $this->tambahItemBaruDraft($idBarangKeluar, $idPenggunaLokasi, (int) ($in['id_pengguna'] ?? 0), (int) ($in['id_produk'] ?? 0), (int) ($in['jumlah'] ?? 0), trim($in['satuan'] ?? ''), trim($in['so_number'] ?? ''));
+            return $this->tambahItemBaruDraft($idBarangKeluar, $idPenggunaLokasi, (int) ($in['id_pengguna'] ?? 0), (int) ($in['id_produk'] ?? 0), (int) ($in['jumlah'] ?? 0), trim($in['satuan'] ?? ''));
         }
 
         // 6c1. TAMBAH ITEM PRODUK BARU (STATUS SELESAI)
@@ -1193,14 +1193,13 @@ $in = $request->all();
             $idProdukBaru = (int) ($in['id_produk'] ?? 0);
             $jumlahBaru = (int) ($in['jumlah'] ?? 0);
             $satuanBaru = trim($in['satuan'] ?? '');
-            $soNumberBaru = trim($in['so_number'] ?? '');
             $catatanPerubahan = trim($in['catatan_perubahan'] ?? '');
 
             if ($idRef <= 0 || $idProdukBaru <= 0 || $jumlahBaru <= 0) {
                 return $this->fail('Data penambahan produk baru tidak lengkap.');
             }
 
-            return $this->tambahItemBaruSelesai($idRef, $idPenggunaLokasi, $idPenggunaAksi, $namaPenggunaAksi, $idProdukBaru, $jumlahBaru, $satuanBaru, $soNumberBaru, $catatanPerubahan);
+            return $this->tambahItemBaruSelesai($idRef, $idPenggunaLokasi, $idPenggunaAksi, $namaPenggunaAksi, $idProdukBaru, $jumlahBaru, $satuanBaru, $catatanPerubahan);
         }
 
         // 6c2. UBAH JUMLAH ITEM (STATUS SELESAI, AUDIT TRAIL)
@@ -1658,7 +1657,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         }
     }
 
-    private function tambahItemBaruDraft($idRef, $idLokasi, $idPengguna, $idProduk, $jumlah, $satuan, $soNumber)
+    private function tambahItemBaruDraft($idRef, $idLokasi, $idPengguna, $idProduk, $jumlah, $satuan)
     {
         $old = DB::table('barang_keluar')->where('id_barang_keluar', $idRef)->where('id_pengguna_lokasi', $idLokasi)->first();
         if (! $old) {
@@ -1678,7 +1677,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
                 'no_mobil' => $old->no_mobil, 'jumlah' => $jumlah,
                 'satuan' => $satuan,
                 'tanggal_keluar' => $old->tanggal_keluar, 'tanggal_pengiriman' => $old->tanggal_pengiriman,
-                'no_dn' => $old->no_dn, 'so_number' => $soNumber ?: null, 'ritase' => $old->ritase,
+                'no_dn' => $old->no_dn, 'so_number' => $old->so_number ?: null, 'ritase' => $old->ritase,
                 'status' => 'Draft',
             ]);
 
@@ -1692,7 +1691,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         }
     }
 
-    private function tambahItemBaruSelesai($idRef, $idLokasi, $idPengguna, $namaPengguna, $idProduk, $jumlah, $satuan, $soNumber, $catatanPerubahan)
+    private function tambahItemBaruSelesai($idRef, $idLokasi, $idPengguna, $namaPengguna, $idProduk, $jumlah, $satuan, $catatanPerubahan)
     {
         $old = DB::table('barang_keluar')->where('id_barang_keluar', $idRef)->where('id_pengguna_lokasi', $idLokasi)->first();
         if (! $old) {
@@ -1723,7 +1722,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
                 'best_before' => $bestBefore, 'batch' => $batch, 'satuan' => $satuan,
                 'lokasi_block' => $lokasiBlock, 'catatan' => $catatanHistory,
                 'tanggal_keluar' => $old->tanggal_keluar, 'tanggal_pengiriman' => $old->tanggal_pengiriman,
-                'no_dn' => $old->no_dn, 'so_number' => $soNumber, 'ritase' => $old->ritase,
+                'no_dn' => $old->no_dn, 'so_number' => $old->so_number ?: null, 'ritase' => $old->ritase,
                 'status' => 'Selesai', 'diperbarui_oleh' => $namaPengguna, 'catatan_perubahan' => $catatanPerubahan,
             ]);
 

@@ -179,7 +179,6 @@ export default function OutboundDetailPage() {
 
   // add item form
   const [aProduk, setAProduk] = useState(0);
-  const [aSo, setASo] = useState("");
   const [aJumlah, setAJumlah] = useState("");
   const [aSatuan, setASatuan] = useState("");
   const [aCatatan, setACatatan] = useState("");
@@ -387,13 +386,12 @@ export default function OutboundDetailPage() {
   };
 
   const openAddItem = () => {
-    setAProduk(0); setASo(""); setAJumlah(""); setASatuan(""); setACatatan("");
+    setAProduk(0); setAJumlah(""); setASatuan(""); setACatatan("");
     setShowAddItem(true);
   };
 
   const simpanAddItem = async () => {
     if (aProduk <= 0) { notify("error", "Produk wajib dipilih."); return; }
-    if (norm(aSo) === "") { notify("error", "SO Number wajib diisi."); return; }
     if (angka(aJumlah) <= 0) { notify("error", "Jumlah tidak valid."); return; }
     if (isSelesai && norm(aCatatan) === "") { notify("error", "Catatan penambahan wajib diisi."); return; }
     setBusy(true);
@@ -404,7 +402,6 @@ export default function OutboundDetailPage() {
         id_produk: aProduk,
         jumlah: angka(aJumlah),
         satuan: aSatuan || "PCS",
-        so_number: aSo,
         status_saat_ini: statusLower,
         tanggal,
         nama_driver: driver,
@@ -847,10 +844,6 @@ export default function OutboundDetailPage() {
                     <option key={p.id_produk} value={p.id_produk}>{p.id_produk} - {p.nama_produk}</option>
                   ))}
                 </select>
-              </div>
-              <div className="dialog-field dialog-field-full">
-                <label>SO Number <span style={{ color: "red" }}>*</span></label>
-                <input type="text" value={aSo} onChange={(e) => setASo(e.target.value)} placeholder="Masukkan SO Number" />
               </div>
               <div className="dialog-field">
                 <label>Jumlah ({aSatuan || "PCS"})</label>
