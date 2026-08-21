@@ -160,6 +160,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/barang-keluar/update', [BarangKeluarController::class, 'update']);
     Route::post('/barang-keluar/hapus', [BarangKeluarController::class, 'destroy']);
 
+    Route::post('/barang-masuk/upload', [App\Http\Controllers\Api\BarangMasukController::class, 'uploadInboundFile']);
+    Route::post('/barang-masuk/submit', [BarangMasukController::class, 'submitDraft']);
+    Route::post('/barang-masuk/konfirmasi', [App\Http\Controllers\Api\BarangMasukController::class, 'konfirmasiInbound']);
     Route::post('/barang-masuk/batch', [BarangMasukController::class, 'storeBatch']);
     Route::get('/barang-masuk', [BarangMasukController::class, 'index']);
     Route::post('/barang-masuk', [BarangMasukController::class, 'store']);

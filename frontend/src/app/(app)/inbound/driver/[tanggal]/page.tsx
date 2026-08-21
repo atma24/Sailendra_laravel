@@ -14,19 +14,38 @@ type BmRow = {
   nama_driver: string;
   no_mobil: string;
   no_dn: string;
+  shipment_id: string; // --- TAMBAHAN BARU ---
+  status: string;      // --- TAMBAHAN BARU ---
 };
 
-type DriverItem = {
+type ShipmentItem = {
   nama_driver: string;
+  shipment_id: string;
   total_item: number;
   total_qty: number;
   no_mobil: string;
   no_dn: string;
+  status: string;
+  _semua_selesai: boolean;
 };
 
 const angka = (v: unknown) => {
   const n = parseInt(String(v ?? ""), 10);
   return isNaN(n) ? 0 : n;
+};
+
+const STATUS_OPTIONS = [
+  { v: "", label: "Semua" },
+  { v: "Draft", label: "Draft" },
+  { v: "Pending", label: "Pending" },
+  { v: "Selesai", label: "Selesai" },
+];
+
+const statusStyle = (s: string): { bg: string; color: string } => {
+  const st = (s || "").toLowerCase();
+  if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
+  if (st === "selesai") return { bg: "#d1fae5", color: "#065f46" };
+  return { bg: "#e5e7eb", color: "#4b5563" };
 };
 
 const css = `
@@ -46,6 +65,12 @@ const css = `
 .driver-sub { font-size: 10px; font-weight: 750; color: var(--text-soft); line-height: 1.3; }
 .inbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; }
 .inbound-toolbar { padding: 8px; position: relative; }
+.inbound-status-filter { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 8px 8px; }
+.inbound-status-chip { border-radius: 999px; border: 1px solid #e2e7f0; background: #fbfcff; color: var(--text-main); text-decoration: none; padding: 4px 9px; font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; gap: 5px; }
+.inbound-status-chip.is-active { background: var(--primary); border-color: var(--primary); color: #FFFFFF; }
+.inbound-status-chip .chip-count { font-size: 9px; font-weight: 900; background: rgba(0,0,0,0.06); border-radius: 999px; padding: 1px 6px; }
+.inbound-status-chip.is-active .chip-count { background: rgba(255,255,255,0.22); }
+.status-badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 9px; font-weight: 900; text-transform: uppercase; }
 `;
 
 export default function InboundDriverPage() {
@@ -59,6 +84,7 @@ export default function InboundDriverPage() {
   const [rows, setRows] = useState<BmRow[]>([]);
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "");
 
   useEffect(() => {
     if (!session || !tanggal) return;
@@ -90,20 +116,49 @@ export default function InboundDriverPage() {
   if (!session || !loaded) return null;
 
   const kw = q.trim().toLowerCase();
-  const driverMap: Record<string, DriverItem> = {};
+  // Satu kartu per (driver + shipment_id), mirip GIN di outbound
+  const shipMap: Record<string, ShipmentItem> = {};
   rows.forEach((row) => {
     const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";
+    const ship = (row.shipment_id || "").trim() || "Tanpa Shipment";
     if (kw !== "" && !nama.toLowerCase().includes(kw)) return;
-    if (!driverMap[nama]) {
-      driverMap[nama] = { nama_driver: nama, total_item: 0, total_qty: 0, no_mobil: row.no_mobil || "", no_dn: row.no_dn || "" };
+    const key = `${nama}::${ship}`;
+    if (!shipMap[key]) {
+      shipMap[key] = { nama_driver: nama, shipment_id: ship, total_item: 0, total_qty: 0, no_mobil: row.no_mobil || "", no_dn: row.no_dn || "", status: row.status || "", _semua_selesai: true };
     }
-    driverMap[nama].total_item++;
-    driverMap[nama].total_qty += angka(row.jumlah);
-    if (!driverMap[nama].no_mobil && row.no_mobil) driverMap[nama].no_mobil = row.no_mobil;
-    if (!driverMap[nama].no_dn && row.no_dn) driverMap[nama].no_dn = row.no_dn;
+    shipMap[key].total_item++;
+    shipMap[key].total_qty += angka(row.jumlah);
+    if (!shipMap[key].no_mobil && row.no_mobil) shipMap[key].no_mobil = row.no_mobil;
+    if (!shipMap[key].no_dn && row.no_dn) shipMap[key].no_dn = row.no_dn;
+    const st = (row.status || "").toLowerCase();
+    if (st !== "selesai") shipMap[key]._semua_selesai = false;
   });
 
-  const driverList = Object.values(driverMap).sort((a, b) => a.nama_driver.localeCompare(b.nama_driver, "id"));
+  Object.values(shipMap).forEach((d) => {
+    if (d._semua_selesai) d.status = "Selesai";
+    else if (!d.status) d.status = "Draft";
+    delete (d as Record<string, unknown>)._semua_selesai;
+  });
+
+  const statusCounts = { Draft: 0, Pending: 0, Selesai: 0 };
+  Object.values(shipMap).forEach((d) => {
+    if (statusCounts[d.status as keyof typeof statusCounts] !== undefined) statusCounts[d.status as keyof typeof statusCounts]++;
+    else statusCounts.Draft++;
+  });
+  const totalShipAll = Object.keys(shipMap).length;
+
+  let shipmentList = Object.values(shipMap).sort((a, b) => a.nama_driver.localeCompare(b.nama_driver, "id") || a.shipment_id.localeCompare(b.shipment_id, "id"));
+  if (statusFilter !== "") shipmentList = shipmentList.filter((d) => d.status.toLowerCase() === statusFilter.toLowerCase());
+
+  const buildUrl = (sv: string) => {
+    const p = new URLSearchParams();
+    if (q.trim()) p.set("q", q.trim());
+    if (lok) p.set("lok", lok);
+    if (sv) p.set("status", sv);
+    const qs = p.toString();
+    return `/inbound/driver/${encodeURIComponent(tanggal)}${qs ? `?${qs}` : ""}`;
+  };
+
   const backHref = `/inbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
 
   return (
@@ -128,27 +183,46 @@ export default function InboundDriverPage() {
             </a>
           )}
         </div>
+        <div className="inbound-status-filter">
+          {STATUS_OPTIONS.map((o) => {
+            const count = o.v === "" ? totalShipAll : (statusCounts[o.v as keyof typeof statusCounts] || 0);
+            const active = (statusFilter === o.v);
+            return (
+              <Link key={o.v || "_"} className={`inbound-status-chip ${active ? "is-active" : ""}`} href={buildUrl(o.v)}>
+                <span>{o.label}</span>
+                <span className="chip-count">{count}</span>
+              </Link>
+            );
+          })}
+        </div>
       </div>
 
-      {driverList.length === 0 ? (
+      {shipmentList.length === 0 ? (
         <div className="inbound-card inbound-empty">Driver tidak ditemukan pada tanggal ini.</div>
       ) : (
         <div className="inbound-driver-grid">
-          {driverList.map((d) => (
-            <Link key={d.nama_driver} className="inbound-card inbound-driver-card"
-              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}`}>
+          {shipmentList.map((d) => {
+            const ss = statusStyle(d.status);
+            return (
+            <Link key={`${d.nama_driver}::${d.shipment_id}`} className="inbound-card inbound-driver-card"
+              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}&shipment=${encodeURIComponent(d.shipment_id)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}`}>
               <div className="driver-top">
                 <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
-                <div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="driver-name">{d.nama_driver}</div>
+                  <div className="driver-sub">
+                    Shipment: <strong>{d.shipment_id}</strong>
+                  </div>
                   <div className="driver-sub">
                     {d.total_item} item · {d.total_qty} qty{d.no_mobil ? ` · ${d.no_mobil}` : ""}
                   </div>
                 </div>
+                <span className="status-badge" style={ss}>{d.status}</span>
                 <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
               </div>
             </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

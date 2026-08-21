@@ -35,5 +35,7 @@ class BarangMasuk extends Model
         'catatan_perubahan',
         'waktu_mulai_input',
         'durasi_detik',
+        'status',
+        'shipment_id',
     ];
 }

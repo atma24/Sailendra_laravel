@@ -52,7 +52,7 @@ class BarangMasukController extends Controller
                 'bm.id_pengguna', 'u.username AS dibuat_oleh', 'bm.id_produk', 'bm.nama_produk',
                 'bm.jumlah', 'bm.satuan', 'bm.tanggal_masuk', 'bm.tipe_penerimaan', 'bm.best_before',
                 'bm.batch', 'bm.asal_pabrik', 'bm.no_dn', 'bm.nama_driver', 'bm.no_mobil',
-                'bm.catatan', 'bm.lokasi_block', 'bm.created_at',
+                'bm.shipment_id', 'bm.catatan', 'bm.lokasi_block', 'bm.created_at', 'bm.status',
                 DB::raw('COALESCE(sg.jumlah_sisa,0) AS stok_sisa')
             );
 
@@ -533,7 +533,480 @@ class BarangMasukController extends Controller
             'lokasi_akhir_str' => $lokasiAkhirStr,
         ]);
     }
+    // =========================================================================
+    // UPLOAD EXCEL OTM INBOUND (Status: DRAFT)
+    // =========================================================================
+    public function uploadInboundFile(Request $request)
+    {
+        set_time_limit(0);
+        $idPenggunaLokasi = trim((string) $request->input('upload_lokasi', ''));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
 
+        if ($idPenggunaLokasi === '' || $idPengguna <= 0) {
+            return $this->fail('id_pengguna_lokasi dan id_pengguna wajib diisi.');
+        }
+
+        $file = $request->file('file_excel');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('Harap pilih file Excel yang valid.');
+        }
+
+        $ext = strtolower($file->getClientOriginalExtension());
+        $path = $file->getRealPath();
+
+        try {
+            $parsed = $this->bacaFileSpreadsheet($path, $ext);
+            $rowsData = $parsed['rows'];
+        } catch (Throwable $e) {
+            return $this->fail($e->getMessage());
+        }
+
+        if (empty($rowsData)) {
+            return $this->fail('File Excel kosong atau tidak bisa dibaca.');
+        }
+
+        // =========================================================================
+        // PARSING: Judul kolom ada di baris 13 (Excel), data mulai dari baris 14.
+        // Baris 1-12 berisi judul/meta dokumen -> DIBUANG.
+        // Catatan: bacaFileSpreadsheet menjadikan baris 1 sebagai header awal,
+        // sehingga $rowsData[0] = baris 2 Excel. Maka:
+        //   baris 13 Excel -> $rowsData[11] (judul kolom)
+        //   baris 14 Excel -> $rowsData[12] (awal data)
+        // =========================================================================
+        $headerRow = $rowsData[11] ?? [];
+        $dataStartIndex = 12;
+
+        if (empty($headerRow)) {
+            return $this->fail('Format tidak dikenali. Baris judul kolom (baris 13) tidak ditemukan.');
+        }
+
+        $colMap = [];
+        foreach ($headerRow as $idx => $colName) {
+            $clean = trim((string) $colName);
+            if ($clean !== '') {
+                $colMap[$clean] = $idx;
+            }
+        }
+
+        // Mapping HANYA Kolom Kuning sesuai Excel
+        $idxShipment = $colMap['Shipment Id'] ?? -1;
+        $idxProdukId = $colMap['Material Id'] ?? -1;
+        $idxProdukDesc = $colMap['Material Desc'] ?? -1;
+        $idxAsal = $colMap['Source Name'] ?? -1;
+        $idxTransporter = $colMap['Actual Transporter Name'] ?? -1;
+        $idxQty = $colMap['Actual Quantity'] ?? -1;
+        $idxDate = $colMap['Actual PickUp Date'] ?? -1;
+        $idxDn = $colMap['DN number'] ?? -1;
+        $idxTruck = $colMap['Truck Type'] ?? -1;
+
+        if ($idxShipment < 0 || $idxProdukDesc < 0 || $idxQty < 0) {
+            return $this->fail('Kolom mandatory (Shipment Id, Material Desc, Actual Quantity) tidak lengkap di Excel.');
+        }
+
+        $produkList = DB::table('produk')->get(['id_produk', 'nama_produk', 'satuan']);
+        $mapProduk = [];
+        foreach ($produkList as $p) {
+            $mapProduk[strtoupper(trim((string) $p->nama_produk))] = $p;
+        }
+
+        $grouped = [];
+        $countUnmapped = 0;
+        
+        for ($i = $dataStartIndex; $i < count($rowsData); $i++) {
+            $data = $rowsData[$i];
+            
+            $shipmentId = trim((string) ($data[$idxShipment] ?? ''));
+            if ($shipmentId === '') continue;
+
+            $namaProdukExcel = strtoupper(trim((string) ($data[$idxProdukDesc] ?? '')));
+            $jumlah = (int) ($data[$idxQty] ?? 0);
+
+            if ($jumlah <= 0) continue;
+            
+            // Pencarian Produk: Coba dari Nama, jika tidak ketemu coba dari ID Material
+            if (!isset($mapProduk[$namaProdukExcel])) {
+                $idProdNum = (int) ($data[$idxProdukId] ?? 0);
+                $found = false;
+                foreach ($produkList as $p) {
+                    if ($p->id_produk === $idProdNum) {
+                        $mapProduk[$namaProdukExcel] = $p;
+                        $found = true; break;
+                    }
+                }
+                if (!$found) {
+                    $countUnmapped++; // Produk tidak ada di DB, skip dan catat sebagai peringatan
+                    continue; 
+                }
+            }
+            $produk = $mapProduk[$namaProdukExcel];
+
+            // Assign data dari kolom kuning
+            $asalPabrik = $idxAsal >= 0 ? trim((string) ($data[$idxAsal] ?? '')) : 'Pabrik';
+            $transporter = $idxTransporter >= 0 ? trim((string) ($data[$idxTransporter] ?? '')) : '-';
+            $noDn = $idxDn >= 0 ? trim((string) ($data[$idxDn] ?? '')) : '';
+            $truckType = $idxTruck >= 0 ? trim((string) ($data[$idxTruck] ?? '')) : '-';
+            
+            // Parsing Format Tanggal
+            $rawDate = $idxDate >= 0 ? trim((string) ($data[$idxDate] ?? '')) : '';
+            $tanggalMasuk = date('Y-m-d');
+            if ($rawDate !== '') {
+                $parsed = date('Y-m-d', strtotime(str_replace('/', '-', substr($rawDate, 0, 10))));
+                if ($parsed !== '1970-01-01' && $parsed !== false) {
+                    $tanggalMasuk = $parsed;
+                }
+            }
+
+            // Grouping per Shipment ID
+            if (!isset($grouped[$shipmentId])) {
+                $grouped[$shipmentId] = [
+                    'shipment_id' => $shipmentId,
+                    'id_pengguna' => $idPengguna,
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'tanggal_masuk' => $tanggalMasuk,
+                    'asal_pabrik' => $asalPabrik,
+                    'no_dn' => $noDn,
+                    'nama_driver' => $transporter,
+                    'no_mobil' => $truckType,
+                    'tipe_penerimaan' => 'Primary',
+                    'catatan' => 'Upload OTM Inbound',
+                    'status' => 'Draft',
+                    'items' => []
+                ];
+            }
+
+            // Cek apakah item (produk yang sama) sudah ada di shipment ini, kalau ada digabung jumlahnya
+            $itemTerisi = false;
+            foreach ($grouped[$shipmentId]['items'] as &$existingItem) {
+                if ($existingItem['id_produk'] === (int) $produk->id_produk) {
+                    $existingItem['jumlah'] += $jumlah;
+                    $itemTerisi = true;
+                    break;
+                }
+            }
+
+            if (!$itemTerisi) {
+                $grouped[$shipmentId]['items'][] = [
+                    'id_produk' => (int) $produk->id_produk,
+                    'nama_produk' => $produk->nama_produk,
+                    'satuan' => $produk->satuan ?? 'PCS',
+                    'jumlah' => $jumlah,
+                ];
+            }
+        }
+
+        if (empty($grouped)) {
+            return $this->fail('Gagal memproses file. Pastikan data tidak kosong dan produk terdaftar di Master Data.');
+        }
+
+        $inserted = 0;
+        $skipped = 0;
+        DB::beginTransaction();
+        try {
+            foreach ($grouped as $shipmentId => $payload) {
+                // Cek apakah Shipment ID sudah pernah diupload dan berstatus Selesai/Pending
+                $existing = DB::table('barang_masuk')
+                    ->where('shipment_id', $shipmentId)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->first();
+                    
+                if ($existing && in_array(strtolower($existing->status), ['selesai', 'pending'])) {
+                    $skipped++;
+                    continue; // Skip, jangan ditimpa kalau sudah di-submit atau selesai
+                }
+
+                // Hapus Draft lama jika diupload ulang dengan file yang sama
+                DB::table('barang_masuk')
+                    ->where('shipment_id', $shipmentId)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('status', 'Draft')
+                    ->delete();
+
+                // Simpan item-item ke database sebagai DRAFT
+                foreach ($payload['items'] as $item) {
+                    DB::table('barang_masuk')->insert([
+                        'shipment_id' => $payload['shipment_id'],
+                        'id_pengguna_lokasi' => $payload['id_pengguna_lokasi'],
+                        'id_pengguna' => $payload['id_pengguna'],
+                        'id_produk' => $item['id_produk'],
+                        'nama_produk' => $item['nama_produk'],
+                        'jumlah' => $item['jumlah'],
+                        'satuan' => $item['satuan'],
+                        'tanggal_masuk' => $payload['tanggal_masuk'],
+                        'tipe_penerimaan' => $payload['tipe_penerimaan'],
+                        'asal_pabrik' => $payload['asal_pabrik'],
+                        'no_dn' => $payload['no_dn'],
+                        'nama_driver' => $payload['nama_driver'],
+                        'no_mobil' => $payload['no_mobil'],
+                        'catatan' => $payload['catatan'],
+                        'status' => $payload['status'], // Set DRAFT
+                        'created_at' => now(),
+                    ]);
+                }
+                $inserted++;
+            }
+            DB::commit();
+            
+            $msg = "Upload selesai! $inserted Shipment ID ditambahkan sebagai Draft.";
+            if ($skipped > 0) {
+                $msg .= " ($skipped dilewati karena sudah Pending/Selesai).";
+            }
+            if ($countUnmapped > 0) {
+                $msg .= " Peringatan: $countUnmapped baris diabaikan (produk tidak dikenal).";
+            }
+            return $this->ok(['inserted' => $inserted], $msg);
+            
+        } catch (Throwable $e) {
+            DB::rollBack();
+            return $this->fail('Gagal menyimpan ke database: ' . $e->getMessage(), 500);
+        }
+    }
+    // =========================================================================
+    // SUBMIT DRAFT -> PENDING (Membuat Batch & Booking Lokasi)
+    // =========================================================================
+    public function submitDraft(Request $request)
+    {
+        $shipmentId = trim((string) $request->input('shipment_id', ''));
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+        
+        // Dari frontend akan dikirim array items yang berisi ID draft & Best Before-nya
+        // Contoh format: [['id_barang_masuk' => 1, 'best_before' => '2026-10-12'], ...]
+        $itemsReq = $request->input('items', []); 
+
+        if ($shipmentId === '' || $idPenggunaLokasi === '' || empty($itemsReq)) {
+            return $this->fail('shipment_id, id_pengguna_lokasi, dan items wajib diisi.');
+        }
+
+        DB::beginTransaction();
+        try {
+            $insertedRencana = 0;
+
+            foreach ($itemsReq as $it) {
+                $idBm = (int) ($it['id_barang_masuk'] ?? 0);
+                $bbReq = trim((string) ($it['best_before'] ?? ''));
+
+                if ($idBm <= 0 || $bbReq === '') {
+                    throw new Exception("Ada item yang tidak memiliki best_before atau ID tidak valid.");
+                }
+
+                $draft = DB::table('barang_masuk')
+                    ->where('id_barang_masuk', $idBm)
+                    ->where('shipment_id', $shipmentId)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('status', 'Draft')
+                    ->lockForUpdate() // Kunci row biar aman dari bentrok saat proses
+                    ->first();
+
+                if (!$draft) {
+                    continue; // Skip jika data sudah bukan draft
+                }
+
+                // 1. Generate Batch Otomatis (BB + ID Plant Pabrik)
+                $idPlant = strtoupper(trim(explode('-', $draft->asal_pabrik, 2)[0]));
+                // Jika dari OTM tidak bawa kode unik pabrik, default ke 'PABRIK'
+                if ($idPlant === '' || $idPlant === 'PABRIK') {
+                    $idPlant = 'PABRIK'; 
+                }
+                
+                $dt = DateTime::createFromFormat('Y-m-d', $bbReq);
+                if (!$dt) {
+                    throw new Exception("Format Best Before tidak valid untuk produk {$draft->nama_produk}");
+                }
+                $batchBaru = $dt->format('ymd') . $idPlant;
+
+                // Override untuk produk REJECT atau TANPA BATCH (seperti Galon)
+                if (strtoupper($draft->tipe_penerimaan) === 'REJECT') {
+                    $batchBaru = '999999' . $idPlant;
+                    $bbReq = '9999-12-31';
+                }
+                if (in_array((int)$draft->id_produk, [10516938, 10516939])) { 
+                    $bbReq = '9999-12-31';
+                    $batchBaru = '-';
+                }
+
+                // 2. Cari Rekomendasi Lokasi (Alokasi Booking)
+                $auto = $this->rekomendasiAuto(
+                    $idPenggunaLokasi, 
+                    (int) $draft->id_produk, 
+                    (float) $draft->jumlah, 
+                    $bbReq, 
+                    $draft->tipe_penerimaan, 
+                    false
+                );
+
+                if (isset($auto['error'])) {
+                    throw new Exception("Gagal mencari lokasi untuk {$draft->nama_produk}: " . $auto['error']);
+                }
+
+                $alokasi = $auto['rekomendasi'] ?? [];
+                if (empty($alokasi)) {
+                    throw new Exception("Tidak ada alokasi lokasi kosong untuk {$draft->nama_produk}");
+                }
+
+                // 3. Simpan ke rencana_masuk_deep (Menge-booking kapasitas)
+                foreach ($alokasi as $al) {
+                    DB::table('rencana_masuk_deep')->insert([
+                        'id_barang_masuk' => $draft->id_barang_masuk,
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_deep' => $al['id_deep'],
+                        'jumlah_rencana' => $al['alokasi'],
+                        'best_before' => $bbReq,
+                        'batch' => $batchBaru
+                    ]);
+                    $insertedRencana++;
+                }
+
+                // 4. Update Header barang_masuk jadi Pending
+                // Menggabungkan nama-nama block/line sebagai text lokasi_block sementara
+                $kumpulanLokasi = [];
+                foreach ($alokasi as $al) {
+                    $kumpulanLokasi[] = $al['kode_block'] . '-' . $al['nomor_line'];
+                }
+                $lokasiAkhirStr = implode(', ', array_unique($kumpulanLokasi));
+
+                DB::table('barang_masuk')
+                    ->where('id_barang_masuk', $draft->id_barang_masuk)
+                    ->update([
+                        'status' => 'Pending',
+                        'best_before' => $bbReq,
+                        'batch' => $batchBaru,
+                        'batch_sekarang' => $batchBaru,
+                        'lokasi_block' => $lokasiAkhirStr,
+                        'diperbarui_pada' => now()
+                    ]);
+            }
+
+            if ($insertedRencana === 0) {
+                throw new Exception("Tidak ada data Draft yang valid untuk di-submit.");
+            }
+
+            DB::commit();
+            return $this->okMessage("Berhasil Submit! Status berubah menjadi Pending dan lokasi telah di-booking.");
+
+        } catch (Throwable $e) {
+            DB::rollBack();
+            return $this->fail("Gagal Submit: " . $e->getMessage(), 500);
+        }
+    }
+    // =========================================================================
+    // KONFIRMASI INBOUND (PENDING -> SELESAI & POTONG KAPASITAS)
+    // =========================================================================
+    public function konfirmasiInbound(Request $request)
+    {
+        $shipmentId = trim((string) $request->input('shipment_id', ''));
+        $idBm = (int) $request->input('id_barang_masuk', 0);
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('id_pengguna_lokasi wajib diisi.');
+        }
+        if ($shipmentId === '' && $idBm <= 0) {
+            return $this->fail('Pilih shipment_id atau id_barang_masuk yang akan dikonfirmasi.');
+        }
+
+        DB::beginTransaction();
+        try {
+            // 1. Ambil data barang masuk yang statusnya masih Pending
+            $query = DB::table('barang_masuk')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('status', 'Pending');
+
+            if ($shipmentId !== '') {
+                $query->where('shipment_id', $shipmentId);
+            } else {
+                $query->where('id_barang_masuk', $idBm);
+            }
+
+            $pendingItems = $query->lockForUpdate()->get();
+
+            if ($pendingItems->isEmpty()) {
+                throw new Exception('Tidak ada data Inbound berstatus Pending untuk dikonfirmasi.');
+            }
+
+            $idsProses = $pendingItems->pluck('id_barang_masuk')->toArray();
+
+            // 2. Ambil rencana masuk (booking) beserta detail layout-nya (block & line)
+            $rencana = DB::table('rencana_masuk_deep as r')
+                ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
+                ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+                ->join('line as ln', 'ln.id_line', '=', 'lv.id_line')
+                ->join('block as b', 'b.id_block', '=', 'ln.id_block')
+                ->whereIn('r.id_barang_masuk', $idsProses)
+                ->select('r.*', 'b.kode_block', 'ln.nomor_line')
+                ->get();
+
+            // 3. Proses pemindahan dari Rencana ke Stok Aktual
+            foreach ($pendingItems as $item) {
+                // Ambil rencana khusus untuk item ini
+                $itemRencana = $rencana->where('id_barang_masuk', $item->id_barang_masuk);
+                
+                if ($itemRencana->isEmpty()) {
+                    continue; // Skip jika tidak ada data rencana
+                }
+
+                // Kelompokkan berdasarkan lokasi_block (Misal: A-1, B-2)
+                $groupedRencana = [];
+                foreach ($itemRencana as $r) {
+                    $labelLine = strtoupper(trim($r->kode_block)) . '-' . $r->nomor_line;
+                    $groupedRencana[$labelLine][] = $r;
+                }
+
+                // Insert ke tabel stok aktual
+                foreach ($groupedRencana as $labelLine => $details) {
+                    $totalQtyLine = 0;
+                    foreach ($details as $d) {
+                        $totalQtyLine += $d->jumlah_rencana;
+                    }
+
+                    // A. Buat header stok_gudang
+                    $idStok = DB::table('stok_gudang')->insertGetId([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_produk' => $item->id_produk,
+                        'nama_produk' => $item->nama_produk,
+                        'id_barang_masuk' => $item->id_barang_masuk,
+                        'jumlah_sisa' => $totalQtyLine,
+                        'batch' => $details[0]->batch,
+                        'satuan' => $item->satuan,
+                        'best_before' => $details[0]->best_before,
+                        'lokasi_block' => $labelLine,
+                        'created_at' => now(),
+                    ]);
+
+                    // B. Buat detail lokasi di stok_gudang_deep
+                    foreach ($details as $d) {
+                        DB::table('stok_gudang_deep')->insert([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_stok_header' => $idStok,
+                            'id_deep' => $d->id_deep,
+                            'jumlah' => $d->jumlah_rencana,
+                            'best_before' => $d->best_before,
+                            'batch' => $d->batch,
+                            'lokasi_block' => $labelLine,
+                            'created_at' => now(),
+                        ]);
+                    }
+                }
+            }
+
+            // 4. Update Status Barang Masuk jadi Selesai
+            DB::table('barang_masuk')
+                ->whereIn('id_barang_masuk', $idsProses)
+                ->update([
+                    'status' => 'Selesai',
+                    'diperbarui_pada' => now()
+                ]);
+
+            // 5. Hapus data rencana booking yang sudah diproses
+            DB::table('rencana_masuk_deep')
+                ->whereIn('id_barang_masuk', $idsProses)
+                ->delete();
+
+            DB::commit();
+            return $this->okMessage('Konfirmasi Inbound Berhasil! Stok telah ditambahkan secara fisik ke dalam sistem.');
+        } catch (Throwable $e) {
+            DB::rollBack();
+            return $this->fail('Gagal konfirmasi: ' . $e->getMessage(), 500);
+        }
+    }
     public function downloadStockTemplate()
     {
         $produkList = DB::table('produk')->selectRaw("CONCAT(id_produk, ' - ', nama_produk) AS label_produk")->pluck('label_produk')->toArray();
@@ -1580,6 +2053,7 @@ class BarangMasukController extends Controller
         }
 
         // Info kapasitas per line
+        // Info kapasitas per line
         $lineInfo = [];
         $lineInfoRows = DB::table('line as ln')
             ->join('block as b', function ($j) {
@@ -1614,6 +2088,24 @@ class BarangMasukController extends Controller
 
         foreach ($lineInfoRows as $rowLine) {
             $lineInfo[(int) $rowLine->id_line] = $rowLine;
+        }
+
+        // --- TAMBAHAN: Masukkan Booking ke Total Terisi Line ---
+        $bookingLineRows = DB::table('rencana_masuk_deep as r')
+            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+            ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
+            ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('bm.status', 'Pending')
+            ->selectRaw('lv.id_line, SUM(r.jumlah_rencana) as total_booking')
+            ->groupBy('lv.id_line')
+            ->get();
+
+        foreach ($bookingLineRows as $bl) {
+            $idL = (int) $bl->id_line;
+            if (isset($lineInfo[$idL])) {
+                $lineInfo[$idL]->terisi_total += (int) $bl->total_booking;
+            }
         }
 
         // Peta produk per line
@@ -1745,7 +2237,7 @@ class BarangMasukController extends Controller
             }
         }
 
-        // Terisi awal per deep
+       // Terisi awal per deep (Digabung dengan Booking Pending)
         $terisiMapAwal = [];
         $terisiAwalRows = DB::table('stok_gudang_deep as sd')
             ->join('stok_gudang as s', function ($j) {
@@ -1757,8 +2249,25 @@ class BarangMasukController extends Controller
             ->selectRaw('sd.id_deep, COALESCE(SUM(sd.jumlah),0) AS terisi')
             ->groupBy('sd.id_deep')
             ->get();
+            
         foreach ($terisiAwalRows as $rowTA) {
             $terisiMapAwal[(int) $rowTA->id_deep] = (float) $rowTA->terisi;
+        }
+
+        $bookingAwalRows = DB::table('rencana_masuk_deep as r')
+            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('bm.status', 'Pending')
+            ->selectRaw('r.id_deep, COALESCE(SUM(r.jumlah_rencana), 0) AS terisi_booking')
+            ->groupBy('r.id_deep')
+            ->get();
+
+        foreach ($bookingAwalRows as $rowBooking) {
+            $idDeepB = (int) $rowBooking->id_deep;
+            if (!isset($terisiMapAwal[$idDeepB])) {
+                $terisiMapAwal[$idDeepB] = 0.0;
+            }
+            $terisiMapAwal[$idDeepB] += (float) $rowBooking->terisi_booking;
         }
 
         $totalLeftPrior = 0;
@@ -1839,7 +2348,7 @@ class BarangMasukController extends Controller
             }
         }
 
-        // Terisi + bb per deep
+        // Terisi + bb per deep (Digabung dengan Booking Pending)
         $terisiMap = [];
         $bbMinDeepMap = [];
         $bbMaxDeepMap = [];
@@ -1853,10 +2362,35 @@ class BarangMasukController extends Controller
             ->selectRaw('sd.id_deep, COALESCE(SUM(sd.jumlah),0) AS terisi, MIN(s.best_before) AS bb_min, MAX(s.best_before) AS bb_max')
             ->groupBy('sd.id_deep')
             ->get();
+            
         foreach ($terisiRows as $row) {
             $terisiMap[(int) $row->id_deep] = (float) $row->terisi;
             $bbMinDeepMap[(int) $row->id_deep] = $row->bb_min ?? null;
             $bbMaxDeepMap[(int) $row->id_deep] = $row->bb_max ?? null;
+        }
+
+        // --- TAMBAHAN: Gabungkan data dari Rencana Masuk ---
+        $bookingDetailsRows = DB::table('rencana_masuk_deep as r')
+            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('bm.status', 'Pending')
+            ->selectRaw('r.id_deep, COALESCE(SUM(r.jumlah_rencana), 0) AS terisi, MIN(r.best_before) AS bb_min, MAX(r.best_before) AS bb_max')
+            ->groupBy('r.id_deep')
+            ->get();
+
+        foreach ($bookingDetailsRows as $row) {
+            $idD = (int) $row->id_deep;
+            if (!isset($terisiMap[$idD])) {
+                $terisiMap[$idD] = 0.0;
+            }
+            $terisiMap[$idD] += (float) $row->terisi;
+
+            if (!isset($bbMinDeepMap[$idD]) || ($row->bb_min !== null && $row->bb_min < $bbMinDeepMap[$idD])) {
+                $bbMinDeepMap[$idD] = $row->bb_min;
+            }
+            if (!isset($bbMaxDeepMap[$idD]) || ($row->bb_max !== null && $row->bb_max > $bbMaxDeepMap[$idD])) {
+                $bbMaxDeepMap[$idD] = $row->bb_max;
+            }
         }
 
         // Proposisi & alokasi line kosong milik produk lain (konversi dgn konfirmasi frontend)
@@ -2320,7 +2854,7 @@ class BarangMasukController extends Controller
 
     private function deepsLine(string $idPenggunaLokasi, string $kodeBlock, int $noLine): array
     {
-        return DB::table('block as b')
+        $rows = DB::table('block as b')
             ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
             ->join('line as ln', function ($j) {
                 $j->on('ln.id_block', '=', 'b.id_block')
@@ -2351,6 +2885,41 @@ class BarangMasukController extends Controller
             ->orderBy('d.deep', 'ASC')
             ->orderBy('lv.level', 'ASC')
             ->get()->all();
+
+        // --- TAMBAHAN: HITUNG BOOKING DARI RENCANA MASUK ---
+        if (!empty($rows)) {
+            $deepIds = array_map(fn($r) => $r->id_deep, $rows);
+            
+            $bookings = DB::table('rencana_masuk_deep as r')
+                ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+                ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+                ->whereIn('r.id_deep', $deepIds)
+                ->where('bm.status', 'Pending')
+                ->selectRaw('r.id_deep, SUM(r.jumlah_rencana) as terisi_booking, MIN(r.best_before) as bb_min, MAX(r.best_before) as bb_max')
+                ->groupBy('r.id_deep')
+                ->get();
+                
+            $bookingMap = [];
+            foreach ($bookings as $b) {
+                $bookingMap[$b->id_deep] = $b;
+            }
+            
+            foreach ($rows as $row) {
+                if (isset($bookingMap[$row->id_deep])) {
+                    $b = $bookingMap[$row->id_deep];
+                    $row->terisi += $b->terisi_booking; // Tambahkan stok yang lagi Otw
+                    if ($b->bb_min !== null && ($row->bb_min === null || $b->bb_min < $row->bb_min)) {
+                        $row->bb_min = $b->bb_min;
+                    }
+                    if ($b->bb_max !== null && ($row->bb_max === null || $b->bb_max > $row->bb_max)) {
+                        $row->bb_max = $b->bb_max;
+                    }
+                }
+            }
+        }
+        // ---------------------------------------------------
+
+        return $rows;
     }
 
     private function infoBlockDeep(string $idPenggunaLokasi, int $idDeep): ?array
@@ -2409,6 +2978,16 @@ class BarangMasukController extends Controller
 
     private function cariLineKosongKonversi(string $idPenggunaLokasi, int $idProduk, string $tipePenerimaan, array $priorLokasiIds): array
     {
+        // --- TAMBAHAN: KUMPULKAN LINE YANG LAGI DI-BOOKING TRUK PENDING ---
+        $bookedLineIds = DB::table('rencana_masuk_deep as r')
+            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+            ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
+            ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('bm.status', 'Pending')
+            ->pluck('lv.id_line')->unique();
+        // ------------------------------------------------------------------
+
         $q = DB::table('line as ln')
             ->join('block as b', function ($j) use ($idPenggunaLokasi) {
                 $j->on('b.id_block', '=', 'ln.id_block')
@@ -2441,6 +3020,11 @@ class BarangMasukController extends Controller
             ->where('p.id_produk', '<>', $idProduk)
             ->where('p.id_lokasi', '>', 0)
             ->where($this->whereNormalBlockActive($tipePenerimaan));
+
+        // JANGAN MASUKKAN LINE YANG LAGI DI-BOOKING
+        if ($bookedLineIds->isNotEmpty()) {
+            $q->whereNotIn('ln.id_line', $bookedLineIds);
+        }
 
         $kategori = $this->kategoriLokasi($tipePenerimaan);
         if ($kategori) {
@@ -2611,7 +3195,7 @@ class BarangMasukController extends Controller
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                     ->update(['kapasitas' => $rate]);
             });
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             return ['error' => $e->getMessage()];
         }
 

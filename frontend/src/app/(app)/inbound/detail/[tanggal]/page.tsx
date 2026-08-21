@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { api, apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 
 type BmRow = {
@@ -12,6 +12,7 @@ type BmRow = {
   id_pengguna: number;
   dibuat_oleh: string;
   nama_produk: string;
+  id_produk: number;
   jumlah: number;
   satuan: string;
   tanggal_masuk: string;
@@ -25,6 +26,8 @@ type BmRow = {
   catatan: string;
   lokasi_block: string;
   stok_sisa: number;
+  status: string;      // --- TAMBAHAN BARU ---
+  shipment_id: string; // --- TAMBAHAN BARU ---
 };
 
 type Plant = { id_plant: string; nama_plant: string };
@@ -36,6 +39,8 @@ const angka = (v: unknown) => {
 const norm = (v: unknown) => String(v ?? "").trim();
 const bbDisplay = (bb: string, tipe: string) =>
   bb === "9999-12-31" && tipe.toUpperCase() === "REJECT" ? "9999/99/99" : bb;
+
+const PRODUK_TANPA_BATCH = [10516938, 10516939];
 
 const css = `
 .inbound-page { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
@@ -53,10 +58,10 @@ const css = `
 .detail-stat-wide { grid-column: span 2; }
 .detail-stat-label { font-size: 9.5px; color: #8b8fa3; font-weight: 850; margin-bottom: 4px; }
 .detail-stat-value { font-size: 11.5px; color: #111827; font-weight: 900; line-height: 1.25; word-break: break-word; }
-.detail-item-title { font-size: 13px; font-weight: 900; color: var(--text-main); margin-bottom: 9px; letter-spacing: -0.15px; }
+.detail-item-title { font-size: 13px; font-weight: 900; color: var(--text-main); margin-bottom: 9px; letter-spacing: -0.15px; display: flex; justify-content: space-between; align-items: center; }
 .detail-item-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
 .detail-item-card { border: 1px solid rgba(25,25,112,0.16); border-radius: 11px; background: #fbfcff; padding: 11px 12px; }
-.detail-product { font-size: 13px; font-weight: 900; color: #111827; line-height: 1.3; word-break: break-word; }
+.detail-product { font-size: 13px; font-weight: 900; color: #111827; line-height: 1.3; word-break: break-word; display: flex; align-items: center; gap: 6px; }
 .detail-item-sub { font-size: 10.5px; font-weight: 750; color: #6b7280; margin-top: 3px; }
 .detail-row-actions { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
 .detail-item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 9px; }
@@ -64,6 +69,27 @@ const css = `
 .detail-alert { border-radius: 9px; padding: 8px 10px; font-size: 11px; font-weight: 850; border: 1px solid transparent; margin-bottom: 10px; }
 .detail-alert-success { background: #ecfdf3; border-color: #bbf7d0; color: #166534; }
 .detail-alert-error { background: #fff1f2; border-color: #fecdd3; color: #be123c; }
+
+/* Status Badge */
+.status-badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.status-draft { background: #fef3c7; color: #ca8a04; border: 1px solid #fde047; }
+.status-pending { background: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd; }
+.status-selesai { background: #dcfce7; color: #16a34a; border: 1px solid #bbf7d0; }
+
+/* Form inputs for Draft */
+.draft-bb-input { width: 100%; border-radius: 6px; border: 1px solid #e2e7f0; padding: 4px 8px; font-size: 10.5px; font-weight: 750; outline: none; margin-top: 6px; }
+.draft-bb-input:focus { border-color: var(--primary); }
+.draft-bb-input:disabled { background: #f3f4f6; color: #9ca3af; }
+
+/* --- BUTTONS MIRIP OUTBOUND --- */
+.inbound-actions { display: flex; flex-direction: column; gap: 7px; }
+.inbound-delete-all { border: 0; width: 100%; min-height: 35px; border-radius: 9px; background: #f43f3a; color: #FFFFFF; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
+.inbound-delete-all:hover { filter: brightness(1.03); }
+.inbound-delete-all:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+.inbound-step-btn { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 35px; padding: 0 18px; border-radius: 9px; border: 0; background: #f3f4f6; color: #9ca3af; font-size: 12px; font-weight: 900; cursor: not-allowed; white-space: nowrap; }
+.inbound-step-next { background: var(--primary, #1a56db); color: #fff; cursor: pointer; }
+.inbound-step-next:hover { filter: brightness(1.08); }
+
 .inbound-dialog { border: 0; border-radius: 12px; padding: 0; width: min(440px, calc(100% - 30px)); max-height: 85vh; overflow: hidden; box-shadow: 0 10px 30px rgba(15,23,42,0.15); background: #FFFFFF; }
 .dialog-box { padding: 20px 24px; max-height: 85vh; overflow-y: auto; }
 .dialog-title { font-size: 16px; font-weight: 700; margin: 0 0 8px; color: var(--text-main); }
@@ -83,6 +109,7 @@ const css = `
 .dialog-btn-save:hover { filter: brightness(1.05); }
 .dialog-danger { background: #ef4444; color: #FFFFFF; }
 .dialog-danger:hover { filter: brightness(1.05); }
+
 .inbound-picker-wrap { position: relative; }
 .inbound-picker-button { width: 100%; min-height: 36px; border-radius: 8px; border: 1px solid #dedede; background: #fbfcff; padding: 8px 12px; font-size: 13px; font-weight: 500; color: var(--text-main); outline: none; display: flex; align-items: center; justify-content: space-between; gap: 7px; cursor: pointer; }
 .inbound-picker-panel { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 3050; background: #FFFFFF; border: 1px solid #e2e7f0; border-radius: 8px; box-shadow: 0 10px 24px rgba(15,23,42,0.12); padding: 8px; }
@@ -92,7 +119,7 @@ const css = `
 .inbound-option { border: 0; outline: 0; width: 100%; text-align: left; background: #FFFFFF; color: var(--text-main); border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600; display: flex; align-items: flex-start; cursor: pointer; }
 .inbound-option:hover, .inbound-option.selected { background: var(--primary-soft); color: var(--primary); }
 .inbound-empty-result { padding: 8px; color: var(--text-soft); font-size: 12px; font-weight: 600; text-align: center; }
-.d-none { display: none !important; }
+
 .sailendra-toast-wrap { position: fixed; top: 18px; right: 18px; z-index: 3000; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); pointer-events: none; }
 .sailendra-toast { pointer-events: auto; background: #FFFFFF; border: 1px solid #e5e7eb; border-left: 5px solid var(--primary); border-radius: 14px; box-shadow: 0 16px 34px rgba(15,23,42,0.16); padding: 12px 13px; display: flex; align-items: flex-start; gap: 10px; }
 .sailendra-toast-icon { width: 28px; height: 28px; border-radius: 999px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; }
@@ -120,6 +147,7 @@ export default function InboundDetailPage() {
 
   const tanggal = decodeURIComponent(params.tanggal || "");
   const driver = searchParams.get("driver") || "";
+  const shipment = searchParams.get("shipment") || "";
   const lok = searchParams.get("lok") || "";
 
   const [rows, setRows] = useState<BmRow[]>([]);
@@ -131,6 +159,9 @@ export default function InboundDetailPage() {
   const [showItem, setShowItem] = useState<BmRow | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmOne, setConfirmOne] = useState<BmRow | null>(null);
+
+  // State untuk Draft -> Pending (Submit BB)
+  const [draftBb, setDraftBb] = useState<Record<number, string>>({});
 
   // header form state
   const [hTanggal, setHTanggal] = useState("");
@@ -186,12 +217,69 @@ export default function InboundDetailPage() {
 
   if (!session || !loaded) return null;
 
-  const items = rows.filter((r) => ((r.nama_driver || "").trim() || "Tanpa nama driver") === driver)
-    .sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
+  const items = rows.filter((r) => {
+    const sameDriver = ((r.nama_driver || "").trim() || "Tanpa nama driver") === driver;
+    const sameShip = !shipment || (r.shipment_id || "") === shipment;
+    return sameDriver && sameShip;
+  }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
   const first = items[0];
   const isSupervisor = ["Supervisor", "SuperAdmin"].includes(session.user.role);
   const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
+
+  // Cek Status Group
+  const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
+  const hasPending = items.some(i => (i.status || "").toLowerCase() === "pending");
+  const isSelesaiAll = items.every(i => (i.status || "selesai").toLowerCase() === "selesai");
+
+  // ==========================================
+  // FUNGSI MULTI-STEP INBOUND (DRAFT -> PENDING -> SELESAI)
+  // ==========================================
+  const submitDraftBooking = async () => {
+    setBusy(true);
+    try {
+      const payloadItems = items.filter(i => (i.status || "").toLowerCase() === "draft").map(i => {
+         const isRej = (i.tipe_penerimaan || "").toUpperCase() === "REJECT";
+         const noBatch = PRODUK_TANPA_BATCH.includes(angka(i.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(i.nama_produk || "");
+         
+         const bb = isRej || noBatch ? "9999-12-31" : (draftBb[i.id_barang_masuk] || "");
+         if (!bb) throw new Error(`Best before untuk ${i.nama_produk} belum diisi.`);
+         
+         return { id_barang_masuk: i.id_barang_masuk, best_before: bb };
+      });
+      
+      await apiPost('/barang-masuk/submit', {
+         shipment_id: first.shipment_id || "",
+         id_pengguna_lokasi: aktifLokasiId(session),
+         items: payloadItems
+      });
+      
+      notify("success", "Booking lokasi berhasil! Status berubah menjadi Pending.");
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e: any) {
+      notify("error", e.message || "Gagal melakukan submit booking.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const konfirmasiPending = async () => {
+    setBusy(true);
+    try {
+      await apiPost('/barang-masuk/konfirmasi', {
+         shipment_id: first.shipment_id || "",
+         id_barang_masuk: first.shipment_id ? 0 : first.id_barang_masuk,
+         id_pengguna_lokasi: aktifLokasiId(session)
+      });
+      notify("success", "Konfirmasi berhasil! Stok telah fisik ditambahkan.");
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e: any) {
+      notify("error", e.message || "Gagal melakukan konfirmasi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  // ==========================================
 
   const openHeader = () => {
     if (!first) return;
@@ -340,96 +428,129 @@ export default function InboundDetailPage() {
           <>
             <div className="detail-stat-grid">
               <div className="detail-stat detail-stat-wide">
-                <div className="detail-stat-label">Produk</div>
-                <div className="detail-stat-value">{norm(first.nama_produk) || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Jumlah</div>
-                <div className="detail-stat-value">{first.jumlah} {norm(first.satuan)}</div>
+                <div className="detail-stat-label">Shipment ID</div>
+                <div className="detail-stat-value">{norm(first.shipment_id) || "-"}</div>
               </div>
               <div className="detail-stat">
                 <div className="detail-stat-label">Tanggal Masuk</div>
                 <div className="detail-stat-value">{tanggal || "-"}</div>
               </div>
               <div className="detail-stat">
-                <div className="detail-stat-label">Tipe Penerimaan</div>
-                <div className="detail-stat-value">{norm(first.tipe_penerimaan) || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Lokasi Block</div>
-                <div className="detail-stat-value">{norm(first.lokasi_block) || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Best Before</div>
-                <div className="detail-stat-value">{bbDisplay(norm(first.best_before), norm(first.tipe_penerimaan)) || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">No Mobil</div>
-                <div className="detail-stat-value">{norm(first.no_mobil) || "-"}</div>
+                <div className="detail-stat-label">Status</div>
+                <div className="detail-stat-value">
+                  <span className={`status-badge status-${(hasDraft ? 'draft' : hasPending ? 'pending' : 'selesai')}`}>
+                    {hasDraft ? "Draft" : hasPending ? "Pending" : "Selesai"}
+                  </span>
+                </div>
               </div>
               <div className="detail-stat detail-stat-wide">
                 <div className="detail-stat-label">Asal Pabrik</div>
                 <div className="detail-stat-value">{norm(first.asal_pabrik) || "-"}</div>
               </div>
               <div className="detail-stat">
-                <div className="detail-stat-label">Batch</div>
-                <div className="detail-stat-value">{norm(first.batch) || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">No DN</div>
-                <div className="detail-stat-value">{norm(first.no_dn) || "-"}</div>
+                <div className="detail-stat-label">No Mobil</div>
+                <div className="detail-stat-value">{norm(first.no_mobil) || "-"}</div>
               </div>
               <div className="detail-stat">
                 <div className="detail-stat-label">Nama Driver</div>
                 <div className="detail-stat-value">{driver || "-"}</div>
               </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Catatan</div>
-                <div className="detail-stat-value">{norm(first.catatan) || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Dibuat oleh</div>
-                <div className="detail-stat-value">{norm(first.dibuat_oleh) || "-"}</div>
-              </div>
             </div>
 
             {isSupervisor && (
-              <div style={{ marginTop: 8, marginBottom: 16 }}>
-                <button type="button" className="dialog-btn dialog-danger" style={{ width: "100%" }}
+              <div className="inbound-actions" style={{ marginTop: 8 }}>
+                <button type="button" className="inbound-delete-all"
                   onClick={() => setConfirmAll(true)}>
-                  <i className="bi bi-trash3-fill" style={{ marginRight: 6 }}></i>
-                  Hapus Semua Item ({items.length})
+                  <i className="bi bi-trash"></i>
+                  <span>Hapus Semua ({items.length})</span>
                 </button>
               </div>
             )}
 
-            <div className="detail-item-title">Item</div>
-            <div className="detail-item-list">
-              {items.map((item) => (
-                <div key={item.id_barang_masuk} className="detail-item-card">
-                  <div className="detail-item-top">
-                    <div style={{ minWidth: 0 }}>
-                      <div className="detail-product">{norm(item.nama_produk) || "-"}</div>
-                      <div className="detail-item-sub">Jumlah: {item.jumlah} {norm(item.satuan)}</div>
-                    </div>
-                    {isSupervisor && (
-                      <div className="detail-row-actions">
-                        <button type="button" className="detail-icon-btn" title="Edit item" onClick={() => openItem(item)}>
-                          <i className="bi bi-pencil-fill"></i>
-                        </button>
-                        <button type="button" className="detail-icon-btn detail-icon-danger" title="Hapus item" onClick={() => setConfirmOne(item)}>
-                          <i className="bi bi-trash3-fill"></i>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+            {/* ACTION BUTTONS (SUBMIT / KONFIRMASI) di atas Daftar Item */}
+            <div className="inbound-actions" style={{ marginTop: 8 }}>
+              {hasDraft && (
+                <button type="button" className="inbound-step-btn inbound-step-next" disabled={busy} onClick={submitDraftBooking}>
+                  {busy ? <i className="bi bi-arrow-clockwise stock-loader"></i> : <i className="bi bi-send-check-fill"></i>}
+                  {busy ? "Memproses..." : "Submit Booking (Cari Lokasi)"}
+                </button>
+              )}
+
+              {hasPending && !hasDraft && (
+                <button type="button" className="inbound-step-btn inbound-step-next" disabled={busy} onClick={konfirmasiPending}>
+                  {busy ? <i className="bi bi-arrow-clockwise stock-loader"></i> : <i className="bi bi-check2-all"></i>}
+                  {busy ? "Mengonfirmasi..." : "Konfirmasi & Selesai"}
+                </button>
+              )}
             </div>
+
           </>
         )}
       </div>
 
+      {/* ITEM LIST CARD TERPISAH (seperti outbound) */}
+      {!!items.length && (
+      <div className="inbound-card" style={{ padding: 12 }}>
+        <div className="detail-item-title">
+          Daftar Item
+        </div>
+
+        <div className="detail-item-list">
+          {items.map((item) => {
+            const itemStatus = (item.status || "selesai").toLowerCase();
+            const isItemReject = (item.tipe_penerimaan || "").toUpperCase() === "REJECT";
+            const noBatch = PRODUK_TANPA_BATCH.includes(angka(item.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(item.nama_produk || "");
+
+            return (
+              <div key={item.id_barang_masuk} className="detail-item-card">
+                <div className="detail-item-top">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="detail-product">
+                      {norm(item.nama_produk) || "-"}
+                      {itemStatus === 'draft' && <i className="bi bi-hourglass-split" style={{color: '#ca8a04', fontSize: 12}}></i>}
+                      {itemStatus === 'pending' && <i className="bi bi-geo-fill" style={{color: '#0284c7', fontSize: 12}}></i>}
+                      {itemStatus === 'selesai' && <i className="bi bi-check-circle-fill" style={{color: '#16a34a', fontSize: 12}}></i>}
+                    </div>
+                    <div className="detail-item-sub">
+                      Jumlah: {item.jumlah} {norm(item.satuan)} 
+                      {itemStatus !== 'draft' && <><br/>Lokasi: {norm(item.lokasi_block) || "-"}</>}
+                    </div>
+                  </div>
+                  
+                  {isSupervisor && (
+                    <div className="detail-row-actions">
+                      <button type="button" className="detail-icon-btn" title="Edit item" onClick={() => openItem(item)}>
+                        <i className="bi bi-pencil-fill"></i>
+                      </button>
+                      <button type="button" className="detail-icon-btn detail-icon-danger" title="Hapus item" onClick={() => setConfirmOne(item)}>
+                        <i className="bi bi-trash3-fill"></i>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* INPUT BEST BEFORE KHUSUS STATUS DRAFT */}
+                {itemStatus === 'draft' && (
+                  <div style={{ marginTop: 8, borderTop: '1px dashed #dbe3f5', paddingTop: 8 }}>
+                    <label className="detail-stat-label">Isi Best Before</label>
+                    <input 
+                      type={(isItemReject || noBatch) ? "text" : "date"} 
+                      className="draft-bb-input"
+                      value={(isItemReject || noBatch) ? "9999/99/99" : (draftBb[item.id_barang_masuk] || "")} 
+                      disabled={isItemReject || noBatch}
+                      placeholder={noBatch ? "Produk Tanpa BB" : "Pilih Best Before"}
+                      onChange={(e) => setDraftBb({...draftBb, [item.id_barang_masuk]: e.target.value})} 
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      )}
+
+      {/* --- DIALOG EDIT HEADER --- */}
       {showHeader && first && (
         <dialog open className="inbound-dialog">
           <div className="dialog-box">
@@ -452,11 +573,6 @@ export default function InboundDetailPage() {
                 <label>Nama Driver</label>
                 <input type="text" value={hDriver} onChange={(e) => setHDriver(e.target.value)} />
               </div>
-              <div className="dialog-field">
-                <label>Best Before</label>
-                <input type="date" value={hBestBefore} onChange={(e) => setHBestBefore(e.target.value)}
-                  readOnly={(first.tipe_penerimaan || "").toUpperCase() === "REJECT"} />
-              </div>
               <div className="dialog-field dialog-field-full">
                 <label>Asal Pabrik</label>
                 <PlantPicker plants={plants} value={hAsal} onChange={setHAsal} />
@@ -474,6 +590,7 @@ export default function InboundDetailPage() {
         </dialog>
       )}
 
+      {/* --- DIALOG EDIT ITEM --- */}
       {showItem && (
         <dialog open className="inbound-dialog">
           <div className="dialog-box">
@@ -494,7 +611,7 @@ export default function InboundDetailPage() {
                 <label>Best Before</label>
                 <input type={(showItem.tipe_penerimaan || "").toUpperCase() === "REJECT" ? "text" : "date"}
                   value={(showItem.tipe_penerimaan || "").toUpperCase() === "REJECT" ? "9999/99/99" : iBestBefore}
-                  readOnly={(showItem.tipe_penerimaan || "").toUpperCase() === "REJECT"}
+                  readOnly={(showItem.tipe_penerimaan || "").toUpperCase() === "REJECT" || showItem.status.toLowerCase() === "selesai"}
                   onChange={(e) => setIBestBefore(e.target.value)} />
               </div>
             </div>
@@ -506,6 +623,7 @@ export default function InboundDetailPage() {
         </dialog>
       )}
 
+      {/* --- DIALOG HAPUS --- */}
       {confirmAll && (
         <ConfirmDialog title="Hapus Semua Item"
           message={`Hapus semua item inbound (<strong>${items.length}</strong>)?`}

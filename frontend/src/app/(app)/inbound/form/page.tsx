@@ -119,6 +119,7 @@ export default function InboundFormPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [tanggal, setTanggal] = useState(today);
   const [tipe, setTipe] = useState("Primary");
+  const [shipmentId, setShipmentId] = useState(""); // --- TAMBAHAN SHIPMENT ID ---
   const [noDn, setNoDn] = useState("");
   const [noMobil, setNoMobil] = useState("");
   const [namaDriver, setNamaDriver] = useState("");
@@ -241,7 +242,7 @@ export default function InboundFormPage() {
     return bb && kodePlant ? bb + kodePlant : "";
   };
 
-const simpan = async () => {
+  const simpan = async () => {
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
     if (tipe !== "Secondary" && tipe !== "REJECT" && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     if (norm(noMobil) === "") { notify("error", "No Mobil wajib diisi."); return; }
@@ -252,8 +253,6 @@ const simpan = async () => {
     const failed: ResultItem[] = [];
     const waktuMulai = `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`;
 
-    // FIX BUG 1: Urutkan proses simpan dari expired paling lama (terjauh) ke paling dekat.
-    // Yang paling lama akan diproses duluan dan masuk ke deep paling belakang.
     const processingOrder = items.map((it, idx) => ({ it, idx })).sort((a, b) => {
       const tA = new Date(a.it.best_before && a.it.best_before !== "-" ? a.it.best_before : "9999-12-31").getTime();
       const tB = new Date(b.it.best_before && b.it.best_before !== "-" ? b.it.best_before : "9999-12-31").getTime();
@@ -272,8 +271,6 @@ const simpan = async () => {
       const batch = batchPreview(it);
 
       try {
-        // FIX BUG 2: Jangan pakai state it.alokasi yang usang. 
-        // Selalu tarik ulang rekomendasi terbaru dari backend di tiap iterasi.
         const rRec = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; konversi?: KonversiLine[]; message?: string }>(
           "/barang-masuk/preview",
           {
@@ -303,6 +300,7 @@ const simpan = async () => {
         }
 
         const r = await apiPost<{ lokasi_akhir?: { line: string; qty: number }[]; lokasi_akhir_str?: string }>("/barang-masuk", {
+          shipment_id: shipmentId, // --- TAMBAHAN SHIPMENT ID KE PAYLOAD ---
           id_pengguna: session.user.id_pengguna,
           id_pengguna_lokasi: idPenggunaLokasi,
           id_produk: it.id_produk,
@@ -403,6 +401,7 @@ const simpan = async () => {
               <i className="bi bi-chevron-down inbound-select-icon"></i>
             </div>
           </div>
+          <input type="text" className="inbound-input" value={shipmentId} onChange={(e) => setShipmentId(e.target.value)} placeholder="Shipment ID (Opsional, otomatis jika kosong)" />
           <input type="text" className="inbound-input" value={noDn} onChange={(e) => setNoDn(e.target.value)}
             placeholder="No DN" disabled={tipe === "Secondary" || tipe === "REJECT"} />
           <input type="text" className="inbound-input" value={noMobil} onChange={(e) => setNoMobil(e.target.value)} placeholder="No Mobil" />
