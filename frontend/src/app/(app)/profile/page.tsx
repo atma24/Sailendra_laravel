@@ -86,7 +86,19 @@ export default function ProfilePage() {
     }
 
     if (isMultiRole(role)) {
-      apiGet<Loc[]>("/pengguna-lokasi").then((r) => setLocs(r.data || [])).catch(() => {});
+      apiGet<Loc[]>("/pengguna-lokasi").then((r) => {
+        const list = r.data || [];
+        setLocs(list);
+        // Init selected dari lokasi aktif pada session agar dropdown sesuai
+        setSelected((prev) => {
+          if (prev.size > 0) return prev;
+          const aktif = session.lokasi;
+          if (Array.isArray(aktif)) {
+            return new Set(list.filter((l) => aktif.includes(l.id_pengguna_lokasi)).map((l) => l.id_pengguna_lokasi));
+          }
+          return prev;
+        });
+      }).catch(() => {});
     }
   }, [session]);
 

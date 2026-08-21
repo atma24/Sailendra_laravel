@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import { aktifLokasiId, useSession, type Session } from "@/lib/auth";
+import { aktifLokasiId, isMultiRole, useSession, type Session } from "@/lib/auth";
 
 type Pengguna = { id_pengguna: number; id_pengguna_lokasi: string | null; nama_pengguna_lokasi: string | null; username: string; role: string; status: string };
 type Loc = { id_pengguna_lokasi: string; nama_pengguna_lokasi: string };
@@ -47,6 +47,8 @@ export default function UserFormPage({ editId }: { editId?: number }) {
   const isEdit = !!editId && editId > 0;
 
   const [lokasiName, setLokasiName] = useState("");
+  const [lokasiOptions, setLokasiOptions] = useState<Loc[]>([]);
+  const [lokasiTerpilih, setLokasiTerpilih] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("Checker");
@@ -56,25 +58,51 @@ export default function UserFormPage({ editId }: { editId?: number }) {
 
   useEffect(() => {
     if (!session) return;
-    const id = aktifLokasiId(session);
-    if (id) {
-      apiGet<Loc[]>(`/pengguna-lokasi?id_pengguna_lokasi=${id}`)
-        .then((r) => { const l = (r.data || [])[0]; if (l) setLokasiName(l.nama_pengguna_lokasi); })
+    const multi = isMultiRole(session.user.role);
+
+    if (multi) {
+      // SuperAdmin/Support: bisa memilih lokasi dari daftar semua lokasi
+      apiGet<Loc[]>("/pengguna-lokasi")
+        .then((r) => {
+          const list = r.data || [];
+          setLokasiOptions(list);
+          if (!isEdit) {
+            const awal = aktifLokasiId(session);
+            setLokasiTerpilih(awal && list.some((l) => String(l.id_pengguna_lokasi) === String(awal)) ? String(awal) : "");
+          } else {
+            setLokasiTerpilih(String(aktifLokasiId(session) || ""));
+          }
+        })
         .catch(() => {});
+    } else {
+      const id = aktifLokasiId(session);
+      if (id) {
+        apiGet<Loc[]>(`/pengguna-lokasi?id_pengguna_lokasi=${id}`)
+          .then((r) => { const l = (r.data || [])[0]; if (l) { setLokasiName(l.nama_pengguna_lokasi); setLokasiTerpilih(String(l.id_pengguna_lokasi)); } })
+          .catch(() => {});
+      }
     }
     if (isEdit) {
       apiGet<Pengguna[]>(`/pengguna?id_pengguna=${editId}`)
         .then((r) => {
           const u = (r.data || [])[0];
-          if (u) { setUsername(u.username); setRole(u.role); setStatus(u.status); }
+          if (u) {
+            setUsername(u.username); setRole(u.role); setStatus(u.status);
+            if (u.id_pengguna_lokasi) setLokasiTerpilih(String(u.id_pengguna_lokasi));
+          }
         })
         .catch((e) => setErr(e instanceof Error ? e.message : "Gagal memuat data"));
     }
   }, [session, isEdit, editId]);
 
   if (!session) return null;
-  const activeLocId = aktifLokasiId(session) || "-";
-  const lokasiTampil = lokasiName ? `${activeLocId} - ${lokasiName}` : activeLocId;
+  const multi = isMultiRole(session.user.role);
+  const activeLocId = lokasiTerpilih || aktifLokasiId(session) || "-";
+  const lokasiTampil = lokasiName
+    ? `${activeLocId} - ${lokasiName}`
+    : lokasiOptions.find((l) => String(l.id_pengguna_lokasi) === String(activeLocId))?.nama_pengguna_lokasi
+      ? `${activeLocId} - ${lokasiOptions.find((l) => String(l.id_pengguna_lokasi) === String(activeLocId))?.nama_pengguna_lokasi}`
+      : activeLocId;
 
   const save = async () => {
     setErr("");
@@ -119,7 +147,18 @@ export default function UserFormPage({ editId }: { editId?: number }) {
       <div className="user-form-box">
         <div className="form-group-custom">
           <label>Lokasi Pengguna</label>
-          <div className="readonly-field">{lokasiTampil}</div>
+          {multi ? (
+            <select className="user-select-input" value={activeLocId} onChange={(e) => setLokasiTerpilih(e.target.value)}>
+              <option value="">Pilih Lokasi</option>
+              {lokasiOptions.map((l) => (
+                <option key={l.id_pengguna_lokasi} value={l.id_pengguna_lokasi}>
+                  {l.id_pengguna_lokasi} - {l.nama_pengguna_lokasi}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="readonly-field">{lokasiTampil}</div>
+          )}
         </div>
 
         <div className="form-group-custom">

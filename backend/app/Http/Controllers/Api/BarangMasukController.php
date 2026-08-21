@@ -159,11 +159,13 @@ class BarangMasukController extends Controller
             return $this->fail('Field wajib: id_pengguna_lokasi');
         }
 
-        $idPenggunaLokasiUser = DB::table('pengguna')->where('id_pengguna', $idPengguna)->value('id_pengguna_lokasi');
-        if ($idPenggunaLokasiUser === null) {
+        $penggunaRow = DB::table('pengguna')->where('id_pengguna', $idPengguna)->first();
+        if (! $penggunaRow) {
             return $this->fail('Pengguna tidak ditemukan.');
         }
-        if (trim((string) $idPenggunaLokasiUser) !== $idPenggunaLokasi) {
+        // Role multi-lokasi (SuperAdmin/Support) boleh transaksi di lokasi mana pun
+        $isMultiLokasi = in_array(strtolower(trim((string) $penggunaRow->role)), ['superadmin', 'support'], true);
+        if (! $isMultiLokasi && trim((string) $penggunaRow->id_pengguna_lokasi) !== $idPenggunaLokasi) {
             return $this->fail('Lokasi pengguna tidak sesuai dengan lokasi transaksi.', 403);
         }
 
