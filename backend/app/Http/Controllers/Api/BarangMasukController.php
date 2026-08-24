@@ -52,7 +52,8 @@ class BarangMasukController extends Controller
                 'bm.id_pengguna', 'u.username AS dibuat_oleh', 'bm.id_produk', 'bm.nama_produk',
                 'bm.jumlah', 'bm.satuan', 'bm.tanggal_masuk', 'bm.tipe_penerimaan', 'bm.best_before',
                 'bm.batch', 'bm.asal_pabrik', 'bm.no_dn', 'bm.nama_driver', 'bm.no_mobil',
-                'bm.shipment_id', 'bm.catatan', 'bm.lokasi_block', 'bm.created_at', 'bm.status',
+                'bm.shipment_id', 'bm.catatan', 'bm.lokasi_block', 'bm.created_at', 'bm.status','bm.waktu_mulai_input', 
+                'bm.durasi_detik',
                 DB::raw('COALESCE(sg.jumlah_sisa,0) AS stok_sisa')
             );
 
@@ -567,19 +568,19 @@ class BarangMasukController extends Controller
             return $this->fail('File Excel kosong atau tidak bisa dibaca.');
         }
 
-        // =========================================================================
-        // PARSING: Judul kolom ada di baris 13 (Excel), data mulai dari baris 14.
-        // Baris 1-12 berisi judul/meta dokumen -> DIBUANG.
-        // Catatan: bacaFileSpreadsheet menjadikan baris 1 sebagai header awal,
-        // sehingga $rowsData[0] = baris 2 Excel. Maka:
-        //   baris 13 Excel -> $rowsData[11] (judul kolom)
-        //   baris 14 Excel -> $rowsData[12] (awal data)
-        // =========================================================================
-        $headerRow = $rowsData[11] ?? [];
-        $dataStartIndex = 12;
+        // Cari Header Otomatis (baris yang mengandung 'Shipment Id')
+        $headerRow = [];
+        $dataStartIndex = 0;
+        foreach ($rowsData as $index => $row) {
+            if (in_array('Shipment Id', $row, true)) {
+                $headerRow = $row;
+                $dataStartIndex = $index + 1;
+                break;
+            }
+        }
 
         if (empty($headerRow)) {
-            return $this->fail('Format tidak dikenali. Baris judul kolom (baris 13) tidak ditemukan.');
+            return $this->fail('Format tidak dikenali. Kolom "Shipment Id" tidak ditemukan.');
         }
 
         $colMap = [];
@@ -594,7 +595,11 @@ class BarangMasukController extends Controller
         $idxShipment = $colMap['Shipment Id'] ?? -1;
         $idxProdukId = $colMap['Material Id'] ?? -1;
         $idxProdukDesc = $colMap['Material Desc'] ?? -1;
-        $idxAsal = $colMap['Source Name'] ?? -1;
+        
+        // --- PERBAIKAN: MAPPING SOURCE ID ---
+        $idxAsalId = $colMap['Source Id'] ?? -1; 
+        $idxAsalName = $colMap['Source Name'] ?? -1;
+        
         $idxTransporter = $colMap['Actual Transporter Name'] ?? -1;
         $idxQty = $colMap['Actual Quantity'] ?? -1;
         $idxDate = $colMap['Actual PickUp Date'] ?? -1;
@@ -636,14 +641,19 @@ class BarangMasukController extends Controller
                     }
                 }
                 if (!$found) {
-                    $countUnmapped++; // Produk tidak ada di DB, skip dan catat sebagai peringatan
+                    $countUnmapped++; 
                     continue; 
                 }
             }
             $produk = $mapProduk[$namaProdukExcel];
 
-            // Assign data dari kolom kuning
-            $asalPabrik = $idxAsal >= 0 ? trim((string) ($data[$idxAsal] ?? '')) : 'Pabrik';
+            // --- PERBAIKAN: GABUNGKAN SOURCE ID DAN SOURCE NAME ---
+            $asalId = $idxAsalId >= 0 ? trim((string) ($data[$idxAsalId] ?? '')) : '';
+            $asalName = $idxAsalName >= 0 ? trim((string) ($data[$idxAsalName] ?? '')) : 'Pabrik';
+            
+            // Outputnya akan jadi "9018 - 9000 ID CIHERANG PLANT TIV"
+            $asalPabrik = ($asalId !== '') ? $asalId . ' - ' . $asalName : $asalName;
+            
             $transporter = $idxTransporter >= 0 ? trim((string) ($data[$idxTransporter] ?? '')) : '-';
             $noDn = $idxDn >= 0 ? trim((string) ($data[$idxDn] ?? '')) : '';
             $truckType = $idxTruck >= 0 ? trim((string) ($data[$idxTruck] ?? '')) : '-';
@@ -665,7 +675,7 @@ class BarangMasukController extends Controller
                     'id_pengguna' => $idPengguna,
                     'id_pengguna_lokasi' => $idPenggunaLokasi,
                     'tanggal_masuk' => $tanggalMasuk,
-                    'asal_pabrik' => $asalPabrik,
+                    'asal_pabrik' => $asalPabrik, // <-- Disimpan dalam format komplit (ID - Nama)
                     'no_dn' => $noDn,
                     'nama_driver' => $transporter,
                     'no_mobil' => $truckType,
@@ -705,7 +715,6 @@ class BarangMasukController extends Controller
         DB::beginTransaction();
         try {
             foreach ($grouped as $shipmentId => $payload) {
-                // Cek apakah Shipment ID sudah pernah diupload dan berstatus Selesai/Pending
                 $existing = DB::table('barang_masuk')
                     ->where('shipment_id', $shipmentId)
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
@@ -713,17 +722,15 @@ class BarangMasukController extends Controller
                     
                 if ($existing && in_array(strtolower($existing->status), ['selesai', 'pending'])) {
                     $skipped++;
-                    continue; // Skip, jangan ditimpa kalau sudah di-submit atau selesai
+                    continue; 
                 }
 
-                // Hapus Draft lama jika diupload ulang dengan file yang sama
                 DB::table('barang_masuk')
                     ->where('shipment_id', $shipmentId)
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                     ->where('status', 'Draft')
                     ->delete();
 
-                // Simpan item-item ke database sebagai DRAFT
                 foreach ($payload['items'] as $item) {
                     DB::table('barang_masuk')->insert([
                         'shipment_id' => $payload['shipment_id'],
@@ -740,7 +747,7 @@ class BarangMasukController extends Controller
                         'nama_driver' => $payload['nama_driver'],
                         'no_mobil' => $payload['no_mobil'],
                         'catatan' => $payload['catatan'],
-                        'status' => $payload['status'], // Set DRAFT
+                        'status' => $payload['status'], 
                         'created_at' => now(),
                     ]);
                 }
@@ -765,14 +772,31 @@ class BarangMasukController extends Controller
     // =========================================================================
     // SUBMIT DRAFT -> PENDING (Membuat Batch & Booking Lokasi)
     // =========================================================================
+   // =========================================================================
+    // SUBMIT DRAFT -> PENDING (Membuat Batch & Booking Lokasi)
+    // =========================================================================
     public function submitDraft(Request $request)
     {
         $shipmentId = trim((string) $request->input('shipment_id', ''));
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
-        
-        // Dari frontend akan dikirim array items yang berisi ID draft & Best Before-nya
-        // Contoh format: [['id_barang_masuk' => 1, 'best_before' => '2026-10-12'], ...]
         $itemsReq = $request->input('items', []); 
+
+        // --- TAMBAHAN TIMER ---
+        $waktuMulaiInput = trim((string) $request->input('waktu_mulai_input', ''));
+        $durasiDetik = $request->input('durasi_detik');
+        if ($durasiDetik !== null && (int)$durasiDetik < 0) {
+            $durasiDetik = null;
+        }
+
+        $waktuMulai = null;
+        if ($waktuMulaiInput !== '') {
+            $dtMulai = DateTime::createFromFormat('Y-m-d H:i:s', $waktuMulaiInput);
+            if (!$dtMulai) {
+                $dtMulai = DateTime::createFromFormat('Y-m-d\TH:i:s', $waktuMulaiInput);
+            }
+            $waktuMulai = $dtMulai ? $dtMulai->format('Y-m-d H:i:s') : null;
+        }
+        // ----------------------
 
         if ($shipmentId === '' || $idPenggunaLokasi === '' || empty($itemsReq)) {
             return $this->fail('shipment_id, id_pengguna_lokasi, dan items wajib diisi.');
@@ -795,16 +819,15 @@ class BarangMasukController extends Controller
                     ->where('shipment_id', $shipmentId)
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                     ->where('status', 'Draft')
-                    ->lockForUpdate() // Kunci row biar aman dari bentrok saat proses
+                    ->lockForUpdate()
                     ->first();
 
                 if (!$draft) {
-                    continue; // Skip jika data sudah bukan draft
+                    continue; 
                 }
 
-                // 1. Generate Batch Otomatis (BB + ID Plant Pabrik)
+                // 1. Generate Batch Otomatis
                 $idPlant = strtoupper(trim(explode('-', $draft->asal_pabrik, 2)[0]));
-                // Jika dari OTM tidak bawa kode unik pabrik, default ke 'PABRIK'
                 if ($idPlant === '' || $idPlant === 'PABRIK') {
                     $idPlant = 'PABRIK'; 
                 }
@@ -815,7 +838,6 @@ class BarangMasukController extends Controller
                 }
                 $batchBaru = $dt->format('ymd') . $idPlant;
 
-                // Override untuk produk REJECT atau TANPA BATCH (seperti Galon)
                 if (strtoupper($draft->tipe_penerimaan) === 'REJECT') {
                     $batchBaru = '999999' . $idPlant;
                     $bbReq = '9999-12-31';
@@ -825,7 +847,7 @@ class BarangMasukController extends Controller
                     $batchBaru = '-';
                 }
 
-                // 2. Cari Rekomendasi Lokasi (Alokasi Booking)
+                // 2. Cari Rekomendasi Lokasi
                 $auto = $this->rekomendasiAuto(
                     $idPenggunaLokasi, 
                     (int) $draft->id_produk, 
@@ -844,7 +866,7 @@ class BarangMasukController extends Controller
                     throw new Exception("Tidak ada alokasi lokasi kosong untuk {$draft->nama_produk}");
                 }
 
-                // 3. Simpan ke rencana_masuk_deep (Menge-booking kapasitas)
+                // 3. Simpan ke rencana_masuk_deep
                 foreach ($alokasi as $al) {
                     DB::table('rencana_masuk_deep')->insert([
                         'id_barang_masuk' => $draft->id_barang_masuk,
@@ -858,23 +880,32 @@ class BarangMasukController extends Controller
                 }
 
                 // 4. Update Header barang_masuk jadi Pending
-                // Menggabungkan nama-nama block/line sebagai text lokasi_block sementara
                 $kumpulanLokasi = [];
                 foreach ($alokasi as $al) {
                     $kumpulanLokasi[] = $al['kode_block'] . '-' . $al['nomor_line'];
                 }
                 $lokasiAkhirStr = implode(', ', array_unique($kumpulanLokasi));
 
+                // --- UPDATE DENGAN TIMER ---
+                $updateData = [
+                    'status' => 'Pending',
+                    'best_before' => $bbReq,
+                    'batch' => $batchBaru,
+                    'batch_sekarang' => $batchBaru,
+                    'lokasi_block' => $lokasiAkhirStr,
+                    'diperbarui_pada' => now()
+                ];
+
+                if ($waktuMulai !== null) {
+                    $updateData['waktu_mulai_input'] = DB::raw("COALESCE(waktu_mulai_input, '{$waktuMulai}')");
+                }
+                if ($durasiDetik !== null) {
+                    $updateData['durasi_detik'] = (int)$durasiDetik;
+                }
+
                 DB::table('barang_masuk')
                     ->where('id_barang_masuk', $draft->id_barang_masuk)
-                    ->update([
-                        'status' => 'Pending',
-                        'best_before' => $bbReq,
-                        'batch' => $batchBaru,
-                        'batch_sekarang' => $batchBaru,
-                        'lokasi_block' => $lokasiAkhirStr,
-                        'diperbarui_pada' => now()
-                    ]);
+                    ->update($updateData);
             }
 
             if ($insertedRencana === 0) {
@@ -892,11 +923,31 @@ class BarangMasukController extends Controller
     // =========================================================================
     // KONFIRMASI INBOUND (PENDING -> SELESAI & POTONG KAPASITAS)
     // =========================================================================
+    // =========================================================================
+    // KONFIRMASI INBOUND (PENDING -> SELESAI & POTONG KAPASITAS)
+    // =========================================================================
     public function konfirmasiInbound(Request $request)
     {
         $shipmentId = trim((string) $request->input('shipment_id', ''));
         $idBm = (int) $request->input('id_barang_masuk', 0);
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+
+        // --- TAMBAHAN TIMER ---
+        $waktuMulaiInput = trim((string) $request->input('waktu_mulai_input', ''));
+        $durasiDetik = $request->input('durasi_detik');
+        if ($durasiDetik !== null && (int)$durasiDetik < 0) {
+            $durasiDetik = null;
+        }
+
+        $waktuMulai = null;
+        if ($waktuMulaiInput !== '') {
+            $dtMulai = DateTime::createFromFormat('Y-m-d H:i:s', $waktuMulaiInput);
+            if (!$dtMulai) {
+                $dtMulai = DateTime::createFromFormat('Y-m-d\TH:i:s', $waktuMulaiInput);
+            }
+            $waktuMulai = $dtMulai ? $dtMulai->format('Y-m-d H:i:s') : null;
+        }
+        // ----------------------
 
         if ($idPenggunaLokasi === '') {
             return $this->fail('id_pengguna_lokasi wajib diisi.');
@@ -907,7 +958,6 @@ class BarangMasukController extends Controller
 
         DB::beginTransaction();
         try {
-            // 1. Ambil data barang masuk yang statusnya masih Pending
             $query = DB::table('barang_masuk')
                 ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                 ->where('status', 'Pending');
@@ -926,7 +976,6 @@ class BarangMasukController extends Controller
 
             $idsProses = $pendingItems->pluck('id_barang_masuk')->toArray();
 
-            // 2. Ambil rencana masuk (booking) beserta detail layout-nya (block & line)
             $rencana = DB::table('rencana_masuk_deep as r')
                 ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
                 ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
@@ -936,30 +985,25 @@ class BarangMasukController extends Controller
                 ->select('r.*', 'b.kode_block', 'ln.nomor_line')
                 ->get();
 
-            // 3. Proses pemindahan dari Rencana ke Stok Aktual
             foreach ($pendingItems as $item) {
-                // Ambil rencana khusus untuk item ini
                 $itemRencana = $rencana->where('id_barang_masuk', $item->id_barang_masuk);
                 
                 if ($itemRencana->isEmpty()) {
-                    continue; // Skip jika tidak ada data rencana
+                    continue; 
                 }
 
-                // Kelompokkan berdasarkan lokasi_block (Misal: A-1, B-2)
                 $groupedRencana = [];
                 foreach ($itemRencana as $r) {
                     $labelLine = strtoupper(trim($r->kode_block)) . '-' . $r->nomor_line;
                     $groupedRencana[$labelLine][] = $r;
                 }
 
-                // Insert ke tabel stok aktual
                 foreach ($groupedRencana as $labelLine => $details) {
                     $totalQtyLine = 0;
                     foreach ($details as $d) {
                         $totalQtyLine += $d->jumlah_rencana;
                     }
 
-                    // A. Buat header stok_gudang
                     $idStok = DB::table('stok_gudang')->insertGetId([
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_produk' => $item->id_produk,
@@ -973,7 +1017,6 @@ class BarangMasukController extends Controller
                         'created_at' => now(),
                     ]);
 
-                    // B. Buat detail lokasi di stok_gudang_deep
                     foreach ($details as $d) {
                         DB::table('stok_gudang_deep')->insert([
                             'id_pengguna_lokasi' => $idPenggunaLokasi,
@@ -989,15 +1032,23 @@ class BarangMasukController extends Controller
                 }
             }
 
-            // 4. Update Status Barang Masuk jadi Selesai
+            // 4. Update Status Barang Masuk & TIMER
+            $updateData = [
+                'status' => 'Selesai',
+                'diperbarui_pada' => now()
+            ];
+
+            if ($waktuMulai !== null) {
+                $updateData['waktu_mulai_input'] = DB::raw("COALESCE(waktu_mulai_input, '{$waktuMulai}')");
+            }
+            if ($durasiDetik !== null) {
+                $updateData['durasi_detik'] = (int)$durasiDetik;
+            }
+
             DB::table('barang_masuk')
                 ->whereIn('id_barang_masuk', $idsProses)
-                ->update([
-                    'status' => 'Selesai',
-                    'diperbarui_pada' => now()
-                ]);
+                ->update($updateData);
 
-            // 5. Hapus data rencana booking yang sudah diproses
             DB::table('rencana_masuk_deep')
                 ->whereIn('id_barang_masuk', $idsProses)
                 ->delete();
@@ -1314,6 +1365,12 @@ class BarangMasukController extends Controller
     public function update(Request $request)
     {
         $in = $request->all();
+        $aksi = strtolower(trim((string) ($in['aksi'] ?? '')));
+
+        // --- TAMBAHAN UNTUK FITUR TAMBAH ITEM BARU ---
+        if ($aksi === 'tambah_item') {
+            return $this->tambahItemInbound($in);
+        }
 
         $idBm = (int) ($in['id_barang_masuk'] ?? 0);
         $idProduk = (int) ($in['id_produk'] ?? 0);
@@ -3203,7 +3260,62 @@ class BarangMasukController extends Controller
 
         return ['ok' => true, 'kapasitas' => $rate];
     }
+    private function tambahItemInbound(array $in)
+    {
+        $idPenggunaLokasi = trim((string) ($in['id_pengguna_lokasi'] ?? ''));
+        $idPengguna = (int) ($in['id_pengguna'] ?? 0);
+        $idProduk = (int) ($in['id_produk'] ?? 0);
+        $jumlah = (int) ($in['jumlah'] ?? 0);
+        $satuan = trim((string) ($in['satuan'] ?? 'PCS'));
+        $shipmentId = trim((string) ($in['shipment_id'] ?? ''));
+        $idBmRef = (int) ($in['id_barang_masuk_ref'] ?? 0);
 
+        if ($idPenggunaLokasi === '' || $idProduk <= 0 || $jumlah <= 0) {
+            return $this->fail('Data item baru tidak lengkap.');
+        }
+
+        $namaProduk = DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk');
+        if (!$namaProduk) return $this->fail('Produk tidak ditemukan di database.');
+
+        // Cari referensi header truk dari item yang sudah ada
+        $query = DB::table('barang_masuk')->where('id_pengguna_lokasi', $idPenggunaLokasi);
+        if ($shipmentId !== '') {
+            $query->where('shipment_id', $shipmentId);
+        } else {
+            $query->where('id_barang_masuk', $idBmRef);
+        }
+        $ref = $query->first();
+
+        if (!$ref) return $this->fail('Referensi Inbound / Truk tidak ditemukan.');
+
+        DB::beginTransaction();
+        try {
+            $idBaru = DB::table('barang_masuk')->insertGetId([
+                'shipment_id' => $ref->shipment_id,
+                'id_pengguna_lokasi' => $idPenggunaLokasi,
+                'id_pengguna' => $idPengguna,
+                'id_produk' => $idProduk,
+                'nama_produk' => $namaProduk,
+                'jumlah' => $jumlah,
+                'satuan' => $satuan,
+                'tanggal_masuk' => $ref->tanggal_masuk,
+                'tipe_penerimaan' => $ref->tipe_penerimaan,
+                'asal_pabrik' => $ref->asal_pabrik,
+                'no_dn' => $ref->no_dn,
+                'nama_driver' => $ref->nama_driver,
+                'no_mobil' => $ref->no_mobil,
+                'catatan' => 'Tambah item susulan',
+                'status' => 'Draft', 
+                'created_at' => now(),
+            ]);
+
+            DB::commit();
+            return $this->ok(['id_barang_masuk' => $idBaru], 'Item baru berhasil ditambahkan sebagai Draft.');
+        } catch (Throwable $e) {
+            DB::rollBack();
+            return $this->fail($e->getMessage(), 500);
+        }
+    }
     private function whereNormalBlockActive(string $tipePenerimaan): \Closure
     {
         return function ($q) use ($tipePenerimaan) {

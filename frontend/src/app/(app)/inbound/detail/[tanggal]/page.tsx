@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+
+type Produk = { id_produk: number; nama_produk: string; satuan: string };
 
 type BmRow = {
   id_barang_masuk: number;
   id_pengguna_lokasi: string;
   id_pengguna: number;
   dibuat_oleh: string;
-  nama_produk: string;
   id_produk: number;
+  nama_produk: string;
   jumlah: number;
   satuan: string;
   tanggal_masuk: string;
@@ -26,8 +28,10 @@ type BmRow = {
   catatan: string;
   lokasi_block: string;
   stok_sisa: number;
-  status: string;      // --- TAMBAHAN BARU ---
-  shipment_id: string; // --- TAMBAHAN BARU ---
+  status: string;
+  shipment_id: string;
+  waktu_mulai_input?: string;
+  durasi_detik?: number;
 };
 
 type Plant = { id_plant: string; nama_plant: string };
@@ -37,67 +41,66 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const norm = (v: unknown) => String(v ?? "").trim();
-const bbDisplay = (bb: string, tipe: string) =>
-  bb === "9999-12-31" && tipe.toUpperCase() === "REJECT" ? "9999/99/99" : bb;
-
 const PRODUK_TANPA_BATCH = [10516938, 10516939];
 
 const css = `
-.inbound-page { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
-.inbound-card { background: #FFFFFF; border: 1px solid #e7ebf3; border-radius: 12px; box-shadow: none; }
-.detail-head { padding: 12px; }
-.detail-back-btn { min-height: 30px; border-radius: 8px; padding: 0 10px; background: #fbfcff; border: 1px solid #e2e7f0; color: var(--text-main); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 850; margin-bottom: 10px; }
-.detail-back-btn:hover { color: var(--primary); border-color: rgba(25,25,112,0.25); transform: translateY(-1px); }
-.detail-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 9px; }
-.detail-title { font-size: 13px; font-weight: 900; color: var(--text-main); letter-spacing: -0.15px; }
-.detail-action-btn, .detail-icon-btn { width: 27px; height: 27px; border: 0; background: transparent; color: #4b5563; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px; }
-.detail-action-btn:hover, .detail-icon-btn:hover { background: #f3f4f6; color: var(--primary); }
-.detail-icon-danger:hover { background: #fee2e2; color: #dc2626; }
-.detail-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 7px; }
-.detail-stat { border: 1px solid #edf0f6; background: #fbfcff; border-radius: 9px; padding: 8px 10px; min-height: 51px; display: flex; flex-direction: column; justify-content: center; }
-.detail-stat-wide { grid-column: span 2; }
-.detail-stat-label { font-size: 9.5px; color: #8b8fa3; font-weight: 850; margin-bottom: 4px; }
-.detail-stat-value { font-size: 11.5px; color: #111827; font-weight: 900; line-height: 1.25; word-break: break-word; }
-.detail-item-title { font-size: 13px; font-weight: 900; color: var(--text-main); margin-bottom: 9px; letter-spacing: -0.15px; display: flex; justify-content: space-between; align-items: center; }
-.detail-item-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
-.detail-item-card { border: 1px solid rgba(25,25,112,0.16); border-radius: 11px; background: #fbfcff; padding: 11px 12px; }
-.detail-product { font-size: 13px; font-weight: 900; color: #111827; line-height: 1.3; word-break: break-word; display: flex; align-items: center; gap: 6px; }
-.detail-item-sub { font-size: 10.5px; font-weight: 750; color: #6b7280; margin-top: 3px; }
-.detail-row-actions { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
-.detail-item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 9px; }
-.detail-empty { padding: 13px; color: var(--text-soft); font-size: 11px; font-weight: 850; }
-.detail-alert { border-radius: 9px; padding: 8px 10px; font-size: 11px; font-weight: 850; border: 1px solid transparent; margin-bottom: 10px; }
-.detail-alert-success { background: #ecfdf3; border-color: #bbf7d0; color: #166534; }
-.detail-alert-error { background: #fff1f2; border-color: #fecdd3; color: #be123c; }
+.inbound-detail-page { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
+.id-card { background: #FFFFFF; border: 1px solid #e7ebf3; border-radius: 12px; box-shadow: none; }
+.id-head { padding: 12px; }
+.id-back-btn { min-height: 30px; border-radius: 8px; padding: 0 10px; background: #fbfcff; border: 1px solid #e2e7f0; color: var(--text-main); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 850; margin-bottom: 10px; }
+.id-back-btn:hover { color: var(--primary); border-color: rgba(25,25,112,0.25); transform: translateY(-1px); }
+.id-detail-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 9px; }
+.id-section-title { font-size: 13px; font-weight: 900; color: var(--text-main); margin: 0; letter-spacing: -0.15px; }
+.id-icon-btn { width: 27px; height: 27px; border: 0; background: transparent; color: #4b5563; border-radius: 8px; display: inline-flex; justify-content: center; align-items: center; font-size: 12px; flex-shrink: 0; cursor: pointer; }
+.id-icon-btn:hover { background: #f3f4f6; color: var(--primary); }
+.id-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 7px; }
+.id-text-row { border: 1px solid #edf0f6; background: #fbfcff; border-radius: 9px; padding: 8px 10px; min-height: 51px; display: flex; flex-direction: column; justify-content: center; }
+.id-text-wide { grid-column: span 2; }
+.id-text-label { font-size: 9.5px; color: #8b8fa3; font-weight: 850; margin-bottom: 4px; line-height: 1.1; }
+.id-text-value { font-size: 11.5px; color: #111827; font-weight: 900; line-height: 1.25; word-break: break-word; }
+.id-actions { display: flex; flex-direction: column; gap: 7px; }
+.id-delete-all { border: 0; width: 100%; min-height: 35px; border-radius: 9px; background: #f43f3a; color: #FFFFFF; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
+.id-delete-all:hover { filter: brightness(1.03); }
+.id-delete-all:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+.id-status-steps { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.id-step-btn { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 35px; padding: 0 18px; border-radius: 9px; border: 0; background: #f3f4f6; color: #9ca3af; font-size: 12px; font-weight: 900; cursor: not-allowed; white-space: nowrap; }
+.id-step-next { background: var(--primary, #1a56db); color: #fff; cursor: pointer; transition: all 0.2s; }
+.id-step-next:hover { filter: brightness(1.08); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
+.id-step-next:disabled { opacity: 0.7; pointer-events: none; }
+.id-item-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
+.id-item-card { padding: 11px; border: 1px solid rgba(25,25,112,0.18); border-radius: 11px; background: #fbfcff; }
+.id-item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 9px; margin-bottom: 9px; }
+.id-product-name { font-size: 13px; font-weight: 900; color: #111827; line-height: 1.3; letter-spacing: -0.1px; }
+.id-item-icons { display: flex; gap: 3px; align-items: center; flex-shrink: 0; }
+.id-check { width: 22px; height: 22px; border-radius: 50%; background: #16a34a; color: #FFFFFF; display: inline-flex; justify-content: center; align-items: center; font-size: 11px; }
+.id-rencana-box { margin-top: 8px; padding: 9px 10px; border-radius: 9px; background: #f4f6ff; border: 1px solid #e2e7ff; }
+.id-rencana-title { color: #191970; font-size: 11px; font-weight: 900; margin-bottom: 6px; }
+.id-rencana-line { font-size: 11px; font-weight: 800; color: #374151; margin-bottom: 3px; line-height: 1.35; }
+.id-rencana-meta { font-size: 10px; color: #6b7280; font-weight: 750; line-height: 1.35; }
+.id-empty { padding: 13px; color: var(--text-soft); font-size: 11px; font-weight: 850; }
+.id-item-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+
+/* Tambahan Tombol Tambah Item */
+.id-add-item-btn { min-height: 30px; border-radius: 8px; padding: 0 10px; background: var(--primary); color: #fff; border: none; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: all 0.2s; }
+.id-add-item-btn:hover { filter: brightness(1.1); box-shadow: 0 4px 10px rgba(25,25,112,0.15); }
+.id-modal-note { background: #f4f6ff; border: 1px solid #d7dcff; color: #191970; border-radius: 9px; padding: 8px 9px; font-size: 11px; font-weight: 800; margin-bottom: 10px; line-height: 1.4; }
 
 /* Status Badge */
-.status-badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 9px; font-weight: 900; text-transform: uppercase; }
-.status-draft { background: #fef3c7; color: #ca8a04; border: 1px solid #fde047; }
-.status-pending { background: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd; }
-.status-selesai { background: #dcfce7; color: #16a34a; border: 1px solid #bbf7d0; }
+.status-badge { padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 900; white-space: nowrap; text-transform: uppercase; }
 
 /* Form inputs for Draft */
-.draft-bb-input { width: 100%; border-radius: 6px; border: 1px solid #e2e7f0; padding: 4px 8px; font-size: 10.5px; font-weight: 750; outline: none; margin-top: 6px; }
-.draft-bb-input:focus { border-color: var(--primary); }
+.draft-bb-input { width: 100%; border-radius: 8px; border: 1px solid #e2e7f0; padding: 6px 10px; font-size: 11px; font-weight: 750; outline: none; margin-top: 6px; }
+.draft-bb-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
 .draft-bb-input:disabled { background: #f3f4f6; color: #9ca3af; }
 
-/* --- BUTTONS MIRIP OUTBOUND --- */
-.inbound-actions { display: flex; flex-direction: column; gap: 7px; }
-.inbound-delete-all { border: 0; width: 100%; min-height: 35px; border-radius: 9px; background: #f43f3a; color: #FFFFFF; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
-.inbound-delete-all:hover { filter: brightness(1.03); }
-.inbound-delete-all:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
-.inbound-step-btn { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 35px; padding: 0 18px; border-radius: 9px; border: 0; background: #f3f4f6; color: #9ca3af; font-size: 12px; font-weight: 900; cursor: not-allowed; white-space: nowrap; }
-.inbound-step-next { background: var(--primary, #1a56db); color: #fff; cursor: pointer; }
-.inbound-step-next:hover { filter: brightness(1.08); }
-
-.inbound-dialog { border: 0; border-radius: 12px; padding: 0; width: min(440px, calc(100% - 30px)); max-height: 85vh; overflow: hidden; box-shadow: 0 10px 30px rgba(15,23,42,0.15); background: #FFFFFF; }
+.inbound-dialog { border: 0; border-radius: 12px; padding: 0; width: min(440px, calc(100% - 30px)); max-height: 85vh; overflow: hidden; box-shadow: 0 10px 30px rgba(15,23,42,0.15); background: #FFFFFF; position: fixed; inset: 0; margin: auto; }
 .dialog-box { padding: 20px 24px; max-height: 85vh; overflow-y: auto; }
 .dialog-title { font-size: 16px; font-weight: 700; margin: 0 0 8px; color: var(--text-main); }
 .dialog-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .dialog-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .dialog-field-full { grid-column: 1 / -1; }
 .dialog-field label { font-size: 12px; font-weight: 600; color: var(--text-main); }
-.dialog-field input, .dialog-field textarea, .dialog-field select { width: 100%; min-height: 36px; border: 1px solid #dedede; border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 500; outline: none; background: #fbfcff; color: var(--text-main); }
+.dialog-field input, .dialog-field textarea, .dialog-field select { width: 100%; min-height: 36px; border: 1px solid #dedede; border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 500; outline: none; background: #fbfcff; color: var(--text-main); box-sizing: border-box; }
 .dialog-field textarea { min-height: 72px; resize: vertical; }
 .dialog-field input[readonly] { background: #f6f7f9; color: #6b7280; }
 .dialog-field input:focus, .dialog-field textarea:focus { border-color: var(--primary); background: #FFFFFF; box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
@@ -131,12 +134,21 @@ const css = `
 .sailendra-toast.success .sailendra-toast-icon { background: rgba(46,125,50,0.12); color: #2E7D32; }
 .sailendra-toast.error { border-left-color: #D32F2F; }
 .sailendra-toast.error .sailendra-toast-icon { background: rgba(211,47,47,0.12); color: #D32F2F; }
+
+@media (max-width: 1100px) { .id-detail-grid, .id-item-list { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media (max-width: 768px) {
-  .detail-stat-grid, .detail-item-list, .dialog-grid { grid-template-columns: 1fr; }
-  .detail-stat-wide { grid-column: span 1; }
+  .id-detail-grid, .id-item-list, .dialog-grid { grid-template-columns: 1fr; }
+  .id-text-wide { grid-column: span 1; }
   .sailendra-toast-wrap { top: 12px; right: 12px; left: 12px; width: auto; }
 }
 `;
+
+const statusStyle = (s: string): { bg: string; color: string; border: string } => {
+  const st = (s || "").toLowerCase();
+  if (st === "pending") return { bg: "#e0f2fe", color: "#0284c7", border: "1px solid #bae6fd" };
+  if (st === "selesai" || st === "confirmed") return { bg: "#dcfce7", color: "#16a34a", border: "1px solid #bbf7d0" };
+  return { bg: "#fef3c7", color: "#ca8a04", border: "1px solid #fde047" }; 
+};
 
 export default function InboundDetailPage() {
   const params = useParams<{ tanggal: string }>();
@@ -151,19 +163,26 @@ export default function InboundDetailPage() {
   const lok = searchParams.get("lok") || "";
 
   const [rows, setRows] = useState<BmRow[]>([]);
+  const [produkList, setProdukList] = useState<Produk[]>([]); // Untuk Tambah Item
   const [loaded, setLoaded] = useState(false);
   const [plants, setPlants] = useState<Plant[]>([]);
   const [toasts, setToasts] = useState<{ id: number; type: string; msg: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [showHeader, setShowHeader] = useState(false);
   const [showItem, setShowItem] = useState<BmRow | null>(null);
+  
+  // State untuk Tambah Item Baru
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [aProduk, setAProduk] = useState(0);
+  const [aJumlah, setAJumlah] = useState("");
+  const [aSatuan, setASatuan] = useState("");
+
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmOne, setConfirmOne] = useState<BmRow | null>(null);
 
-  // State untuk Draft -> Pending (Submit BB)
+  const waktuMulaiRef = useRef<Date | null>(null);
   const [draftBb, setDraftBb] = useState<Record<number, string>>({});
 
-  // header form state
   const [hTanggal, setHTanggal] = useState("");
   const [hMobil, setHMobil] = useState("");
   const [hDn, setHDn] = useState("");
@@ -172,7 +191,6 @@ export default function InboundDetailPage() {
   const [hCatatan, setHCatatan] = useState("");
   const [hBestBefore, setHBestBefore] = useState("");
 
-  // item form state
   const [iJumlah, setIJumlah] = useState("");
   const [iBestBefore, setIBestBefore] = useState("");
 
@@ -182,6 +200,7 @@ export default function InboundDetailPage() {
     setToasts((t) => [...t, { id, type, msg }]);
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), type === "error" ? 9000 : 6000);
   };
+  const closeToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
 
   useEffect(() => {
     if (!session || !tanggal) return;
@@ -199,13 +218,33 @@ export default function InboundDetailPage() {
         } else {
           sp.append("id_pengguna_lokasi", String(session.user.id_pengguna_lokasi || ""));
         }
-        const [r, pr] = await Promise.all([
+        
+        // Load Inbound, Plants, dan Produk List (untuk Add Item)
+        const [r, pr, prodRes] = await Promise.all([
           apiGet<BmRow[]>(`/barang-masuk?${sp.toString()}`),
           apiGet<Plant[]>("/plant"),
+          apiGet<Produk[]>("/produk?limit=2000"),
         ]);
+        
         if (cancelled) return;
-        setRows(r.data || []);
+        
+        const fetchedRows = r.data || [];
+        setRows(fetchedRows);
         setPlants((pr.data || []).sort((a, b) => String(a.id_plant).localeCompare(String(b.id_plant))));
+        setProdukList((prodRes.data || []).sort((a, b) => angka(a.id_produk) - angka(b.id_produk)));
+
+        // Inisialisasi Timer
+        const filtered = fetchedRows.filter((x: BmRow) => ((x.nama_driver || "").trim() || "Tanpa nama driver") === driver && (!shipment || (x.shipment_id || "") === shipment));
+        const firstRow = filtered[0];
+        if (firstRow) {
+           if (firstRow.waktu_mulai_input) {
+              const parsedDate = new Date(firstRow.waktu_mulai_input.replace(/-/g, '/'));
+              waktuMulaiRef.current = parsedDate;
+           } else {
+              waktuMulaiRef.current = new Date();
+           }
+        }
+
       } catch {
         /* keep old */
       } finally {
@@ -213,7 +252,7 @@ export default function InboundDetailPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, tanggal, lok, multi]);
+  }, [session, tanggal, lok, driver, shipment, multi]);
 
   if (!session || !loaded) return null;
 
@@ -224,17 +263,36 @@ export default function InboundDetailPage() {
   }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
   const first = items[0];
-  const isSupervisor = ["Supervisor", "SuperAdmin"].includes(session.user.role);
+  const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
   const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
 
-  // Cek Status Group
   const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
   const hasPending = items.some(i => (i.status || "").toLowerCase() === "pending");
   const isSelesaiAll = items.every(i => (i.status || "selesai").toLowerCase() === "selesai");
+  const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
+  
+  const globalStatus = hasDraft ? 'Draft' : hasPending ? 'Pending' : 'Selesai';
+  const ss = statusStyle(globalStatus);
 
-  // ==========================================
-  // FUNGSI MULTI-STEP INBOUND (DRAFT -> PENDING -> SELESAI)
-  // ==========================================
+  const getTimerPayload = (aksi: "submit" | "konfirmasi") => {
+    let waktuMulaiStr: string | undefined = undefined;
+    let durasiDetik: number | undefined = undefined;
+
+    if (waktuMulaiRef.current) {
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      const d = waktuMulaiRef.current;
+      waktuMulaiStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+      if (aksi === "konfirmasi") {
+         const waktuSelesai = new Date();
+         durasiDetik = Math.floor((waktuSelesai.getTime() - d.getTime()) / 1000);
+      } else {
+         durasiDetik = 0;
+      }
+    }
+    return { waktu_mulai_input: waktuMulaiStr, durasi_detik: durasiDetik };
+  };
+
   const submitDraftBooking = async () => {
     setBusy(true);
     try {
@@ -248,10 +306,14 @@ export default function InboundDetailPage() {
          return { id_barang_masuk: i.id_barang_masuk, best_before: bb };
       });
       
+      const timerData = getTimerPayload("submit");
+
       await apiPost('/barang-masuk/submit', {
          shipment_id: first.shipment_id || "",
          id_pengguna_lokasi: aktifLokasiId(session),
-         items: payloadItems
+         items: payloadItems,
+         waktu_mulai_input: timerData.waktu_mulai_input,
+         durasi_detik: timerData.durasi_detik
       });
       
       notify("success", "Booking lokasi berhasil! Status berubah menjadi Pending.");
@@ -266,10 +328,14 @@ export default function InboundDetailPage() {
   const konfirmasiPending = async () => {
     setBusy(true);
     try {
+      const timerData = getTimerPayload("konfirmasi");
+
       await apiPost('/barang-masuk/konfirmasi', {
          shipment_id: first.shipment_id || "",
          id_barang_masuk: first.shipment_id ? 0 : first.id_barang_masuk,
-         id_pengguna_lokasi: aktifLokasiId(session)
+         id_pengguna_lokasi: aktifLokasiId(session),
+         waktu_mulai_input: timerData.waktu_mulai_input,
+         durasi_detik: timerData.durasi_detik
       });
       notify("success", "Konfirmasi berhasil! Stok telah fisik ditambahkan.");
       setTimeout(() => window.location.reload(), 1500);
@@ -279,7 +345,36 @@ export default function InboundDetailPage() {
       setBusy(false);
     }
   };
-  // ==========================================
+
+  // --- FUNGSI TAMBAH ITEM BARU ---
+  const openAddItem = () => {
+    setAProduk(0); setAJumlah(""); setASatuan("");
+    setShowAddItem(true);
+  };
+
+  const simpanAddItem = async () => {
+    if (aProduk <= 0) { notify("error", "Produk wajib dipilih."); return; }
+    if (angka(aJumlah) <= 0) { notify("error", "Jumlah tidak valid."); return; }
+    setBusy(true);
+    try {
+      await apiPost("/barang-masuk/update", {
+        aksi: "tambah_item",
+        shipment_id: first.shipment_id,
+        id_barang_masuk_ref: first.id_barang_masuk,
+        id_pengguna_lokasi: aktifLokasiId(session),
+        id_pengguna: session.user.id_pengguna,
+        id_produk: aProduk,
+        jumlah: angka(aJumlah),
+        satuan: aSatuan || "PCS",
+      });
+      notify("success", "Item baru berhasil ditambahkan sebagai Draft.");
+      setShowAddItem(false);
+      window.location.reload();
+    } catch (e) {
+      notify("error", (e as Error).message || "Gagal menambahkan item baru.");
+    } finally { setBusy(false); }
+  };
+  // ------------------------------
 
   const openHeader = () => {
     if (!first) return;
@@ -315,7 +410,6 @@ export default function InboundDetailPage() {
       }
       notify("success", "Detail inbound berhasil diperbarui.");
       setShowHeader(false);
-      router.refresh();
       window.location.reload();
     } catch (e) {
       notify("error", (e as Error).message || "Detail inbound gagal diperbarui.");
@@ -360,11 +454,7 @@ export default function InboundDetailPage() {
       setConfirmOne(null);
       window.location.reload();
     } catch (e) {
-      const m = (e as Error).message || "";
-      const lower = m.toLowerCase();
-      notify("error", (lower.includes("outbound") || lower.includes("dipakai") || lower.includes("rencana"))
-        ? "Item ini tidak bisa dihapus karena sudah dipakai untuk outbound."
-        : m);
+      notify("error", (e as Error).message || "Item ini tidak bisa dihapus karena sudah dipakai.");
     } finally { setBusy(false); }
   };
 
@@ -377,20 +467,14 @@ export default function InboundDetailPage() {
       }
       notify("success", "Semua item inbound berhasil dihapus.");
       setConfirmAll(false);
-      window.location.reload();
+      router.push(backHref);
     } catch (e) {
-      const m = (e as Error).message || "";
-      const lower = m.toLowerCase();
-      notify("error", (lower.includes("outbound") || lower.includes("dipakai") || lower.includes("rencana"))
-        ? "Sebagian item tidak bisa dihapus karena sudah dipakai untuk outbound."
-        : m);
+      notify("error", (e as Error).message || "Sebagian item tidak bisa dihapus karena sudah dipakai.");
     } finally { setBusy(false); }
   };
 
-  const closeToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
-
   return (
-    <div className="inbound-page">
+    <div className="inbound-detail-page">
       <style>{css}</style>
       <div id="toastWrap" className="sailendra-toast-wrap" aria-live="polite">
         {toasts.map((t) => (
@@ -407,132 +491,164 @@ export default function InboundDetailPage() {
         ))}
       </div>
 
-      <div className="inbound-card detail-head">
-        <Link className="detail-back-btn" href={backHref}>
+      <div className="id-card id-head">
+        <Link className="id-back-btn" href={backHref}>
           <i className="bi bi-arrow-left"></i>
           <span>Kembali ke driver</span>
         </Link>
 
-        <div className="detail-top">
-          <div className="detail-title">Detail Penerimaan</div>
-          {isSupervisor && !!items.length && (
-            <button type="button" className="detail-action-btn" title="Edit detail inbound" onClick={openHeader}>
+        <div className="id-detail-top">
+          <h3 className="id-section-title">Detail Penerimaan</h3>
+          {canCrud && !!items.length && (
+            <button type="button" className="id-icon-btn" title="Edit Detail Inbound" onClick={openHeader}>
               <i className="bi bi-pencil-fill"></i>
             </button>
           )}
         </div>
 
-        {!items.length ? (
-          <div className="detail-empty">Detail inbound tidak ditemukan.</div>
+        {!first ? (
+          <div className="id-empty">Detail inbound tidak ditemukan.</div>
         ) : (
           <>
-            <div className="detail-stat-grid">
-              <div className="detail-stat detail-stat-wide">
-                <div className="detail-stat-label">Shipment ID</div>
-                <div className="detail-stat-value">{norm(first.shipment_id) || "-"}</div>
+            <div className="id-detail-grid">
+              <div className="id-text-row">
+                <div className="id-text-label">Tanggal Masuk</div>
+                <div className="id-text-value">{tanggal || "-"}</div>
               </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Tanggal Masuk</div>
-                <div className="detail-stat-value">{tanggal || "-"}</div>
-              </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Status</div>
-                <div className="detail-stat-value">
-                  <span className={`status-badge status-${(hasDraft ? 'draft' : hasPending ? 'pending' : 'selesai')}`}>
-                    {hasDraft ? "Draft" : hasPending ? "Pending" : "Selesai"}
+              <div className="id-text-row">
+                <div className="id-text-label">Status</div>
+                <div className="id-text-value">
+                  <span className="status-badge" style={ss}>
+                    {globalStatus || "-"}
                   </span>
                 </div>
               </div>
-              <div className="detail-stat detail-stat-wide">
-                <div className="detail-stat-label">Asal Pabrik</div>
-                <div className="detail-stat-value">{norm(first.asal_pabrik) || "-"}</div>
+              <div className="id-text-row">
+                <div className="id-text-label">Tipe Penerimaan</div>
+                <div className="id-text-value">{norm(first.tipe_penerimaan) || "-"}</div>
               </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">No Mobil</div>
-                <div className="detail-stat-value">{norm(first.no_mobil) || "-"}</div>
+              <div className="id-text-row">
+                <div className="id-text-label">No Mobil</div>
+                <div className="id-text-value">{norm(first.no_mobil) || "-"}</div>
               </div>
-              <div className="detail-stat">
-                <div className="detail-stat-label">Nama Driver</div>
-                <div className="detail-stat-value">{driver || "-"}</div>
+              <div className="id-text-row">
+                <div className="id-text-label">Nama Driver</div>
+                <div className="id-text-value">{driver || "-"}</div>
+              </div>
+              <div className="id-text-row">
+                <div className="id-text-label">No DN</div>
+                <div className="id-text-value">{norm(first.no_dn) || "-"}</div>
+              </div>
+              <div className="id-text-row">
+                <div className="id-text-label">Shipment ID</div>
+                <div className="id-text-value">{norm(first.shipment_id) || "-"}</div>
+              </div>
+              <div className="id-text-row">
+                <div className="id-text-label">Dibuat oleh</div>
+                <div className="id-text-value">{norm(first.dibuat_oleh) || "-"}</div>
+              </div>
+              <div className="id-text-row">
+                <div className="id-text-label">Total Qty</div>
+                <div className="id-text-value">{totalQty}</div>
+              </div>
+              <div className="id-text-row id-text-wide">
+                <div className="id-text-label">Asal Pabrik</div>
+                <div className="id-text-value">{norm(first.asal_pabrik) || "-"}</div>
               </div>
             </div>
 
-            {isSupervisor && (
-              <div className="inbound-actions" style={{ marginTop: 8 }}>
-                <button type="button" className="inbound-delete-all"
-                  onClick={() => setConfirmAll(true)}>
-                  <i className="bi bi-trash"></i>
-                  <span>Hapus Semua ({items.length})</span>
-                </button>
+            {!isSelesaiAll && (
+              <div className="id-actions" style={{ marginTop: 8 }}>
+                {canCrud && items.length > 0 && (
+                  <button type="button" className="id-delete-all" onClick={() => setConfirmAll(true)}>
+                    <i className="bi bi-trash"></i>
+                    <span>Hapus Semua ({items.length})</span>
+                  </button>
+                )}
+                {canCrud && (
+                  <button type="button" className={`id-step-btn ${hasDraft ? "id-step-next" : ""}`}
+                    disabled={!hasDraft} onClick={() => hasDraft && submitDraftBooking()}>
+                    <i className="bi bi-hourglass-split"></i>
+                    <span>Submit Booking</span>
+                  </button>
+                )}
+                {(canCrud || session.user.role === "Forklift") && (
+                  <button type="button" className={`id-step-btn ${hasPending && !hasDraft ? "id-step-next" : ""}`}
+                    disabled={!(hasPending && !hasDraft)} onClick={() => (hasPending && !hasDraft) && konfirmasiPending()}>
+                    <i className="bi bi-check-circle-fill"></i>
+                    <span>Konfirmasi Inbound</span>
+                  </button>
+                )}
               </div>
             )}
-
-            {/* ACTION BUTTONS (SUBMIT / KONFIRMASI) di atas Daftar Item */}
-            <div className="inbound-actions" style={{ marginTop: 8 }}>
-              {hasDraft && (
-                <button type="button" className="inbound-step-btn inbound-step-next" disabled={busy} onClick={submitDraftBooking}>
-                  {busy ? <i className="bi bi-arrow-clockwise stock-loader"></i> : <i className="bi bi-send-check-fill"></i>}
-                  {busy ? "Memproses..." : "Submit Booking (Cari Lokasi)"}
-                </button>
-              )}
-
-              {hasPending && !hasDraft && (
-                <button type="button" className="inbound-step-btn inbound-step-next" disabled={busy} onClick={konfirmasiPending}>
-                  {busy ? <i className="bi bi-arrow-clockwise stock-loader"></i> : <i className="bi bi-check2-all"></i>}
-                  {busy ? "Mengonfirmasi..." : "Konfirmasi & Selesai"}
-                </button>
-              )}
-            </div>
-
           </>
         )}
       </div>
 
-      {/* ITEM LIST CARD TERPISAH (seperti outbound) */}
-      {!!items.length && (
-      <div className="inbound-card" style={{ padding: 12 }}>
-        <div className="detail-item-title">
-          Daftar Item
-        </div>
+      <div className="id-item-title-row">
+        <h3 className="id-section-title" style={{ margin: 0 }}>Item</h3>
+        {canCrud && !isSelesaiAll && (
+          <button type="button" className="id-add-item-btn" onClick={openAddItem}>
+            <i className="bi bi-plus-lg"></i>
+            Tambah Item
+          </button>
+        )}
+      </div>
 
-        <div className="detail-item-list">
+      {items.length === 0 ? (
+        <div className="id-card id-empty">Daftar item tidak ditemukan.</div>
+      ) : (
+        <div className="id-item-list">
           {items.map((item) => {
             const itemStatus = (item.status || "selesai").toLowerCase();
             const isItemReject = (item.tipe_penerimaan || "").toUpperCase() === "REJECT";
             const noBatch = PRODUK_TANPA_BATCH.includes(angka(item.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(item.nama_produk || "");
 
             return (
-              <div key={item.id_barang_masuk} className="detail-item-card">
-                <div className="detail-item-top">
-                  <div style={{ minWidth: 0 }}>
-                    <div className="detail-product">
-                      {norm(item.nama_produk) || "-"}
-                      {itemStatus === 'draft' && <i className="bi bi-hourglass-split" style={{color: '#ca8a04', fontSize: 12}}></i>}
-                      {itemStatus === 'pending' && <i className="bi bi-geo-fill" style={{color: '#0284c7', fontSize: 12}}></i>}
-                      {itemStatus === 'selesai' && <i className="bi bi-check-circle-fill" style={{color: '#16a34a', fontSize: 12}}></i>}
-                    </div>
-                    <div className="detail-item-sub">
-                      Jumlah: {item.jumlah} {norm(item.satuan)} 
-                      {itemStatus !== 'draft' && <><br/>Lokasi: {norm(item.lokasi_block) || "-"}</>}
-                    </div>
+              <div key={item.id_barang_masuk} className="id-item-card">
+                <div className="id-item-top">
+                  <div className="id-product-name">
+                    {norm(item.nama_produk) || "-"}
                   </div>
-                  
-                  {isSupervisor && (
-                    <div className="detail-row-actions">
-                      <button type="button" className="detail-icon-btn" title="Edit item" onClick={() => openItem(item)}>
+                  <div className="id-item-icons">
+                    {canCrud && (
+                      <button type="button" className="id-icon-btn" title="Edit item" onClick={() => openItem(item)}>
                         <i className="bi bi-pencil-fill"></i>
                       </button>
-                      <button type="button" className="detail-icon-btn detail-icon-danger" title="Hapus item" onClick={() => setConfirmOne(item)}>
-                        <i className="bi bi-trash3-fill"></i>
+                    )}
+                    {canCrud ? (
+                      <button type="button" className="id-icon-btn" title="Hapus item" onClick={() => setConfirmOne(item)}>
+                        <i className="bi bi-trash"></i>
                       </button>
-                    </div>
-                  )}
+                    ) : (
+                      <button type="button" className="id-icon-btn" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}>
+                        <i className="bi bi-trash"></i>
+                      </button>
+                    )}
+                    {itemStatus === 'selesai' && <span className="id-check"><i className="bi bi-check-lg"></i></span>}
+                  </div>
                 </div>
 
-                {/* INPUT BEST BEFORE KHUSUS STATUS DRAFT */}
+                <div className="id-text-row" style={{ minHeight: 'auto', padding: '6px 8px', marginBottom: 4 }}>
+                  <div className="id-text-label">Jumlah</div>
+                  <div className="id-text-value">{angka(item.jumlah)} {norm(item.satuan)}</div>
+                </div>
+
+                {itemStatus !== 'draft' && (
+                  <div className="id-rencana-box">
+                    <div className="id-rencana-title">Lokasi Penyimpanan:</div>
+                    <div className="id-rencana-line">
+                      {norm(item.lokasi_block) || "Menunggu lokasi"}
+                    </div>
+                    <div className="id-rencana-meta">
+                      Batch: {norm(item.batch) || "-"} | BB: {norm(item.best_before) || "-"}
+                    </div>
+                  </div>
+                )}
+
                 {itemStatus === 'draft' && (
                   <div style={{ marginTop: 8, borderTop: '1px dashed #dbe3f5', paddingTop: 8 }}>
-                    <label className="detail-stat-label">Isi Best Before</label>
+                    <label className="id-text-label" style={{marginBottom: 4}}>Isi Best Before</label>
                     <input 
                       type={(isItemReject || noBatch) ? "text" : "date"} 
                       className="draft-bb-input"
@@ -547,10 +663,43 @@ export default function InboundDetailPage() {
             );
           })}
         </div>
-      </div>
       )}
 
-      {/* --- DIALOG EDIT HEADER --- */}
+      {/* DIALOGS */}
+      {showAddItem && (
+        <dialog open className="inbound-dialog">
+          <div className="dialog-box">
+            <h3 className="dialog-title">Tambah Item Baru</h3>
+            <div className="id-modal-note">
+              Item baru akan ditambahkan dengan status <strong>Draft</strong>. Lakukan "Submit Booking" setelah selesai menambahkan item ini.
+            </div>
+            <div className="dialog-grid">
+              <div className="dialog-field dialog-field-full">
+                <label>Pilih Produk</label>
+                <select value={aProduk} onChange={(e) => {
+                  const p = produkList.find((x) => x.id_produk === angka(e.target.value));
+                  setAProduk(angka(e.target.value));
+                  setASatuan(p?.satuan || "");
+                }}>
+                  <option value="0">-- Pilih Produk --</option>
+                  {produkList.map((p) => (
+                    <option key={p.id_produk} value={p.id_produk}>{p.id_produk} - {p.nama_produk}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="dialog-field dialog-field-full">
+                <label>Jumlah ({aSatuan || "PCS"})</label>
+                <input type="number" min={1} value={aJumlah} onChange={(e) => setAJumlah(e.target.value)} />
+              </div>
+            </div>
+            <div className="dialog-actions">
+              <button type="button" className="dialog-btn dialog-btn-cancel" onClick={() => setShowAddItem(false)}>Batal</button>
+              <button type="button" className="dialog-btn dialog-btn-save" disabled={busy} onClick={simpanAddItem}>Simpan Item Baru</button>
+            </div>
+          </div>
+        </dialog>
+      )}
+
       {showHeader && first && (
         <dialog open className="inbound-dialog">
           <div className="dialog-box">
@@ -590,7 +739,6 @@ export default function InboundDetailPage() {
         </dialog>
       )}
 
-      {/* --- DIALOG EDIT ITEM --- */}
       {showItem && (
         <dialog open className="inbound-dialog">
           <div className="dialog-box">
@@ -623,7 +771,6 @@ export default function InboundDetailPage() {
         </dialog>
       )}
 
-      {/* --- DIALOG HAPUS --- */}
       {confirmAll && (
         <ConfirmDialog title="Hapus Semua Item"
           message={`Hapus semua item inbound (<strong>${items.length}</strong>)?`}
