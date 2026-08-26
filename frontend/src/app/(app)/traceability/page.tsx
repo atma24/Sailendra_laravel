@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiGet } from "@/lib/api";
+import { apiGet, getUploadUrl } from "@/lib/api";
 import { isMultiRole, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 import { useToast } from "@/components/ToastProvider";
@@ -266,7 +266,7 @@ export default function TraceabilityPage() {
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
-      const res = await fetch("/api/traceability/upload-file", { method: "POST", headers, body: fd });
+      const res = await fetch(getUploadUrl("/api/traceability/upload-file"), { method: "POST", headers, body: fd });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || body.success === false) throw new Error(body.message || "Upload gagal.");
       const unmapped = body.unmapped ? ` (${body.unmapped} produk tak dikenal)` : "";

@@ -1,3 +1,14 @@
+export const DIRECT_BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "https://api.jtatrack.com";
+
+export function getUploadUrl(path: string): string {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  if (typeof window !== "undefined" && window.location.hostname !== "localhost") {
+    return `${DIRECT_BACKEND_URL}${cleanPath}`;
+  }
+  return cleanPath;
+}
+
 const API_BASE = "/api";
 
 export class ApiError extends Error {

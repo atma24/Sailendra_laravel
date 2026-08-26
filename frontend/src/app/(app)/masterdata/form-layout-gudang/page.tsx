@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, getUploadUrl } from "@/lib/api";
 import { isMultiRole, SUPERADMIN_ROLES, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 
@@ -459,7 +459,7 @@ export default function FormLayoutGudangPage() {
 
     setImporting(true);
     try {
-      const res = await fetch("/api/layout-gudang/import-layout", {
+      const res = await fetch(getUploadUrl("/api/layout-gudang/import-layout"), {
         method: "POST",
         headers: { Authorization: `Bearer ${session?.token || ""}` },
         body: fd,

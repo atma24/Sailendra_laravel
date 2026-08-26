@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { apiGet, getUploadUrl } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 import { useToast } from "@/components/ToastProvider";
@@ -138,7 +138,8 @@ export default function OutboundTanggalPage() {
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
-      const res = await fetch(`/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`, {
+      const uploadUrl = getUploadUrl(`/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`);
+      const res = await fetch(uploadUrl, {
         method: "POST",
         headers,
         body: fd,

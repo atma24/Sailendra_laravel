@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { apiGet, getUploadUrl } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession, aktifLokasiId } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 import { useToast } from "@/components/ToastProvider";
@@ -109,7 +109,7 @@ export default function InboundTanggalPage() {
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
 
-      const res = await fetch("/api/barang-masuk/upload", {
+      const res = await fetch(getUploadUrl("/api/barang-masuk/upload"), {
         method: "POST",
         headers,
         body: fd
