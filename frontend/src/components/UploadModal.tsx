@@ -95,6 +95,42 @@ const css = `
   background: #121254; transform: translateY(-1px);
 }
 .upload-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.upload-loading-overlay {
+  position: absolute; inset: 0; background: rgba(255, 255, 255, 0.92);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; z-index: 10; border-radius: 18px; backdrop-filter: blur(2px);
+  animation: umFadeIn 0.2s ease;
+}
+.upload-spinner-outer {
+  position: relative; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center;
+}
+.upload-spinner-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 4px solid #E2E8F0; border-top-color: var(--primary-navy, #191970);
+  animation: umSpin 0.8s linear infinite;
+}
+@keyframes umSpin { to { transform: rotate(360deg); } }
+.upload-spinner-icon {
+  font-size: 22px; color: var(--primary-navy, #191970); animation: umPulse 1.2s ease-in-out infinite;
+}
+@keyframes umPulse { 0%, 100% { transform: scale(0.9); opacity: 0.8; } 50% { transform: scale(1.1); opacity: 1; } }
+
+.upload-loading-title {
+  font-size: 15px; font-weight: 800; color: #0F172A; margin: 0;
+}
+.upload-loading-sub {
+  font-size: 12px; font-weight: 600; color: #64748B; margin: 0;
+}
+.upload-progress-bar {
+  width: 180px; height: 5px; background: #E2E8F0; border-radius: 99px; overflow: hidden; position: relative;
+}
+.upload-progress-fill {
+  position: absolute; top: 0; bottom: 0; left: -100%; width: 100%;
+  background: linear-gradient(90deg, transparent, var(--primary-navy, #191970), transparent);
+  animation: umProgress 1.5s ease-in-out infinite;
+}
+@keyframes umProgress { 0% { left: -100%; } 100% { left: 100%; } }
 `;
 
 export default function UploadModal({
@@ -128,7 +164,22 @@ export default function UploadModal({
     <>
       <style>{css}</style>
       <div className="upload-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-        <div className="upload-modal-card">
+        <div className="upload-modal-card" style={{ position: "relative" }}>
+          {busy && (
+            <div className="upload-loading-overlay">
+              <div className="upload-spinner-outer">
+                <div className="upload-spinner-ring"></div>
+                <i className="bi bi-cloud-arrow-up-fill upload-spinner-icon"></i>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <p className="upload-loading-title">Mengunggah & Memproses Data...</p>
+                <p className="upload-loading-sub">Mohon tunggu sejenak, sistem sedang mengolah file.</p>
+              </div>
+              <div className="upload-progress-bar">
+                <div className="upload-progress-fill"></div>
+              </div>
+            </div>
+          )}
           <div className="upload-modal-header">
             <h5 className="upload-modal-title">{title}</h5>
             <button
@@ -202,8 +253,17 @@ export default function UploadModal({
               onClick={handleSubmit}
               disabled={busy || !file}
             >
-              <i className="bi bi-upload"></i>
-              <span>{busy ? "Memproses..." : submitLabel}</span>
+              {busy ? (
+                <>
+                  <i className="bi bi-arrow-repeat spin"></i>
+                  <span>Memproses...</span>
+                </>
+              ) : (
+                <>
+                  <i className="bi bi-upload"></i>
+                  <span>{submitLabel}</span>
+                </>
+              )}
             </button>
           </div>
         </div>
