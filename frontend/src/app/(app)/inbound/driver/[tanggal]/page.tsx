@@ -205,7 +205,7 @@ export default function InboundDriverPage() {
             const ss = statusStyle(d.status);
             return (
             <Link key={`${d.nama_driver}::${d.shipment_id}`} className="inbound-card inbound-driver-card"
-              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}&shipment=${encodeURIComponent(d.shipment_id)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}`}>
+              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}`}>
               <div className="driver-top">
                 <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
                 <div style={{ flex: 1, minWidth: 0 }}>

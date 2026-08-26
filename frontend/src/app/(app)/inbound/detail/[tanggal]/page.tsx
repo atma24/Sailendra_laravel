@@ -236,7 +236,17 @@ export default function InboundDetailPage() {
         setProdukList((prodRes.data || []).sort((a, b) => angka(a.id_produk) - angka(b.id_produk)));
 
         // Inisialisasi Timer
-        const filtered = fetchedRows.filter((x: BmRow) => ((x.nama_driver || "").trim() || "Tanpa nama driver") === driver && (!shipment || (x.shipment_id || "") === shipment));
+        const reqShip = !shipment || shipment === "Tanpa Shipment" ? "" : shipment.trim();
+        const reqDriver = !driver || driver === "Tanpa nama driver" ? "" : driver.trim();
+
+        const filtered = fetchedRows.filter((x: BmRow) => {
+          const rowDriver = (x.nama_driver || "").trim();
+          const rowShip = (x.shipment_id || "").trim();
+          const sameDriver = reqDriver === "" ? (rowDriver === "" || rowDriver === "Tanpa nama driver") : rowDriver === reqDriver;
+          const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
+          return sameDriver && sameShip;
+        });
+
         const firstRow = filtered[0];
         if (firstRow) {
            if (firstRow.waktu_mulai_input) {
@@ -258,9 +268,14 @@ export default function InboundDetailPage() {
 
   if (!session || !loaded) return null;
 
+  const reqShip = !shipment || shipment === "Tanpa Shipment" ? "" : shipment.trim();
+  const reqDriver = !driver || driver === "Tanpa nama driver" ? "" : driver.trim();
+
   const items = rows.filter((r) => {
-    const sameDriver = ((r.nama_driver || "").trim() || "Tanpa nama driver") === driver;
-    const sameShip = !shipment || (r.shipment_id || "") === shipment;
+    const rowDriver = (r.nama_driver || "").trim();
+    const rowShip = (r.shipment_id || "").trim();
+    const sameDriver = reqDriver === "" ? (rowDriver === "" || rowDriver === "Tanpa nama driver") : rowDriver === reqDriver;
+    const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
     return sameDriver && sameShip;
   }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
