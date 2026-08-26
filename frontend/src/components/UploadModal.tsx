@@ -11,6 +11,7 @@ type UploadModalProps = {
   onSubmit: (file: File) => Promise<void>;
   submitLabel?: string;
   busy?: boolean;
+  progressText?: string;
 };
 
 const css = `
@@ -142,6 +143,7 @@ export default function UploadModal({
   onSubmit,
   submitLabel = "Upload Sekarang",
   busy = false,
+  progressText,
 }: UploadModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -173,7 +175,7 @@ export default function UploadModal({
               </div>
               <div style={{ textAlign: "center" }}>
                 <p className="upload-loading-title">Mengunggah & Memproses Data...</p>
-                <p className="upload-loading-sub">Mohon tunggu sejenak, sistem sedang mengolah file.</p>
+                <p className="upload-loading-sub">{progressText || "Mohon tunggu sejenak, sistem sedang mengolah file."}</p>
               </div>
               <div className="upload-progress-bar">
                 <div className="upload-progress-fill"></div>

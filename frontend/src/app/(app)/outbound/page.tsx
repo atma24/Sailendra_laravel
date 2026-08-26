@@ -6,6 +6,7 @@ import { apiGet, getUploadUrl } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 import { useToast } from "@/components/ToastProvider";
+import { chunkExcelFile } from "@/lib/excelChunk";
 
 type BkRow = {
   id_barang_keluar: number;
@@ -107,11 +108,14 @@ export default function OutboundTanggalPage() {
 
   const singleList = Object.values(singleMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const canAdd = !!session && ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
+  const [progressText, setProgressText] = useState("");
+
   const isSuperAdmin = !!session && session.user.role === "SuperAdmin";
 
   const openModal = async (which: "upload" | "import") => {
     setUploadMsg("");
     setUploadLok("");
+    setProgressText("");
     if (fileRef.current) fileRef.current.value = "";
     if (multi) {
       try {
@@ -129,26 +133,48 @@ export default function OutboundTanggalPage() {
     if (!lok) { setUploadMsg("Pilih lokasi upload."); return; }
     setUploadBusy(true);
     setUploadMsg("");
-    const fd = new FormData();
-    fd.append("file_excel", file);
-    fd.append("upload_lokasi", lok);
-    fd.append("id_pengguna", String(session!.user.id_pengguna));
+    setProgressText("Membaca file Excel...");
+
     try {
+      // Pecah file Excel menjadi batch per 40 baris agar tidak memicu timeout 60s cPanel
+      const chunks = await chunkExcelFile(file, 40);
+      const totalChunks = chunks.length;
+
       const raw = localStorage.getItem("sailendra_session");
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
       const uploadUrl = getUploadUrl(`/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`);
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers,
-        body: fd,
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.success === false) {
-        throw new Error(body.message || "Upload gagal.");
+
+      let lastMessage = "Upload selesai.";
+
+      for (let i = 0; i < totalChunks; i++) {
+        const currentChunk = chunks[i];
+        if (totalChunks > 1) {
+          setProgressText(`Memproses bagian ${i + 1} dari ${totalChunks} batch data...`);
+        } else {
+          setProgressText("Memproses data...");
+        }
+
+        const fd = new FormData();
+        fd.append("file_excel", currentChunk);
+        fd.append("upload_lokasi", lok);
+        fd.append("id_pengguna", String(session!.user.id_pengguna));
+
+        const res = await fetch(uploadUrl, {
+          method: "POST",
+          headers,
+          body: fd,
+        });
+
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.success === false) {
+          throw new Error(`Batch ${i + 1}/${totalChunks} gagal: ${body.message || "Upload gagal."}`);
+        }
+        if (body.message) lastMessage = body.message;
       }
-      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: body.message || "Upload selesai.", type: "success" }));
+
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: lastMessage, type: "success" }));
       setKeyword(" ");
       setKeyword("");
       window.setTimeout(() => setModal(""), 500);
@@ -158,6 +184,7 @@ export default function OutboundTanggalPage() {
       toast((e as Error).message || "Upload gagal.", "error");
     } finally {
       setUploadBusy(false);
+      setProgressText("");
     }
   };
 
@@ -239,16 +266,16 @@ export default function OutboundTanggalPage() {
       {modal && (
         <UploadModal
           open={!!modal}
-          title={modal === "import" ? "Import Outbound (Historical)" : "Upload File Outbound"}
+          title={modal === "import" ? "Import Outbound Historical" : "Upload Outbound"}
           note={
             modal === "import"
-              ? "Kolom wajib: Picking_List_No, No_Truck, Driver, Delivery_Date, Batch_No, Material_Desc, Quantity_Order_LoadedToTruck. Data masuk status Selesai. Stok TIDAK dikurangi."
-              : "Pilih file Excel (.xlsx / .xls / .csv) data Outbound yang akan diproses ke dalam sistem."
+              ? "Format Excel: GIN NO, NAMA CUSTOMER, DRIVER GUDANG, STATUS (Default Selesai), NO MOBIL, NAMA DRIVER, TANGGAL KELUAR, ID PRODUK, NAMA PRODUK, QTY, NO BATCH, BEST BEFORE, SO NUMBER, SALLE GROUP"
+              : "Upload data pengeluaran barang (Outbound) format Excel."
           }
           onClose={() => setModal("")}
           onSubmit={uploadFileSubmit}
-          submitLabel={modal === "import" ? "Import Sekarang" : "Upload Sekarang"}
           busy={uploadBusy}
+          progressText={progressText}
         />
       )}
     </div>
