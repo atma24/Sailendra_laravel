@@ -236,8 +236,55 @@ class TraceabilityController extends Controller
 
         DB::beginTransaction();
         try {
+            // 1. Bulk Pre-fetch Cek Duplikat (Memory Lookup)
+            $soList = [];
+            foreach ($items as $it) {
+                $so = trim($it['so_number'] ?? '');
+                if ($so !== '') {
+                    $soList[] = $so;
+                }
+            }
+            $soList = array_unique($soList);
+
+            $existingTraceRows = DB::table('traceability')
+                ->whereIn('so_number', $soList)
+                ->get(['so_number', 'id_produk', 'tanggal_pengiriman']);
+
+            $existingMap = [];
+            foreach ($existingTraceRows as $ex) {
+                $tgl = $ex->tanggal_pengiriman ? substr($ex->tanggal_pengiriman, 0, 10) : '';
+                $key = $ex->so_number.'|'.(int) $ex->id_produk.'|'.$tgl;
+                $existingMap[$key] = true;
+            }
+
+            // 2. Bulk Pre-fetch FK Barang Keluar (Memory Lookup)
+            $bkRows = DB::table('barang_keluar')
+                ->where(function ($q) use ($soList) {
+                    foreach ($soList as $s) {
+                        $q->orWhere('so_number', 'LIKE', '%'.$s.'%');
+                    }
+                })
+                ->orderBy('id_barang_keluar', 'DESC')
+                ->get(['id_barang_keluar', 'so_number', 'id_produk', 'id_pengguna_lokasi', 'batch', 'best_before']);
+
+            $bkMapBySoProd = [];
+            $bkMapBySoOnly = [];
+            foreach ($bkRows as $bk) {
+                $arrSo = array_filter(array_map('trim', explode(',', $bk->so_number ?? '')));
+                foreach ($arrSo as $sVal) {
+                    $keyProd = $sVal.'|'.(int) $bk->id_produk;
+                    if (! isset($bkMapBySoProd[$keyProd])) {
+                        $bkMapBySoProd[$keyProd] = $bk;
+                    }
+                    if (! isset($bkMapBySoOnly[$sVal])) {
+                        $bkMapBySoOnly[$sVal] = $bk;
+                    }
+                }
+            }
+
             $inserted = 0;
             $skipped = 0;
+            $insertRows = [];
 
             foreach ($items as $it) {
                 $soNumber = trim($it['so_number'] ?? '');
@@ -245,45 +292,29 @@ class TraceabilityController extends Controller
                 $idPenggunaLokasi = ! empty($it['id_pengguna_lokasi']) ? trim($it['id_pengguna_lokasi']) : null;
                 $tanggalPengiriman = ! empty($it['tanggal_pengiriman']) ? substr($it['tanggal_pengiriman'], 0, 10) : null;
 
-                // 1. Cek duplikat data
-                $isDuplicate = false;
-                if ($soNumber !== '' && $idProduk > 0 && $tanggalPengiriman !== null) {
-                    $isDuplicate = DB::table('traceability')
-                        ->where('so_number', $soNumber)->where('id_produk', $idProduk)->where('tanggal_pengiriman', $tanggalPengiriman)
-                        ->exists();
-                }
-
-                if ($isDuplicate) {
+                // Cek Duplikat dari Memory Lookup
+                $dupKey = $soNumber.'|'.$idProduk.'|'.($tanggalPengiriman ?? '');
+                if ($soNumber !== '' && $idProduk > 0 && $tanggalPengiriman !== null && isset($existingMap[$dupKey])) {
                     $skipped++;
-
                     continue;
                 }
 
-                // 2. Pencarian FK Barang Keluar (Berdasarkan SO + Produk)
+                // Lookup FK Barang Keluar dari Memory
                 $idBarangKeluar = null;
                 $lokasiDariBk = null;
                 $batchNumber = null;
                 $bestBefore = null;
 
-                if ($soNumber !== '' && $idProduk > 0) {
-                    $lookup1 = DB::table('barang_keluar')
-                        ->where('so_number', 'LIKE', "%{$soNumber}%")->where('id_produk', $idProduk)
-                        ->orderBy('id_barang_keluar', 'DESC')->first(['id_barang_keluar', 'id_pengguna_lokasi', 'batch', 'best_before']);
+                $lookupKeyProd = $soNumber.'|'.$idProduk;
+                $lookup1 = $bkMapBySoProd[$lookupKeyProd] ?? null;
 
-                    if ($lookup1) {
-                        $idBarangKeluar = $lookup1->id_barang_keluar;
-                        $lokasiDariBk = $lookup1->id_pengguna_lokasi;
-                        $batchNumber = $lookup1->batch;
-                        $bestBefore = $lookup1->best_before ?: null;
-                    }
-                }
-
-                // 3. Fallback Pencarian FK (Hanya berdasarkan SO)
-                if ($idBarangKeluar === null && $soNumber !== '') {
-                    $lookup2 = DB::table('barang_keluar')
-                        ->where('so_number', 'LIKE', "%{$soNumber}%")
-                        ->orderBy('id_barang_keluar', 'DESC')->first(['id_barang_keluar', 'id_pengguna_lokasi', 'batch', 'best_before']);
-
+                if ($lookup1) {
+                    $idBarangKeluar = $lookup1->id_barang_keluar;
+                    $lokasiDariBk = $lookup1->id_pengguna_lokasi;
+                    $batchNumber = $lookup1->batch;
+                    $bestBefore = $lookup1->best_before ?: null;
+                } else {
+                    $lookup2 = $bkMapBySoOnly[$soNumber] ?? null;
                     if ($lookup2) {
                         $idBarangKeluar = $lookup2->id_barang_keluar;
                         $lokasiDariBk = $lookup2->id_pengguna_lokasi;
@@ -299,8 +330,7 @@ class TraceabilityController extends Controller
                     $batchNumber = trim($it['batch_number']);
                 }
 
-                // 4. Eksekusi Insert
-                DB::table('traceability')->insert([
+                $insertRows[] = [
                     'id_barang_keluar' => $idBarangKeluar,
                     'id_pengguna_lokasi' => $idPenggunaLokasi,
                     'id_route' => ! empty($it['id_route']) ? trim($it['id_route']) : null,
@@ -317,9 +347,17 @@ class TraceabilityController extends Controller
                     'batch_number' => $batchNumber,
                     'best_before' => $bestBefore,
                     'status_delivery' => ! empty($it['status_delivery']) ? trim($it['status_delivery']) : null,
-                ]);
+                ];
 
+                $existingMap[$dupKey] = true;
                 $inserted++;
+            }
+
+            // Execute Fast Bulk Insert (Chunk per 500 baris)
+            if (! empty($insertRows)) {
+                foreach (array_chunk($insertRows, 500) as $chunk) {
+                    DB::table('traceability')->insert($chunk);
+                }
             }
 
             DB::commit();
@@ -329,12 +367,12 @@ class TraceabilityController extends Controller
                 $msg .= " {$inserted} data baru tersimpan.";
             }
             if ($skipped > 0) {
-                $msg .= " {$skipped} data dilewati (sudah ada).";
+                $msg .= " ({$skipped} baris ganda/duplikat dalam file Excel dilewati).";
             }
 
             return $this->ok(['inserted' => $inserted, 'skipped' => $skipped], $msg);
 
-} catch (Exception $e) {
+        } catch (Exception $e) {
             DB::rollBack();
 
             return $this->fail($e->getMessage(), 500);
