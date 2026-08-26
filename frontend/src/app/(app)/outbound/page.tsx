@@ -47,6 +47,7 @@ const css = `
 `;
 
 export default function OutboundTanggalPage() {
+  const [progressText, setProgressText] = useState("");
   const { toast } = useToast();
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
@@ -108,7 +109,6 @@ export default function OutboundTanggalPage() {
 
   const singleList = Object.values(singleMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const canAdd = !!session && ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
-  const [progressText, setProgressText] = useState("");
 
   const isSuperAdmin = !!session && session.user.role === "SuperAdmin";
 

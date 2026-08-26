@@ -74,6 +74,7 @@ export default function InboundTanggalPage() {
   // State untuk Upload Excel OTM
   const [uploading, setUploading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [progressText, setProgressText] = useState("");
 
   const fetchData = async (signal?: AbortSignal) => {
     try {
@@ -94,8 +95,6 @@ export default function InboundTanggalPage() {
     fetchData(controller.signal);
     return () => controller.abort();
   }, [session, keyword]);
-
-  const [progressText, setProgressText] = useState("");
 
   const handleFileUploadSubmit = async (file: File) => {
     if (!file || !session) return;
