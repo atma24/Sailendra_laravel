@@ -37,7 +37,7 @@ class DashboardController extends Controller
 
         $inbound = $this->inboundStats($filter, $monthStart, $monthEnd, $today, $dates);
         $outbound = $this->outboundStats($filter, $monthStart, $monthEnd, $today, $dates);
-        $stock = $this->ringkasanStok($filter);
+        $stock = $this->ringkasanStok($filter, $request->query('produk'));
         $stokList = $this->stokList($filter);
         $penjualan = $this->penjualanBulan($filter, $monthStart, $monthEnd);
 
@@ -157,7 +157,7 @@ class DashboardController extends Controller
             ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$monthStart, $monthEnd])
             ->selectRaw('bk.nama_produk AS nama_produk, SUM(bk.jumlah) AS qty')
             ->groupBy('bk.nama_produk')
-            ->orderByRaw('SUM(bk.jumlah) ASC');
+            ->orderByRaw('SUM(bk.jumlah) DESC');
 
         $q = $this->withLokasiFilter($q, 'bk.id_pengguna_lokasi', $filter);
 
@@ -173,22 +173,27 @@ class DashboardController extends Controller
     {
         $query = DB::table('stok_gudang_deep as sd')
             ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sd.id_stok_header')
+            ->leftJoin('produk as p', 'p.id_produk', '=', 'sg.id_produk')
             ->where('sd.jumlah', '>', 0)
-            ->selectRaw('sg.nama_produk AS nama_produk, SUM(sd.jumlah) AS stok')
-            ->groupBy('sg.nama_produk')
+            ->selectRaw("sg.nama_produk AS nama_produk, COALESCE(NULLIF(TRIM(sg.satuan), ''), NULLIF(TRIM(p.satuan), ''), 'PCS') AS satuan, SUM(sd.jumlah) AS stok")
+            ->groupBy('sg.nama_produk', 'sg.satuan', 'p.satuan')
             ->orderByDesc('stok');
 
         $query = $this->withLokasiFilter($query, 'sg.id_pengguna_lokasi', $filter);
 
         $list = [];
         foreach ($query->get() as $row) {
-            $list[] = ['nama_produk' => $row->nama_produk, 'stok' => (int) $row->stok];
+            $list[] = [
+                'nama_produk' => $row->nama_produk,
+                'satuan' => $row->satuan,
+                'stok' => (int) $row->stok
+            ];
         }
 
         return $list;
     }
 
-    private function ringkasanStok(?array $filter): array
+    private function ringkasanStok(?array $filter, $produkFilter = null): array
     {
         $kategoriExpr = "UPPER(COALESCE(l.kategori, l.nama_lokasi, 'LAINNYA'))";
         $lokasiExpr = 'UPPER(TRIM(CONCAT(b.kode_block, \'-\', ln.nomor_line)))';
@@ -200,8 +205,17 @@ class DashboardController extends Controller
             ->join('line as ln', 'ln.id_line', '=', 'lv.id_line')
             ->join('block as b', 'b.id_block', '=', 'ln.id_block')
             ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
-            ->where('sd.jumlah', '>', 0)
-            ->selectRaw("CASE
+            ->where('sd.jumlah', '>', 0);
+
+        if (!empty($produkFilter)) {
+            $produks = is_array($produkFilter) ? $produkFilter : explode(',', (string) $produkFilter);
+            $produks = array_filter(array_map('trim', $produks));
+            if (!empty($produks)) {
+                $zonaQuery->whereIn('sg.nama_produk', $produks);
+            }
+        }
+
+        $zonaQuery->selectRaw("CASE
                 WHEN UPPER(COALESCE(sg.status, 'normal')) = 'QI' THEN 'qi'
                 WHEN $kategoriExpr IN ('BAD STOCK','BADSTOCK') OR $lokasiExpr LIKE 'BAD STOCK-%' OR $lokasiExpr LIKE 'BADSTOCK-%' OR $lokasiExpr LIKE 'BS-%' THEN 'bad'
                 WHEN $kategoriExpr = 'REJECT' OR $lokasiExpr LIKE 'REJECT-%' THEN 'reject'
@@ -222,8 +236,17 @@ class DashboardController extends Controller
 
         $skuQuery = DB::table('stok_gudang_deep as sd')
             ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sd.id_stok_header')
-            ->where('sd.jumlah', '>', 0)
-            ->selectRaw('COUNT(DISTINCT sg.id_produk) AS sku, SUM(sd.jumlah) AS qty');
+            ->where('sd.jumlah', '>', 0);
+
+        if (!empty($produkFilter)) {
+            $produks = is_array($produkFilter) ? $produkFilter : explode(',', (string) $produkFilter);
+            $produks = array_filter(array_map('trim', $produks));
+            if (!empty($produks)) {
+                $skuQuery->whereIn('sg.nama_produk', $produks);
+            }
+        }
+
+        $skuQuery->selectRaw('COUNT(DISTINCT sg.id_produk) AS sku, SUM(sd.jumlah) AS qty');
 
         $skuQuery = $this->withLokasiFilter($skuQuery, 'sg.id_pengguna_lokasi', $filter);
         $sku = (array) $skuQuery->first();
