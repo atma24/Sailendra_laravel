@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, getSession, isMultiRole, setSession, useSession, type Session } from "@/lib/auth";
+import { useToast } from "@/components/ToastProvider";
 
 type Loc = { id_pengguna_lokasi: string; nama_pengguna_lokasi: string };
 type Pengguna = { id_pengguna: number; id_pengguna_lokasi: string; nama_pengguna_lokasi: string | null; username: string; role: string; status: string };
@@ -32,6 +33,16 @@ const css = `
 .loc-trigger { flex: 1; display: flex; align-items: center; justify-content: space-between; border: 0; outline: 0; background: transparent; font-size: 12px; font-weight: 750; color: var(--text-main); cursor: pointer; font-family: inherit; padding: 12px 0; }
 .profile-note { font-size: 12px; font-weight: 750; color: var(--text-soft); margin: 0 0 12px; }
 .select-all { color: var(--primary); font-size: 12px; cursor: pointer; font-weight: 700; background: none; border: 0; font-family: inherit; }
+.reset-form { display: flex; flex-direction: column; gap: 12px; }
+.reset-field { display: flex; flex-direction: column; gap: 6px; }
+.reset-label { font-size: 12px; font-weight: 750; color: var(--text-main); }
+.reset-input-wrap { position: relative; display: flex; align-items: center; }
+.reset-input { width: 100%; padding: 10px 40px 10px 12px; border-radius: 9px; border: 1.5px solid var(--line); font-size: 13px; font-weight: 600; color: var(--text-main); outline: 0; font-family: inherit; transition: border-color .2s; }
+.reset-input:focus { border-color: var(--primary); }
+.reset-toggle-btn { position: absolute; right: 10px; background: none; border: 0; color: var(--text-soft); font-size: 15px; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; }
+.reset-submit-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--primary); color: #fff; border: 0; border-radius: 9px; padding: 11px 18px; font-size: 13px; font-weight: 800; cursor: pointer; font-family: inherit; transition: filter .2s; margin-top: 4px; }
+.reset-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.reset-submit-btn:not(:disabled):hover { filter: brightness(1.08); }
 @media (max-width: 576px) { .management-stats { grid-template-columns: repeat(2, 1fr); } }
 `; 
 
@@ -61,6 +72,7 @@ const MODAL_CSS = `
 const SUPERVISOR_ROLES: Record<string, boolean> = { Supervisor: true, SuperAdmin: true };
 
 export default function ProfilePage() {
+  const { toast } = useToast();
   const session = useSession();
   const router = useRouter();
   const [pengguna, setPengguna] = useState<Pengguna[]>([]);
@@ -70,6 +82,36 @@ export default function ProfilePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // State Reset Password
+  const [curPass, setCurPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [confirmPass, setConfirmPass] = useState("");
+  const [showCur, setShowCur] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!curPass.trim()) { toast("Password saat ini wajib diisi.", "warning"); return; }
+    if (!newPass.trim()) { toast("Password baru wajib diisi.", "warning"); return; }
+    if (newPass.length < 4) { toast("Password baru minimal 4 karakter.", "warning"); return; }
+    if (newPass !== confirmPass) { toast("Konfirmasi password baru tidak cocok.", "warning"); return; }
+
+    setResetBusy(true);
+    try {
+      await apiPost("/reset-password", { current_password: curPass, new_password: newPass });
+      toast("Password berhasil diubah!", "success");
+      setCurPass("");
+      setNewPass("");
+      setConfirmPass("");
+    } catch (err) {
+      toast((err as Error).message || "Gagal mengubah password.", "error");
+    } finally {
+      setResetBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (!session) return;
@@ -230,6 +272,86 @@ export default function ProfilePage() {
           <div className="profile-info-label">ID Lokasi</div>
           <div className="profile-info-value">{session.lokasi === "all" ? "Semua Lokasi" : activeLocName}</div>
         </div>
+      </div>
+
+      <div className="management-card" style={{ marginTop: 16 }}>
+        <div className="management-header">
+          <div className="management-title-wrap">
+            <div className="management-icon"><i className="bi bi-key"></i></div>
+            <div className="management-title">Ganti Password</div>
+          </div>
+        </div>
+        <form onSubmit={handleResetPassword} className="reset-form">
+          <div className="reset-field">
+            <label className="reset-label">Password Saat Ini</label>
+            <div className="reset-input-wrap">
+              <input
+                type={showCur ? "text" : "password"}
+                className="reset-input"
+                placeholder="Masukkan password saat ini"
+                value={curPass}
+                onChange={(e) => setCurPass(e.target.value)}
+              />
+              <button
+                type="button"
+                className="reset-toggle-btn"
+                onClick={() => setShowCur(!showCur)}
+                tabIndex={-1}
+              >
+                <i className={`bi bi-eye${showCur ? "-slash" : ""}`}></i>
+              </button>
+            </div>
+          </div>
+
+          <div className="reset-field">
+            <label className="reset-label">Password Baru</label>
+            <div className="reset-input-wrap">
+              <input
+                type={showNew ? "text" : "password"}
+                className="reset-input"
+                placeholder="Masukkan password baru"
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+              />
+              <button
+                type="button"
+                className="reset-toggle-btn"
+                onClick={() => setShowNew(!showNew)}
+                tabIndex={-1}
+              >
+                <i className={`bi bi-eye${showNew ? "-slash" : ""}`}></i>
+              </button>
+            </div>
+          </div>
+
+          <div className="reset-field">
+            <label className="reset-label">Konfirmasi Password Baru</label>
+            <div className="reset-input-wrap">
+              <input
+                type={showConfirm ? "text" : "password"}
+                className="reset-input"
+                placeholder="Ulangi password baru"
+                value={confirmPass}
+                onChange={(e) => setConfirmPass(e.target.value)}
+              />
+              <button
+                type="button"
+                className="reset-toggle-btn"
+                onClick={() => setShowConfirm(!showConfirm)}
+                tabIndex={-1}
+              >
+                <i className={`bi bi-eye${showConfirm ? "-slash" : ""}`}></i>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <button type="submit" className="reset-submit-btn" disabled={resetBusy}>
+              {resetBusy ? <i className="bi bi-arrow-repeat spin"></i> : <i className="bi bi-check-lg"></i>}
+              Simpan Password Baru
+            </button>
+          </div>
+        </form>
       </div>
 
       {modalOpen && (

@@ -119,4 +119,38 @@ class AuthController extends Controller
 
         return $this->ok($row->toArray(), 'Sesi valid');
     }
+
+    public function resetPassword(Request $request)
+    {
+        $user = $request->user();
+        $currentPassword = (string) $request->input('current_password');
+        $newPassword = (string) $request->input('new_password');
+
+        if (trim($currentPassword) === '' || trim($newPassword) === '') {
+            return $this->fail('Password lama dan password baru wajib diisi');
+        }
+
+        if (strlen($newPassword) < 4) {
+            return $this->fail('Password baru minimal 4 karakter');
+        }
+
+        // Ambil data user beserta hash password
+        $pengguna = Pengguna::where('id_pengguna', $user->id_pengguna)->first();
+        if (! $pengguna) {
+            return $this->fail('Pengguna tidak ditemukan', 444);
+        }
+
+        $valid = Hash::check($currentPassword, $pengguna->password) || hash_equals($pengguna->password, $currentPassword);
+        if (! $valid) {
+            return $this->fail('Password lama yang Anda masukkan salah');
+        }
+
+        // Update password untuk semua akun dengan username yang sama (jika ada multi-lokasi akun)
+        $hashed = Hash::make($newPassword);
+        Pengguna::where('username', $pengguna->username)->update([
+            'password' => $hashed,
+        ]);
+
+        return $this->okMessage('Password berhasil diperbarui');
+    }
 }

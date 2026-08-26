@@ -86,6 +86,7 @@ class DashboardController extends Controller
     private function inboundStats(?array $filter, string $monthStart, string $monthEnd, string $today, array $dates): array
     {
         $base = DB::table('barang_masuk as bm')
+            ->whereIn(DB::raw("LOWER(COALESCE(bm.status, ''))"), ['confirmed', 'selesai'])
             ->selectRaw('COUNT(DISTINCT bm.no_dn) AS total')
             ->selectRaw('COALESCE(SUM(bm.jumlah),0) AS total_qty')
             ->selectRaw('COUNT(DISTINCT CASE WHEN DATE(bm.tanggal_masuk) BETWEEN ? AND ? THEN bm.no_dn END) AS bulan_ini', [$monthStart, $monthEnd])
@@ -97,7 +98,9 @@ class DashboardController extends Controller
 
         $series = [];
         $smap = $this->withLokasiFilter(
-            DB::table('barang_masuk as bm')->selectRaw('DATE(bm.tanggal_masuk) AS tgl, bm.jumlah AS qty'),
+            DB::table('barang_masuk as bm')
+                ->whereIn(DB::raw("LOWER(COALESCE(bm.status, ''))"), ['confirmed', 'selesai'])
+                ->selectRaw('DATE(bm.tanggal_masuk) AS tgl, bm.jumlah AS qty'),
             'bm.id_pengguna_lokasi',
             $filter
         )->get()->groupBy('tgl')->map(fn ($g) => (int) $g->sum('qty'))->toArray();
@@ -119,6 +122,7 @@ class DashboardController extends Controller
     private function outboundStats(?array $filter, string $monthStart, string $monthEnd, string $today, array $dates): array
     {
         $base = DB::table('barang_keluar as bk')
+            ->whereIn(DB::raw("LOWER(COALESCE(bk.status, ''))"), ['confirmed', 'selesai'])
             ->selectRaw('COUNT(DISTINCT bk.gin_no) AS total')
             ->selectRaw('COALESCE(SUM(bk.jumlah),0) AS total_qty')
             ->selectRaw('COUNT(DISTINCT CASE WHEN DATE(bk.tanggal_keluar) BETWEEN ? AND ? THEN bk.gin_no END) AS bulan_ini', [$monthStart, $monthEnd])
@@ -131,7 +135,9 @@ class DashboardController extends Controller
 
         $series = [];
         $smap = $this->withLokasiFilter(
-            DB::table('barang_keluar as bk')->selectRaw('DATE(bk.tanggal_keluar) AS d, bk.jumlah AS qty'),
+            DB::table('barang_keluar as bk')
+                ->whereIn(DB::raw("LOWER(COALESCE(bk.status, ''))"), ['confirmed', 'selesai'])
+                ->selectRaw('DATE(bk.tanggal_keluar) AS d, bk.jumlah AS qty'),
             'bk.id_pengguna_lokasi',
             $filter
         )->get()->groupBy('d')->map(fn ($g) => (int) $g->sum('qty'))->toArray();
@@ -154,6 +160,7 @@ class DashboardController extends Controller
     private function penjualanBulan(?array $filter, string $monthStart, string $monthEnd): array
     {
         $q = DB::table('barang_keluar as bk')
+            ->whereIn(DB::raw("LOWER(COALESCE(bk.status, ''))"), ['confirmed', 'selesai'])
             ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$monthStart, $monthEnd])
             ->selectRaw('bk.nama_produk AS nama_produk, SUM(bk.jumlah) AS qty')
             ->groupBy('bk.nama_produk')
