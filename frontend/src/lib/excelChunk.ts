@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
  * @param file File excel asli dari pengguna
  * @param chunkSize Jumlah baris per batch file (default 50)
  */
-export async function chunkExcelFile(file: File, chunkSize = 50): Promise<File[]> {
+export async function chunkExcelFile(file: File, chunkSize = 15): Promise<File[]> {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: "array" });
   const firstSheetName = workbook.SheetNames[0];

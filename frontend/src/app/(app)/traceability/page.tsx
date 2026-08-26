@@ -265,7 +265,7 @@ export default function TraceabilityPage() {
     setProgressText("Membaca file Excel...");
 
     try {
-      const chunks = await chunkExcelFile(file, 40);
+      const chunks = await chunkExcelFile(file, 15);
       const totalChunks = chunks.length;
 
       const raw = localStorage.getItem("sailendra_session");
@@ -287,7 +287,7 @@ export default function TraceabilityPage() {
         fd.append("file_excel", currentChunk);
         fd.append("upload_lokasi", lok);
 
-        const res = await fetch(getUploadUrl("/api/traceability/upload-file"), { method: "POST", headers, body: fd });
+        const res = await fetch("/api/traceability/upload-file", { method: "POST", headers, body: fd });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.success === false) throw new Error(`Batch ${i + 1}/${totalChunks} gagal: ${body.message || "Upload gagal."}`);
         const unmapped = body.unmapped ? ` (${body.unmapped} produk tak dikenal)` : "";

@@ -136,15 +136,15 @@ export default function OutboundTanggalPage() {
     setProgressText("Membaca file Excel...");
 
     try {
-      // Pecah file Excel menjadi batch per 40 baris agar tidak memicu timeout 60s cPanel
-      const chunks = await chunkExcelFile(file, 40);
+      // Pecah file Excel menjadi batch per 15 baris agar tidak memicu timeout 60s cPanel
+      const chunks = await chunkExcelFile(file, 15);
       const totalChunks = chunks.length;
 
       const raw = localStorage.getItem("sailendra_session");
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
-      const uploadUrl = getUploadUrl(`/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`);
+      const uploadUrl = `/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`;
 
       let lastMessage = "Upload selesai.";
 

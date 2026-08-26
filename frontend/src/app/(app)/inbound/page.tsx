@@ -103,7 +103,7 @@ export default function InboundTanggalPage() {
     setProgressText("Membaca file Excel...");
 
     try {
-      const chunks = await chunkExcelFile(file, 40);
+      const chunks = await chunkExcelFile(file, 15);
       const totalChunks = chunks.length;
 
       const raw = localStorage.getItem("sailendra_session");
@@ -126,7 +126,7 @@ export default function InboundTanggalPage() {
         fd.append("id_pengguna", String(session.user.id_pengguna));
         fd.append("upload_lokasi", String(aktifLokasiId(session)));
 
-        const res = await fetch(getUploadUrl("/api/barang-masuk/upload"), {
+        const res = await fetch("/api/barang-masuk/upload", {
           method: "POST",
           headers,
           body: fd
