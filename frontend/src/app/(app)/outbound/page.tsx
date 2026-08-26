@@ -133,47 +133,32 @@ export default function OutboundTanggalPage() {
     if (!lok) { setUploadMsg("Pilih lokasi upload."); return; }
     setUploadBusy(true);
     setUploadMsg("");
-    setProgressText("Membaca file Excel...");
+    setProgressText("Mengunggah dan memproses data Excel...");
 
     try {
-      // Pecah file Excel berdasarkan GIN NO (misal 20 GIN per batch utuh)
-      const chunks = await chunkExcelFile(file, 20);
-      const totalChunks = chunks.length;
-
       const raw = localStorage.getItem("sailendra_session");
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
       const uploadUrl = `/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`;
 
-      let lastMessage = "Upload selesai.";
+      const fd = new FormData();
+      fd.append("file_excel", file);
+      fd.append("upload_lokasi", lok);
+      fd.append("id_pengguna", String(session!.user.id_pengguna));
 
-      for (let i = 0; i < totalChunks; i++) {
-        const currentChunk = chunks[i];
-        if (totalChunks > 1) {
-          setProgressText(`Memproses bagian ${i + 1} dari ${totalChunks} batch data...`);
-        } else {
-          setProgressText("Memproses data...");
-        }
+      const res = await fetch(uploadUrl, {
+        method: "POST",
+        headers,
+        body: fd,
+      });
 
-        const fd = new FormData();
-        fd.append("file_excel", currentChunk);
-        fd.append("upload_lokasi", lok);
-        fd.append("id_pengguna", String(session!.user.id_pengguna));
-
-        const res = await fetch(uploadUrl, {
-          method: "POST",
-          headers,
-          body: fd,
-        });
-
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.success === false) {
-          throw new Error(`Batch ${i + 1}/${totalChunks} gagal: ${body.message || "Upload gagal."}`);
-        }
-        if (body.message) lastMessage = body.message;
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.success === false) {
+        throw new Error(body.message || "Upload gagal.");
       }
 
+      const lastMessage = body.message || "Upload selesai.";
       sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: lastMessage, type: "success" }));
       setKeyword(" ");
       setKeyword("");
@@ -184,7 +169,6 @@ export default function OutboundTanggalPage() {
       toast((e as Error).message || "Upload gagal.", "error");
     } finally {
       setUploadBusy(false);
-      setProgressText("");
     }
   };
 

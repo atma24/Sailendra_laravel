@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiGet, getUploadUrl } from "@/lib/api";
-import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+import { apiGet } from "@/lib/api";
+import { isMultiRole, lokasiParam, useSession, aktifLokasiId } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 import { useToast } from "@/components/ToastProvider";
-import { chunkExcelFile } from "@/lib/excelChunk";
 
 type BmRow = {
   id_barang_masuk: number;
@@ -74,7 +73,6 @@ export default function InboundTanggalPage() {
   // State untuk Upload Excel OTM
   const [uploading, setUploading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [progressText, setProgressText] = useState("");
 
   const fetchData = async (signal?: AbortSignal) => {
     try {
@@ -100,51 +98,33 @@ export default function InboundTanggalPage() {
     if (!file || !session) return;
 
     setUploading(true);
-    setProgressText("Membaca file Excel...");
+    const fd = new FormData();
+    fd.append("file_excel", file);
+    fd.append("id_pengguna", String(session.user.id_pengguna));
+    fd.append("upload_lokasi", String(aktifLokasiId(session))); 
 
     try {
-      const chunks = await chunkExcelFile(file, 20);
-      const totalChunks = chunks.length;
-
       const raw = localStorage.getItem("sailendra_session");
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
 
-      let lastMsg = "Berhasil upload file OTM.";
+      const res = await fetch("/api/barang-masuk/upload", {
+        method: "POST",
+        headers,
+        body: fd
+      });
 
-      for (let i = 0; i < totalChunks; i++) {
-        const currentChunk = chunks[i];
-        if (totalChunks > 1) {
-          setProgressText(`Memproses bagian ${i + 1} dari ${totalChunks} batch data...`);
-        } else {
-          setProgressText("Memproses data...");
-        }
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.message || "Gagal mengunggah file OTM.");
 
-        const fd = new FormData();
-        fd.append("file_excel", currentChunk);
-        fd.append("id_pengguna", String(session.user.id_pengguna));
-        fd.append("upload_lokasi", String(aktifLokasiId(session)));
-
-        const res = await fetch("/api/barang-masuk/upload", {
-          method: "POST",
-          headers,
-          body: fd
-        });
-
-        const json = await res.json();
-        if (!res.ok || !json.success) throw new Error(`Batch ${i + 1}/${totalChunks} gagal: ${json.message || "Gagal mengunggah file OTM."}`);
-        if (json.message) lastMsg = json.message;
-      }
-
-      toast(lastMsg, "success");
+      toast(json.message || "Berhasil upload file OTM.", "success");
       setShowUpload(false);
       fetchData();
     } catch (err: any) {
       toast(err.message || "Terjadi kesalahan saat mengunggah file.", "error");
     } finally {
       setUploading(false);
-      setProgressText("");
     }
   };
 
@@ -242,7 +222,6 @@ export default function InboundTanggalPage() {
         onClose={() => setShowUpload(false)}
         onSubmit={handleFileUploadSubmit}
         busy={uploading}
-        progressText={progressText}
       />
 
       {multi ? (

@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiGet, getUploadUrl } from "@/lib/api";
+import { apiGet } from "@/lib/api";
 import { isMultiRole, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
 import { useToast } from "@/components/ToastProvider";
-import { chunkExcelFile } from "@/lib/excelChunk";
 
 type TraceRow = {
   id_traceability: number;
@@ -241,12 +240,9 @@ export default function TraceabilityPage() {
     w.document.close();
   };
 
-  const [progressText, setProgressText] = useState("");
-
   const openUpload = async () => {
     setUploadMsg("");
     setUploadLok("");
-    setProgressText("");
     if (fileRef.current) fileRef.current.value = "";
     if (multi) {
       try {
@@ -262,46 +258,25 @@ export default function TraceabilityPage() {
     if (!lok) { setUploadMsg("Pilih lokasi upload."); return; }
     setUploadBusy(true);
     setUploadMsg("");
-    setProgressText("Membaca file Excel...");
-
+    const fd = new FormData();
+    fd.append("file_excel", file);
+    fd.append("upload_lokasi", lok);
     try {
-      const chunks = await chunkExcelFile(file, 20);
-      const totalChunks = chunks.length;
-
       const raw = localStorage.getItem("sailendra_session");
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
-
-      let lastMsg = "Upload selesai.";
-
-      for (let i = 0; i < totalChunks; i++) {
-        const currentChunk = chunks[i];
-        if (totalChunks > 1) {
-          setProgressText(`Memproses bagian ${i + 1} dari ${totalChunks} batch data...`);
-        } else {
-          setProgressText("Memproses data...");
-        }
-
-        const fd = new FormData();
-        fd.append("file_excel", currentChunk);
-        fd.append("upload_lokasi", lok);
-
-        const res = await fetch("/api/traceability/upload-file", { method: "POST", headers, body: fd });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.success === false) throw new Error(`Batch ${i + 1}/${totalChunks} gagal: ${body.message || "Upload gagal."}`);
-        const unmapped = body.unmapped ? ` (${body.unmapped} produk tak dikenal)` : "";
-        lastMsg = `${body.message || "Upload selesai."}${unmapped}`;
-      }
-
-      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: lastMsg, type: "success" }));
+      const res = await fetch("/api/traceability/upload-file", { method: "POST", headers, body: fd });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.success === false) throw new Error(body.message || "Upload gagal.");
+      const unmapped = body.unmapped ? ` (${body.unmapped} produk tak dikenal)` : "";
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: `${body.message || "Upload selesai."}${unmapped}`, type: "success" }));
       window.location.reload();
     } catch (e) {
       setUploadMsg(`Gagal: ${(e as Error).message}`);
       toast((e as Error).message || "Upload gagal.", "error");
     } finally {
       setUploadBusy(false);
-      setProgressText("");
     }
   };
 
@@ -457,11 +432,10 @@ export default function TraceabilityPage() {
         <UploadModal
           open={showUpload}
           title="Upload Data Traceability"
-          note="Upload file Excel traceability. Format kolom: DEPO, DRIVER GUDANG, DRIVER, NO GIN, SO NUMBER, NAMA CUSTOMER, ID PRODUK, NAMA PRODUK, QTY, PLANT, BEST BEFORE, BATCH NUMBER, SALES GROUP"
+          note="Pilih file Excel (.xlsx / .xls / .csv) data Traceability yang akan diproses."
           onClose={() => setShowUpload(false)}
           onSubmit={doUploadSubmit}
           busy={uploadBusy}
-          progressText={progressText}
         />
       )}
     </div>
