@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, useSession } from "@/lib/auth";
+import UploadModal from "@/components/UploadModal";
+import { useToast } from "@/components/ToastProvider";
 
 type TraceRow = {
   id_traceability: number;
@@ -82,6 +84,7 @@ const css = `
 `;
 
 export default function TraceabilityPage() {
+  const { toast } = useToast();
   const session = useSession();
   const router = useRouter();
   const multi = !!session && isMultiRole(session.user.role);
@@ -250,14 +253,13 @@ export default function TraceabilityPage() {
     setShowUpload(true);
   };
 
-  const doUpload = async () => {
-    if (!fileRef.current?.files?.[0]) { setUploadMsg("Pilih file terlebih dahulu."); return; }
+  const doUploadSubmit = async (file: File) => {
     const lok = uploadLok || String(session!.user.id_pengguna_lokasi || "");
     if (!lok) { setUploadMsg("Pilih lokasi upload."); return; }
     setUploadBusy(true);
     setUploadMsg("");
     const fd = new FormData();
-    fd.append("file_excel", fileRef.current.files[0]);
+    fd.append("file_excel", file);
     fd.append("upload_lokasi", lok);
     try {
       const raw = localStorage.getItem("sailendra_session");
@@ -268,10 +270,11 @@ export default function TraceabilityPage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok || body.success === false) throw new Error(body.message || "Upload gagal.");
       const unmapped = body.unmapped ? ` (${body.unmapped} produk tak dikenal)` : "";
-      setUploadMsg(`Sukses: ${body.message || "Upload selesai."}${unmapped}`);
-      window.setTimeout(() => window.location.reload(), 1200);
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: `${body.message || "Upload selesai."}${unmapped}`, type: "success" }));
+      window.location.reload();
     } catch (e) {
       setUploadMsg(`Gagal: ${(e as Error).message}`);
+      toast((e as Error).message || "Upload gagal.", "error");
     } finally {
       setUploadBusy(false);
     }
@@ -426,48 +429,14 @@ export default function TraceabilityPage() {
       </div>
 
       {showUpload && (
-        <div className="trace-upload-overlay">
-          <div className="trace-upload-modal">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#172033" }}>Upload Data Traceability</h3>
-              <button type="button" onClick={() => setShowUpload(false)} style={{ background: "none", border: "none", fontSize: 20, fontWeight: "bold", color: "#8a93a3", cursor: "pointer" }}>&times;</button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-              {multi && (
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 750, color: "#172033", marginBottom: 4, display: "block" }}>Pilih Lokasi Upload</label>
-                  <select value={uploadLok} onChange={(e) => setUploadLok(e.target.value)} required
-                    style={{ width: "100%", height: 38, padding: "0 10px", border: "1px solid #e2e7f0", borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 700, color: "#172033", outline: "none" }}>
-                    <option value="">-- Pilih Lokasi --</option>
-                    {lokasiList.map((l) => <option key={l.id_pengguna_lokasi} value={l.id_pengguna_lokasi}>{l.id_pengguna_lokasi} - {l.nama_pengguna_lokasi}</option>)}
-                  </select>
-                </div>
-              )}
-              <div>
-                <input ref={fileRef} type="file" accept=".csv, .xlsx" required
-                  style={{ width: "100%", padding: 8, border: "1px solid #e2e7f0", borderRadius: 8, fontSize: 12 }} />
-              </div>
-              {uploadMsg && (
-                <div style={{ borderRadius: 9, padding: "8px 10px", fontSize: 11, fontWeight: 800,
-                  background: uploadMsg.startsWith("Sukses") ? "#ecfdf5" : "#fff1f2",
-                  border: `1px solid ${uploadMsg.startsWith("Sukses") ? "#bbf7d0" : "#fecdd3"}`,
-                  color: uploadMsg.startsWith("Sukses") ? "#166534" : "#be123c" }}>
-                  {uploadMsg}
-                </div>
-              )}
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                <button type="button" onClick={() => setShowUpload(false)} disabled={uploadBusy}
-                  style={{ padding: "8px 15px", border: "1px solid #e2e7f0", borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Batal</button>
-                <button type="button" onClick={doUpload} disabled={uploadBusy}
-                  style={{ padding: "8px 15px", border: "none", borderRadius: 8, background: "#191970", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                  <i className="bi bi-upload" style={{ marginRight: 4 }}></i>
-                  {uploadBusy ? "Memproses..." : "Upload Sekarang"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <UploadModal
+          open={showUpload}
+          title="Upload Data Traceability"
+          note="Pilih file Excel (.xlsx / .xls / .csv) data Traceability yang akan diproses."
+          onClose={() => setShowUpload(false)}
+          onSubmit={doUploadSubmit}
+          busy={uploadBusy}
+        />
       )}
     </div>
   );

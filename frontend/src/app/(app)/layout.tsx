@@ -27,6 +27,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [auth, setAuth] = useState<{ loaded: boolean; session: Session | null }>({
     loaded: false,
     session: null,
@@ -35,6 +36,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- mount gate so SSR & initial client render both render nothing (deterministic), avoiding hydration mismatch from localStorage auth
     setAuth({ loaded: true, session: getSession() });
+    const saved = localStorage.getItem("sailendra_sidebar_collapsed");
+    if (saved === "true") setCollapsed(true);
   }, []);
 
   useEffect(() => {
@@ -62,6 +65,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (!auth.loaded || !auth.session) return null;
 
+  function toggleCollapse() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sailendra_sidebar_collapsed", String(next));
+      return next;
+    });
+  }
+
   function logout() {
     clearSession();
     setSidebarOpen(false);
@@ -69,12 +80,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <Sidebar
         session={auth.session}
         onLogout={logout}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapse}
       />
 
       <main className="main-content">

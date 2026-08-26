@@ -377,7 +377,7 @@ export default function HistoryLayoutGudangPage() {
       onOk: async () => {
         try {
           await api(`/line/${idLine}`, { method: "DELETE", body: JSON.stringify({ id_line: idLine, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role }) });
-          notify("success", "Berhasil", "Selesai");
+          sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Line berhasil dihapus.", type: "success" }));
           reload();
         } catch (e) { notify("error", "Gagal", (e as Error).message || "Gagal menghapus line."); }
       },
@@ -392,7 +392,7 @@ export default function HistoryLayoutGudangPage() {
       onOk: async () => {
         try {
           await api(`/block/${idBlock}`, { method: "DELETE", body: JSON.stringify({ id_block: idBlock, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role }) });
-          notify("success", "Berhasil", "Selesai");
+          sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Block berhasil dihapus.", type: "success" }));
           setIdBlock(0);
           setLayoutBlocks([]);
           setRefresh((v) => v + 1);

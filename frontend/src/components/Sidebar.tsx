@@ -15,11 +15,15 @@ export default function Sidebar({
   onLogout,
   open = false,
   onClose,
+  collapsed = false,
+  onToggleCollapse,
 }: {
   session: Session;
   onLogout: () => void;
   open?: boolean;
   onClose?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }) {
   const pathname = usePathname();
   const menus = menusForRole(session.user.role);
@@ -28,12 +32,20 @@ export default function Sidebar({
   );
 
   return (
-    <aside className={`sidebar ${open ? "show" : ""}`}>
+    <aside className={`sidebar ${open ? "show" : ""} ${collapsed ? "collapsed" : ""}`}>
       <div className="brand-area">
-        <div className="brand-logo">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logosailendra.png" alt="Logo Sailendra" />
-        </div>
+        <button
+          type="button"
+          className="brand-logo-btn"
+          onClick={onToggleCollapse}
+          title={collapsed ? "Perluas Sidebar" : "Kecilkan Sidebar"}
+        >
+          <div className="brand-logo">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logosailendra.png" alt="Logo Sailendra" />
+          </div>
+          {!collapsed && <span className="brand-name">Sailendra</span>}
+        </button>
         {onClose && (
           <button
             type="button"
@@ -51,9 +63,10 @@ export default function Sidebar({
           href="/dashboard"
           onClick={onClose}
           className={`nav-link-custom ${pathname === "/dashboard" || pathname === "/" ? "active" : ""}`}
+          title={collapsed ? "Dashboard" : undefined}
         >
           <i className="bi bi-buildings-fill nav-icon"></i>
-          <span className="nav-text">Dashboard</span>
+          {!collapsed && <span className="nav-text">Dashboard</span>}
         </Link>
 
         {menus.map((m) => {
@@ -65,10 +78,11 @@ export default function Sidebar({
                   type="button"
                   className={`nav-button-custom ${open ? "open" : ""}`}
                   onClick={() => setOpenParent(open ? null : m.title)}
+                  title={collapsed ? m.title : undefined}
                 >
                   <i className={`${m.icon} nav-icon`}></i>
-                  <span className="nav-text">{m.title}</span>
-                  <i className="bi bi-chevron-down chevron"></i>
+                  {!collapsed && <span className="nav-text">{m.title}</span>}
+                  {!collapsed && <i className="bi bi-chevron-down chevron"></i>}
                 </button>
 
                 <div className={`submenu-wrap ${open ? "show" : ""}`}>
@@ -78,8 +92,9 @@ export default function Sidebar({
                       href={c.path}
                       onClick={onClose}
                       className={`submenu-link ${pathname.startsWith(c.path) ? "active" : ""}`}
+                      title={collapsed ? c.title : undefined}
                     >
-                      {c.title}
+                      {!collapsed && <span>{c.title}</span>}
                     </Link>
                   ))}
                 </div>
@@ -92,18 +107,19 @@ export default function Sidebar({
               href={m.path!}
               onClick={onClose}
               className={`nav-link-custom ${pathname === m.path || pathname.startsWith(m.path + "/") ? "active" : ""}`}
+              title={collapsed ? m.title : undefined}
             >
               <i className={`${m.icon} nav-icon`}></i>
-              <span className="nav-text">{m.title}</span>
+              {!collapsed && <span className="nav-text">{m.title}</span>}
             </Link>
           );
         })}
       </nav>
 
       <div className="sidebar-footer">
-        <button type="button" className="logout-btn" onClick={onLogout}>
+        <button type="button" className="logout-btn" onClick={onLogout} title="Keluar dari Aplikasi">
           <i className="bi bi-box-arrow-right"></i>
-          <span>Logout</span>
+          {!collapsed && <span>Logout</span>}
         </button>
       </div>
     </aside>

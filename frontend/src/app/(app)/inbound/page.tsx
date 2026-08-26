@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import { isMultiRole, lokasiParam, useSession, aktifLokasiId } from "@/lib/auth"; // Tambahkan aktifLokasiId
+import { isMultiRole, lokasiParam, useSession, aktifLokasiId } from "@/lib/auth";
+import UploadModal from "@/components/UploadModal";
+import { useToast } from "@/components/ToastProvider";
 
 type BmRow = {
   id_barang_masuk: number;
@@ -62,24 +64,15 @@ const css = `
 export default function InboundTanggalPage() {
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
+  const { toast } = useToast();
   const [rows, setRows] = useState<BmRow[]>([]);
-  const [keyword, setKeyword] = useState("");
   const [search, setSearch] = useState("");
+  const [keyword, setKeyword] = useState("");
   const [loaded, setLoaded] = useState(false);
   
   // State untuk Upload Excel OTM
   const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // State untuk Toast Notification
-  const [toasts, setToasts] = useState<{ id: number; type: string; msg: string }[]>([]);
-  let toastSeq = 0;
-  const notify = (type: string, msg: string) => {
-    const id = ++toastSeq;
-    setToasts((t) => [...t, { id, type, msg }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), type === "error" ? 9000 : 6000);
-  };
-  const closeToast = (id: number) => setToasts((t) => t.filter((x) => x.id !== id));
+  const [showUpload, setShowUpload] = useState(false);
 
   const fetchData = async (signal?: AbortSignal) => {
     try {
@@ -101,8 +94,7 @@ export default function InboundTanggalPage() {
     return () => controller.abort();
   }, [session, keyword]);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleFileUploadSubmit = async (file: File) => {
     if (!file || !session) return;
 
     setUploading(true);
@@ -112,7 +104,6 @@ export default function InboundTanggalPage() {
     fd.append("upload_lokasi", String(aktifLokasiId(session))); 
 
     try {
-      // Gunakan relative /api biar lewat Next.js rewrite (sama kayak halaman lain)
       const raw = localStorage.getItem("sailendra_session");
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
@@ -127,13 +118,13 @@ export default function InboundTanggalPage() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.message || "Gagal mengunggah file OTM.");
 
-      notify("success", json.message || "Berhasil upload file OTM.");
-      fetchData(); // Reload data setelah sukses upload
+      toast(json.message || "Berhasil upload file OTM.", "success");
+      setShowUpload(false);
+      fetchData();
     } catch (err: any) {
-      notify("error", err.message);
+      toast(err.message || "Terjadi kesalahan saat mengunggah file.", "error");
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -193,22 +184,6 @@ export default function InboundTanggalPage() {
   return (
     <div className="inbound-page">
       <style>{css}</style>
-      
-      {/* Toast Notification Container */}
-      <div id="toastWrap" className="sailendra-toast-wrap" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={`sailendra-toast ${t.type === "success" ? "success" : "error"}`}>
-            <div className="sailendra-toast-icon">
-              <i className={`bi ${t.type === "success" ? "bi-check-lg" : "bi-exclamation-lg"}`}></i>
-            </div>
-            <div className="sailendra-toast-content">
-              <div className="sailendra-toast-title">{t.type === "success" ? "Berhasil" : "Gagal"}</div>
-              <div className="sailendra-toast-message">{t.msg}</div>
-            </div>
-            <button type="button" className="sailendra-toast-close" onClick={() => closeToast(t.id)}><i className="bi bi-x-lg"></i></button>
-          </div>
-        ))}
-      </div>
 
       <div className="inbound-card">
         <div className="inbound-toolbar">
@@ -227,10 +202,9 @@ export default function InboundTanggalPage() {
           
           {canAdd && (
             <div style={{ display: "flex", gap: "6px" }}>
-              <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} style={{ display: "none" }} onChange={handleFileUpload} />
-              <button type="button" className="inbound-upload-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                <i className={uploading ? "bi bi-hourglass-split" : "bi bi-upload"}></i>
-                {uploading ? "Mengunggah..." : "Upload OTM"}
+              <button type="button" className="inbound-upload-btn" onClick={() => setShowUpload(true)} disabled={uploading}>
+                <i className="bi bi-upload"></i>
+                Upload OTM
               </button>
               <Link className="inbound-add-btn" href="/inbound/form">
                 <i className="bi bi-plus-lg"></i>
@@ -240,6 +214,15 @@ export default function InboundTanggalPage() {
           )}
         </div>
       </div>
+
+      <UploadModal
+        open={showUpload}
+        title="Upload File OTM Inbound"
+        note="Pilih file Excel (.xlsx / .xls) data OTM Inbound yang akan diproses ke dalam sistem."
+        onClose={() => setShowUpload(false)}
+        onSubmit={handleFileUploadSubmit}
+        busy={uploading}
+      />
 
       {multi ? (
         Object.entries(lokasiMap).map(([lok, g]) => (

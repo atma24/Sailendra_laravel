@@ -65,6 +65,7 @@ export default function LoginPage() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
+              maxLength={25}
               required
               autoFocus
             />
@@ -82,6 +83,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
+              maxLength={25}
               required
             />
             <button type="button" className="auth-toggle" onClick={() => setShow((s) => !s)}>

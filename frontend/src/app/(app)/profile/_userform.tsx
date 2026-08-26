@@ -165,7 +165,7 @@ export default function UserFormPage({ editId }: { editId?: number }) {
           <label>Username</label>
           <div className="input-icon-wrap">
             <i className="bi bi-person-fill"></i>
-            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" />
+            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" maxLength={25} />
           </div>
         </div>
 
@@ -173,7 +173,7 @@ export default function UserFormPage({ editId }: { editId?: number }) {
           <label>{isEdit ? "Kata sandi baru (opsional)" : "Kata sandi"}</label>
           <div className="input-icon-wrap">
             <i className="bi bi-lock-fill"></i>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={isEdit ? "Kata sandi baru (opsional)" : "Kata sandi"} />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={isEdit ? "Kata sandi baru (opsional)" : "Kata sandi"} maxLength={25} />
           </div>
         </div>
 

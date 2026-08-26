@@ -423,8 +423,9 @@ export default function LayoutGudangPage() {
       if (!res.ok || body?.success === false) {
         throw new Error(body?.message || "Gagal mengimpor stock.");
       }
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: body?.message || "Berhasil mengimpor stock.", type: "success" }));
       setShowUpload(false);
-      setTimeout(() => window.location.reload(), 800);
+      window.location.reload();
     } finally {
       setImporting(false);
     }

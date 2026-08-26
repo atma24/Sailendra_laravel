@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+import UploadModal from "@/components/UploadModal";
+import { useToast } from "@/components/ToastProvider";
 
 type BkRow = {
   id_barang_keluar: number;
@@ -44,6 +46,7 @@ const css = `
 `;
 
 export default function OutboundTanggalPage() {
+  const { toast } = useToast();
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
   const [rows, setRows] = useState<BkRow[]>([]);
@@ -121,14 +124,13 @@ export default function OutboundTanggalPage() {
     setModal(which);
   };
 
-  const uploadFile = async () => {
-    if (!fileRef.current?.files?.[0]) { setUploadMsg("Pilih file terlebih dahulu."); return; }
+  const uploadFileSubmit = async (file: File) => {
     const lok = uploadLok || String(session!.user.id_pengguna_lokasi || "");
     if (!lok) { setUploadMsg("Pilih lokasi upload."); return; }
     setUploadBusy(true);
     setUploadMsg("");
     const fd = new FormData();
-    fd.append("file_excel", fileRef.current.files[0]);
+    fd.append("file_excel", file);
     fd.append("upload_lokasi", lok);
     fd.append("id_pengguna", String(session!.user.id_pengguna));
     try {
@@ -145,12 +147,14 @@ export default function OutboundTanggalPage() {
       if (!res.ok || body.success === false) {
         throw new Error(body.message || "Upload gagal.");
       }
-      setUploadMsg(`Sukses: ${body.message || "Upload selesai."}`);
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: body.message || "Upload selesai.", type: "success" }));
       setKeyword(" ");
       setKeyword("");
-      window.setTimeout(() => window.location.reload(), 1200);
+      window.setTimeout(() => setModal(""), 500);
+      window.location.reload();
     } catch (e) {
       setUploadMsg(`Gagal: ${(e as Error).message}`);
+      toast((e as Error).message || "Upload gagal.", "error");
     } finally {
       setUploadBusy(false);
     }
@@ -232,75 +236,19 @@ export default function OutboundTanggalPage() {
       )}
 
       {modal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#fff", borderRadius: 11, padding: 20, width: 400, maxWidth: "90%", boxShadow: "0 12px 32px rgba(15,23,42,0.12)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "var(--text-main)" }}>
-                {modal === "import" ? "Import Data Historical Outbound" : "Upload Data Outbound"}
-              </h3>
-              <button type="button" onClick={() => setModal("")} style={{ background: "none", border: "none", fontSize: 20, fontWeight: "bold", color: "#8a93a3", cursor: "pointer" }}>&times;</button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-              {multi && (
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 750, color: "var(--text-main)", marginBottom: 4, display: "block" }}>
-                    Pilih Lokasi Upload {modal === "import" ? <span style={{ color: "red" }}>*</span> : ""}
-                  </label>
-                  <select value={uploadLok} onChange={(e) => setUploadLok(e.target.value)} required
-                    style={{ width: "100%", height: 38, padding: "0 10px", border: "1px solid #e2e7f0", borderRadius: 8, background: "#fff", fontSize: 12, fontWeight: 700, color: "var(--text-main)", outline: "none" }}>
-                    <option value="">-- Pilih Lokasi --</option>
-                    {lokasiList.map((l) => (
-                      <option key={l.id_pengguna_lokasi} value={l.id_pengguna_lokasi}>
-                        {l.id_pengguna_lokasi} - {l.nama_pengguna_lokasi}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "var(--text-soft)", display: "block", marginBottom: 5 }}>
-                  Pilih File (Format .XLSX / .CSV)
-                </label>
-                <input ref={fileRef} type="file" accept=".csv, .xlsx" required
-                  style={{ width: "100%", padding: 8, border: "1px solid #e2e7f0", borderRadius: 8, fontSize: 12, outline: "none" }} />
-                {modal === "import" ? (
-                  <small style={{ fontSize: 10, color: "#8a93a3", marginTop: 5, display: "block" }}>
-                    <i className="bi bi-info-circle"></i>
-                    Kolom wajib: Picking_List_No, No_Truck, Driver, Delivery_Date, Batch_No, Material_Desc, Quantity_Order_LoadedToTruck.
-                    <br />Data masuk status <strong>Selesai</strong>. Stok <strong>TIDAK</strong> dikurangi.
-                  </small>
-                ) : (
-                  <small style={{ fontSize: 10, color: "#8a93a3", marginTop: 5, display: "block" }}>
-                    *Mendukung format file <strong>.xlsx</strong> dan <strong>.csv</strong>.
-                  </small>
-                )}
-              </div>
-
-              {uploadMsg && (
-                <div style={{ borderRadius: 9, padding: "8px 10px", fontSize: 11, fontWeight: 800,
-                  background: uploadMsg.startsWith("Sukses") ? "#ecfdf5" : "#fff1f2",
-                  border: `1px solid ${uploadMsg.startsWith("Sukses") ? "#bbf7d0" : "#fecdd3"}`,
-                  color: uploadMsg.startsWith("Sukses") ? "#166534" : "#be123c" }}>
-                  {uploadMsg}
-                </div>
-              )}
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                <button type="button" onClick={() => setModal("")} disabled={uploadBusy}
-                  style={{ padding: "8px 15px", border: "1px solid #e2e7f0", borderRadius: 8, background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                  Batal
-                </button>
-                <button type="button" onClick={uploadFile} disabled={uploadBusy}
-                  style={{ padding: "8px 15px", border: "none", borderRadius: 8, background: "var(--primary)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                  <i className="bi bi-upload" style={{ marginRight: 4 }}></i>
-                  {uploadBusy ? "Memproses..." : modal === "import" ? "Import Sekarang" : "Upload Sekarang"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <UploadModal
+          open={!!modal}
+          title={modal === "import" ? "Import Outbound (Historical)" : "Upload File Outbound"}
+          note={
+            modal === "import"
+              ? "Kolom wajib: Picking_List_No, No_Truck, Driver, Delivery_Date, Batch_No, Material_Desc, Quantity_Order_LoadedToTruck. Data masuk status Selesai. Stok TIDAK dikurangi."
+              : "Pilih file Excel (.xlsx / .xls / .csv) data Outbound yang akan diproses ke dalam sistem."
+          }
+          onClose={() => setModal("")}
+          onSubmit={uploadFileSubmit}
+          submitLabel={modal === "import" ? "Import Sekarang" : "Upload Sekarang"}
+          busy={uploadBusy}
+        />
       )}
     </div>
   );

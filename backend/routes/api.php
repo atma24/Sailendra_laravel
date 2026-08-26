@@ -37,6 +37,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Validasi sesi (token masih valid?)
     Route::get('/me', [AuthController::class, 'me']);
 
+    // Reset password akun (semua role)
+    Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
     // ---------------------------------------------------------------------
     // RESTRICTED ACCESS (Hanya SuperAdmin & Supervisor)
     // ---------------------------------------------------------------------

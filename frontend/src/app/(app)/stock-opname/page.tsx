@@ -788,7 +788,7 @@ function DetailTable({ rows, editable, vals, setVals, onSave, showSumber }: {
                     <td style={{ width: 140 }}>
                       {editable ? (
                         <input type="text" className="so-input" value={ev.alasan} placeholder="Isi catatan..."
-                          onChange={(e) => setVals({ ...vals, [d.id_opname]: { ...ev, alasan: e.target.value } })} />
+                          onChange={(e) => setVals({ ...vals, [d.id_opname]: { ...ev, alasan: e.target.value } })} maxLength={250} />
                       ) : (
                         <span style={{ color: "#8a93a3" }}>{norm(d.alasan) || "-"}</span>
                       )}

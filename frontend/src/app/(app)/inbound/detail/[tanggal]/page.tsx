@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+import { useToast } from "@/components/ToastProvider";
 
 type Produk = { id_produk: number; nama_produk: string; satuan: string };
 
@@ -153,6 +154,7 @@ const statusStyle = (s: string): { bg: string; color: string; border: string } =
 export default function InboundDetailPage() {
   const params = useParams<{ tanggal: string }>();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
   const router = useRouter();
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
@@ -367,7 +369,7 @@ export default function InboundDetailPage() {
         jumlah: angka(aJumlah),
         satuan: aSatuan || "PCS",
       });
-      notify("success", "Item baru berhasil ditambahkan sebagai Draft.");
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Item baru berhasil ditambahkan sebagai Draft.", type: "success" }));
       setShowAddItem(false);
       window.location.reload();
     } catch (e) {
@@ -408,7 +410,7 @@ export default function InboundDetailPage() {
       for (const item of items) {
         await apiPost("/barang-masuk/update", { ...payload, id_barang_masuk: item.id_barang_masuk });
       }
-      notify("success", "Detail inbound berhasil diperbarui.");
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Detail inbound berhasil diperbarui.", type: "success" }));
       setShowHeader(false);
       window.location.reload();
     } catch (e) {
@@ -437,7 +439,7 @@ export default function InboundDetailPage() {
       const isReject = (showItem.tipe_penerimaan || "").toUpperCase() === "REJECT";
       if (!isReject && norm(iBestBefore)) payload.best_before = iBestBefore;
       await apiPost("/barang-masuk/update", payload);
-      notify("success", "Item inbound berhasil diperbarui.");
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Item inbound berhasil diperbarui.", type: "success" }));
       setShowItem(null);
       window.location.reload();
     } catch (e) {
@@ -450,11 +452,11 @@ export default function InboundDetailPage() {
     setBusy(true);
     try {
       await apiPost("/barang-masuk/hapus", { id_barang_masuk: confirmOne.id_barang_masuk });
-      notify("success", "Item inbound berhasil dihapus.");
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Item inbound berhasil dihapus.", type: "success" }));
       setConfirmOne(null);
       window.location.reload();
     } catch (e) {
-      notify("error", (e as Error).message || "Item ini tidak bisa dihapus karena sudah dipakai.");
+      toast((e as Error).message || "Item ini tidak bisa dihapus karena sudah dipakai.", "error");
     } finally { setBusy(false); }
   };
 
@@ -465,11 +467,11 @@ export default function InboundDetailPage() {
       for (const item of items) {
         await apiPost("/barang-masuk/hapus", { id_barang_masuk: item.id_barang_masuk });
       }
-      notify("success", "Semua item inbound berhasil dihapus.");
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Semua item inbound berhasil dihapus.", type: "success" }));
       setConfirmAll(false);
       router.push(backHref);
     } catch (e) {
-      notify("error", (e as Error).message || "Sebagian item tidak bisa dihapus karena sudah dipakai.");
+      toast((e as Error).message || "Sebagian item tidak bisa dihapus karena sudah dipakai.", "error");
     } finally { setBusy(false); }
   };
 
@@ -711,16 +713,16 @@ export default function InboundDetailPage() {
               </div>
               <div className="dialog-field">
                 <label>No Mobil</label>
-                <input type="text" value={hMobil} onChange={(e) => setHMobil(e.target.value)} />
+                <input type="text" value={hMobil} onChange={(e) => setHMobil(e.target.value)} maxLength={30} />
               </div>
               <div className="dialog-field">
                 <label>No DN</label>
                 <input type="text" value={hDn} onChange={(e) => setHDn(e.target.value)}
-                  readOnly={["Secondary", "REJECT"].includes(norm(first.tipe_penerimaan))} />
+                  readOnly={["Secondary", "REJECT"].includes(norm(first.tipe_penerimaan))} maxLength={30} />
               </div>
               <div className="dialog-field">
                 <label>Nama Driver</label>
-                <input type="text" value={hDriver} onChange={(e) => setHDriver(e.target.value)} />
+                <input type="text" value={hDriver} onChange={(e) => setHDriver(e.target.value)} maxLength={30} />
               </div>
               <div className="dialog-field dialog-field-full">
                 <label>Asal Pabrik</label>
@@ -728,7 +730,7 @@ export default function InboundDetailPage() {
               </div>
               <div className="dialog-field dialog-field-full">
                 <label>Catatan</label>
-                <textarea value={hCatatan} onChange={(e) => setHCatatan(e.target.value)} />
+                <textarea value={hCatatan} onChange={(e) => setHCatatan(e.target.value)} maxLength={250} />
               </div>
             </div>
             <div className="dialog-actions">
@@ -789,19 +791,28 @@ function ConfirmDialog({ title, message, onCancel, onOk, busy }: {
   title: string; message: string; onCancel: () => void; onOk: () => void; busy?: boolean;
 }) {
   return (
-    <dialog open className="inbound-dialog">
-      <div className="dialog-box">
-        <h3 className="dialog-title">{title}</h3>
-        <p style={{ fontSize: 13, fontWeight: 500, color: "var(--text-main)", lineHeight: 1.5, margin: 0 }}
+    <div style={{ position: "fixed", inset: 0, zIndex: 1050, background: "rgba(15, 23, 42, 0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "#FFFFFF", borderRadius: 18, width: "100%", maxWidth: 440, boxShadow: "0 25px 50px -12px rgba(15, 23, 42, 0.25)", overflow: "hidden" }}>
+        <div style={{ padding: "20px 22px 14px", display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: "#FEF2F2", color: "#EF4444", border: "1px solid #FCA5A5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+            <i className="bi bi-trash3"></i>
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.2px" }}>{title}</div>
+        </div>
+        <div style={{ padding: "0 22px 20px", fontSize: 13, fontWeight: 600, color: "#475569", lineHeight: 1.5 }}
           dangerouslySetInnerHTML={{ __html: message }} />
-        <div className="dialog-actions">
-          <button type="button" className="dialog-btn dialog-btn-cancel" onClick={onCancel} disabled={busy}>Batal</button>
-          <button type="button" className="dialog-btn dialog-danger" onClick={onOk} disabled={busy}>
+        <div style={{ padding: "14px 22px", background: "#F8FAFC", borderTop: "1px solid #E2E8F0", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onCancel} disabled={busy}
+            style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #CBD5E1", background: "#FFFFFF", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+            Batal
+          </button>
+          <button type="button" onClick={onOk} disabled={busy}
+            style={{ height: 38, padding: "0 20px", borderRadius: 10, border: 0, background: "#EF4444", color: "#FFFFFF", fontSize: 13, fontWeight: 800, cursor: "pointer", boxShadow: "0 2px 6px rgba(239, 68, 68, 0.25)" }}>
             {busy ? "Memproses..." : "Ya, Hapus"}
           </button>
         </div>
       </div>
-    </dialog>
+    </div>
   );
 }
 

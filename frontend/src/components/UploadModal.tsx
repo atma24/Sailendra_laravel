@@ -15,68 +15,86 @@ type UploadModalProps = {
 
 const css = `
 .upload-modal-overlay {
-  position: fixed; inset: 0; z-index: 1050; background: rgba(15,23,42,0.45);
+  position: fixed; inset: 0; z-index: 1050; background: rgba(15, 23, 42, 0.5);
   display: flex; align-items: center; justify-content: center; padding: 16px;
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(4px); animation: umFadeIn 0.2s ease;
 }
-.upload-modal-content {
-  background: #fff; width: 100%; max-width: 420px; border-radius: 16px;
-  box-shadow: 0 25px 50px rgba(15,23,42,0.2); overflow: hidden;
-  animation: modalFadeIn 0.2s ease-out;
+@keyframes umFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.upload-modal-card {
+  background: #FFFFFF; border-radius: 18px; width: 100%; max-width: 480px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  overflow: hidden; display: flex; flex-direction: column; animation: umScaleIn 0.2s ease;
 }
-@keyframes modalFadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+@keyframes umScaleIn { from { transform: scale(0.96); } to { transform: scale(1); } }
+
 .upload-modal-header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 18px 20px 14px;
+  padding: 18px 22px; border-bottom: 1px solid #E2E8F0;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
 }
-.upload-modal-header h3 { margin: 0; font-size: 16px; font-weight: 900; color: #172033; letter-spacing: -0.3px; }
-.upload-modal-header button {
-  background: transparent; border: none; font-size: 18px; color: #8a93a3; cursor: pointer; transition: color 0.2s;
+.upload-modal-title {
+  margin: 0; font-size: 16px; font-weight: 800; color: #0F172A; letter-spacing: -0.2px;
 }
-.upload-modal-header button:hover { color: #d33b3e; }
-.upload-modal-body { padding: 0 20px 20px; }
-.upload-modal-body label {
-  display: block; font-size: 11px; font-weight: 800; color: #6b7280; margin-bottom: 8px;
+.upload-modal-close {
+  border: 0; background: transparent; color: #94A3B8; font-size: 18px; line-height: 1;
+  padding: 4px; cursor: pointer; border-radius: 6px; transition: all 0.15s ease;
 }
-.file-drop-area {
-  border: 1px solid #e2e7f0; border-radius: 8px; padding: 6px 8px; background: #fff;
-  transition: border-color 0.2s;
+.upload-modal-close:hover { color: #0F172A; background: #F1F5F9; }
+
+.upload-modal-body {
+  padding: 22px; display: flex; flex-direction: column; gap: 16px;
 }
-.file-drop-area:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25, 25, 112, 0.07); }
-.file-drop-area input[type="file"] {
-  font-size: 11px; color: #172033; width: 100%; cursor: pointer; font-weight: 600;
+
+.upload-note-box {
+  background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 12px; padding: 12px 14px;
+  font-size: 12px; font-weight: 600; color: var(--primary-navy, #191970); line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 8px;
 }
-.file-drop-area input[type="file"]::file-selector-button {
-  background: #f6f7f9; color: #172033; border: 1px solid #e2e7f0; border-radius: 6px;
-  padding: 6px 12px; font-weight: 800; cursor: pointer; margin-right: 12px; transition: background 0.2s;
+
+.upload-file-input-wrap {
+  width: 100%; border: 1px solid #CBD5E1; border-radius: 10px; padding: 6px; background: #F8FAFC;
+  display: flex; align-items: center; gap: 10px; transition: border-color 0.2s ease;
 }
-.file-drop-area input[type="file"]::file-selector-button:hover { background: #eef0ff; color: var(--primary); border-color: var(--primary); }
-.upload-modal-note { font-size: 10px; font-weight: 700; color: #8a93a3; margin-top: 8px; }
-.upload-modal-extra { margin-bottom: 14px; font-size: 11px; font-weight: 700; color: #172033; }
-.upload-modal-footer { padding: 16px 20px; display: flex; justify-content: flex-end; gap: 10px; }
-.upload-modal-msg {
-  margin: 0 20px; padding: 8px 10px; border-radius: 9px; font-size: 11px; font-weight: 800;
+.upload-file-input-wrap:focus-within {
+  border-color: var(--primary-navy, #191970); background: #FFFFFF;
 }
-.upload-modal-msg.ok { background: #ecfdf5; border: 1px solid #bbf7d0; color: #166534; }
-.upload-modal-msg.err { background: #fff1f2; border: 1px solid #fecdd3; color: #be123c; }
-.btn-batal {
-  background: #fff; border: 1px solid #e2e7f0; border-radius: 8px; padding: 0 16px;
-  height: 36px; font-size: 12px; font-weight: 800; color: #6b7280; cursor: pointer; transition: background 0.2s;
+
+.upload-file-btn-fake {
+  height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid #CBD5E1; background: #FFFFFF;
+  color: #334155; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; transition: all 0.15s ease;
 }
-.btn-batal:hover { background: #f3f4f6; color: #172033; }
-.btn-batal:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn-upload-sekarang {
-  background: #191970; border: none; border-radius: 8px; padding: 0 20px;
-  height: 36px; font-size: 12px; font-weight: 800; color: #fff; cursor: pointer;
-  display: flex; align-items: center; gap: 8px; transition: filter 0.2s, transform 0.2s;
+.upload-file-btn-fake:hover {
+  background: #F1F5F9; border-color: #94A3B8; color: #0F172A;
 }
-.btn-upload-sekarang:hover { filter: brightness(1.1); transform: translateY(-1px); }
-.btn-upload-sekarang:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-.download-template-link {
-  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 800;
-  color: var(--primary); margin-top: 12px; text-decoration: none; cursor: pointer;
+
+.upload-file-name {
+  font-size: 12px; font-weight: 600; color: #64748B; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; flex: 1;
 }
-.download-template-link:hover { text-decoration: underline; }
+
+.upload-modal-footer {
+  padding: 14px 22px; border-top: 1px solid #E2E8F0; background: #F8FAFC;
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+}
+
+.upload-cancel-btn {
+  height: 38px; padding: 0 16px; border-radius: 10px; border: 1px solid #CBD5E1;
+  background: #FFFFFF; color: #475569; font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: all 0.15s ease;
+}
+.upload-cancel-btn:hover { background: #F1F5F9; }
+
+.upload-submit-btn {
+  height: 38px; padding: 0 20px; border-radius: 10px; border: 0;
+  background: var(--primary-navy, #191970); color: #FFFFFF; font-size: 13px; font-weight: 800;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+  box-shadow: 0 2px 6px rgba(25, 25, 112, 0.2); transition: all 0.15s ease;
+}
+.upload-submit-btn:hover:not(:disabled) {
+  background: #121254; transform: translateY(-1px);
+}
+.upload-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 `;
 
 export default function UploadModal({
@@ -87,76 +105,103 @@ export default function UploadModal({
   onDownload,
   onSubmit,
   submitLabel = "Upload Sekarang",
-  busy,
+  busy = false,
 }: UploadModalProps) {
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   if (!open) return null;
 
-  const submit = async () => {
-    if (!file) {
-      setMsg({ ok: false, text: "Pilih file terlebih dahulu." });
-      return;
-    }
-    setMsg(null);
-    try {
-      await onSubmit(file);
-    } catch (e) {
-      setMsg({ ok: false, text: (e as Error).message || "Gagal memproses file." });
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFile(e.target.files[0]);
     }
   };
 
-  const _busy = busy || false;
+  const handleSubmit = async () => {
+    if (!file || busy) return;
+    await onSubmit(file);
+    setFile(null);
+  };
 
   return (
     <>
       <style>{css}</style>
-      <div className="upload-modal-overlay" onClick={() => _busy ? undefined : onClose()}>
-        <div className="upload-modal-content" onClick={(e) => e.stopPropagation()}>
+      <div className="upload-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+        <div className="upload-modal-card">
           <div className="upload-modal-header">
-            <h3>{title}</h3>
-            <button onClick={() => (busy ? undefined : onClose())} disabled={busy}>
+            <h5 className="upload-modal-title">{title}</h5>
+            <button
+              type="button"
+              className="upload-modal-close"
+              onClick={onClose}
+              disabled={busy}
+              aria-label="Tutup"
+            >
               <i className="bi bi-x-lg"></i>
             </button>
           </div>
 
           <div className="upload-modal-body">
-            <label>Pilih File (Format .XLSX / .CSV)</label>
-            <div className="file-drop-area">
+            {note && (
+              <div className="upload-note-box">
+                <i className="bi bi-info-circle-fill" style={{ fontSize: 14 }}></i>
+                <span>{note}</span>
+              </div>
+            )}
+
+            <div className="upload-file-input-wrap">
               <input
+                ref={fileInputRef}
                 type="file"
                 accept=".xlsx,.xls,.csv"
-                ref={fileRef}
-                onChange={(e) => {
-                  setFile(e.target.files?.[0] || null);
-                  setMsg(null);
-                }}
+                style={{ display: "none" }}
+                onChange={handleFileChange}
               />
-            </div>
-            {note && <div className="upload-modal-note">{note}</div>}
-            {onDownload && (
-              <a
-                href="#"
-                className="download-template-link"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onDownload();
-                }}
+              <button
+                type="button"
+                className="upload-file-btn-fake"
+                onClick={() => fileInputRef.current?.click()}
               >
-                <i className="bi bi-download"></i> Download Template Excel
-              </a>
+                Choose File
+              </button>
+              <span className="upload-file-name">
+                {file ? file.name : "No file chosen"}
+              </span>
+            </div>
+
+            {onDownload && (
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={onDownload}
+                  style={{
+                    border: 0, background: "none", color: "var(--primary-navy, #191970)",
+                    fontSize: 12, fontWeight: 700, cursor: "pointer", display: "inline-flex",
+                    alignItems: "center", gap: 6
+                  }}
+                >
+                  <i className="bi bi-download"></i> Download Template Format
+                </button>
+              </div>
             )}
           </div>
 
-          {msg && <div className={`upload-modal-msg ${msg.ok ? "ok" : "err"}`}>{msg.text}</div>}
-
           <div className="upload-modal-footer">
-            <button className="btn-batal" onClick={onClose} disabled={busy}>
+            <button
+              type="button"
+              className="upload-cancel-btn"
+              onClick={onClose}
+              disabled={busy}
+            >
               Batal
             </button>
-            <button className="btn-upload-sekarang" onClick={submit} disabled={busy || !file}>
+            <button
+              type="button"
+              className="upload-submit-btn"
+              onClick={handleSubmit}
+              disabled={busy || !file}
+            >
               <i className="bi bi-upload"></i>
               <span>{busy ? "Memproses..." : submitLabel}</span>
             </button>

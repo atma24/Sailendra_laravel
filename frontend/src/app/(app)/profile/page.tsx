@@ -291,6 +291,7 @@ export default function ProfilePage() {
                 placeholder="Masukkan password saat ini"
                 value={curPass}
                 onChange={(e) => setCurPass(e.target.value)}
+                maxLength={25}
               />
               <button
                 type="button"
@@ -312,6 +313,7 @@ export default function ProfilePage() {
                 placeholder="Masukkan password baru"
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
+                maxLength={25}
               />
               <button
                 type="button"
@@ -333,6 +335,7 @@ export default function ProfilePage() {
                 placeholder="Ulangi password baru"
                 value={confirmPass}
                 onChange={(e) => setConfirmPass(e.target.value)}
+                maxLength={25}
               />
               <button
                 type="button"
