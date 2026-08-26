@@ -136,8 +136,8 @@ export default function OutboundTanggalPage() {
     setProgressText("Membaca file Excel...");
 
     try {
-      // Pecah file Excel menjadi batch per 50 baris
-      const chunks = await chunkExcelFile(file, 50);
+      // Pecah file Excel berdasarkan GIN NO (misal 20 GIN per batch utuh)
+      const chunks = await chunkExcelFile(file, 20);
       const totalChunks = chunks.length;
 
       const raw = localStorage.getItem("sailendra_session");

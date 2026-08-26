@@ -486,16 +486,8 @@ public function store(Request $request)
                 ];
             }
 
-            $dedupKey = (int) $produk->id_produk.'|'.$jumlah;
+            $dedupKey = (int) $produk->id_produk.'|'.$jumlah.'|'.trim($soNumber);
             if (isset($grouped[$ginNo]['_seen'][$dedupKey])) {
-                $idxItem = $grouped[$ginNo]['_seen'][$dedupKey];
-                $existingSo = trim((string) ($grouped[$ginNo]['items'][$idxItem]['so_number'] ?? ''));
-                if ($soNumber !== '') {
-                    $arrSo = array_map('trim', explode(',', $existingSo));
-                    if (! in_array(trim($soNumber), $arrSo)) {
-                        $grouped[$ginNo]['items'][$idxItem]['so_number'] = ($existingSo === '' ? '' : $existingSo.', ').trim($soNumber);
-                    }
-                }
                 continue;
             }
 
@@ -607,6 +599,9 @@ public function store(Request $request)
                             $failed++;
                             $details[] = $ginNo . ': Gagal update data Selesai - ' . $e->getMessage();
                         }
+                    } else {
+                        // Jika GIN sudah ada dan statusnya 'Draft' atau 'Pending', lewati insert baru (sudah dibersihkan/akan diperbarui di simpanOutbound)
+                        $isDraftExisting = true;
                     }
                 }
             }
@@ -822,7 +817,7 @@ public function store(Request $request)
         if ($ginNo !== '' && $idPenggunaLokasi !== '') {
             $cekSelesai = DB::table('barang_keluar')->where('gin_no', $ginNo)
                             ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                            ->whereIn(DB::raw('LOWER(TRIM(status))'), ['selesai', 'confirmed'])->exists();
+                            ->whereIn('status', ['Selesai', 'Confirmed', 'selesai', 'confirmed'])->exists();
             if ($cekSelesai) {
                 throw new Exception("GIN {$ginNo} sudah berstatus Selesai. Pembaruan kuantitas dan status ditolak sistem.");
             }
@@ -858,19 +853,22 @@ public function store(Request $request)
 
         DB::beginTransaction();
         try {
-            // Bersihkan data lama jika sama (Sesuai source 17)
-            DB::table('rencana_keluar_deep as r')
-                ->join('barang_keluar as bk', 'bk.id_barang_keluar', '=', 'r.id_barang_keluar')
-                ->where('bk.id_pengguna_lokasi', $idPenggunaLokasi)->where('bk.tanggal_keluar', $tanggalKeluar)
-                ->whereRaw('LOWER(TRIM(bk.nama_driver)) = LOWER(TRIM(?))', [$namaDriver])
-                ->whereRaw('LOWER(TRIM(bk.no_mobil)) = LOWER(TRIM(?))', [$noMobil])
-                ->whereIn('bk.status', ['Pending', 'Draft'])->delete();
+            // Bersihkan data lama jika GIN sama dan status masih Pending / Draft
+            $oldIds = DB::table('barang_keluar')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('gin_no', $ginNo)
+                ->whereIn('status', ['Pending', 'Draft'])
+                ->pluck('id_barang_keluar');
 
-            DB::table('barang_keluar')
-                ->where('id_pengguna_lokasi', $idPenggunaLokasi)->where('tanggal_keluar', $tanggalKeluar)
-                ->whereRaw('LOWER(TRIM(nama_driver)) = LOWER(TRIM(?))', [$namaDriver])
-                ->whereRaw('LOWER(TRIM(no_mobil)) = LOWER(TRIM(?))', [$noMobil])
-                ->whereIn('status', ['Pending', 'Draft'])->delete();
+            if ($oldIds->isNotEmpty()) {
+                DB::table('rencana_keluar_deep')
+                    ->whereIn('id_barang_keluar', $oldIds)
+                    ->delete();
+
+                DB::table('barang_keluar')
+                    ->whereIn('id_barang_keluar', $oldIds)
+                    ->delete();
+            }
 
             $itemsOut = [];
             foreach ($items as $it) {
@@ -1417,7 +1415,7 @@ $in = $request->all();
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, 
             lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
-            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND LOWER(TRIM(bk.status)) NOT IN ('selesai', 'confirmed')), 0) AS jumlah_booking
+            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') $whereExtra
             ORDER BY {$this->prioritasBlokFefoSql('bl', 'lk')}, sgd.best_before IS NULL, sgd.best_before ASC, lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC
@@ -1446,7 +1444,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
-            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND LOWER(TRIM(bk.status)) NOT IN ('selesai', 'confirmed')), 0) AS jumlah_booking
+            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
             ORDER BY {$this->prioritasBlokFefoSql('bl', 'lk')}, sgd.best_before IS NULL, sgd.best_before ASC, lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC
