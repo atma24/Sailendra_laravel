@@ -136,8 +136,8 @@ export default function OutboundTanggalPage() {
     setProgressText("Membaca file Excel...");
 
     try {
-      // Pecah file Excel menjadi batch per 15 baris agar tidak memicu timeout 60s cPanel
-      const chunks = await chunkExcelFile(file, 15);
+      // Pecah file Excel menjadi batch per 50 baris
+      const chunks = await chunkExcelFile(file, 50);
       const totalChunks = chunks.length;
 
       const raw = localStorage.getItem("sailendra_session");

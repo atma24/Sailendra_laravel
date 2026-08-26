@@ -595,7 +595,7 @@ public function store(Request $request)
                             }
                             DB::commit();
 
-                            $this->betulkanRelasiTraceability($ginNo);
+                            // betulkanRelasiTraceability dinonaktifkan di sini untuk kecepatan upload (opsional dipanggil via cron/job)
                             
                             if ($adaUpdate) {
                                 $updated++;
@@ -881,7 +881,10 @@ public function store(Request $request)
                     continue;
                 }
 
-                $namaProduk = DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk');
+                $namaProduk = $mapProduk[strtoupper(trim((string) ($it['nama_produk'] ?? '')))]->nama_produk ?? null;
+                if (! $namaProduk) {
+                    $namaProduk = DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk');
+                }
                 if (! $namaProduk) {
                     throw new Exception("Produk ID {$idProduk} tidak ditemukan");
                 }

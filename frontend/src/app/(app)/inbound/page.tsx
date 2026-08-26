@@ -103,7 +103,7 @@ export default function InboundTanggalPage() {
     setProgressText("Membaca file Excel...");
 
     try {
-      const chunks = await chunkExcelFile(file, 15);
+      const chunks = await chunkExcelFile(file, 50);
       const totalChunks = chunks.length;
 
       const raw = localStorage.getItem("sailendra_session");
