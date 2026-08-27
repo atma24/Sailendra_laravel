@@ -34,12 +34,16 @@ export default function Sidebar({
   return (
     <aside className={`sidebar ${open ? "show" : ""} ${collapsed ? "collapsed" : ""}`}>
       <div className="brand-area">
-        <button
-          type="button"
-          className="brand-logo-btn"
-          onClick={onToggleCollapse}
-          title={collapsed ? "Perluas Sidebar" : "Kecilkan Sidebar"}
-        >
+          <button
+            type="button"
+            className="brand-logo-btn"
+            onClick={() => {
+              if (onToggleCollapse && !open) {
+                onToggleCollapse();
+              }
+            }}
+            title={collapsed ? "Perluas Sidebar" : "Kecilkan Sidebar"}
+          >
           <div className="brand-logo">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logosailendra.png" alt="Logo Sailendra" />

@@ -446,6 +446,7 @@
   .sidebar.collapsed .submenu-link span { display: inline; }
   .sidebar.collapsed .collapse-toggle-btn { display: none; }
   .sidebar.collapsed .logout-btn span { display: inline; }
+  .brand-logo-btn { pointer-events: none !important; cursor: default; }
   .main-content { height: auto; overflow-y: visible; padding: 15px; }
 }
 

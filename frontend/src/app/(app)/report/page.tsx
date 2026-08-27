@@ -106,7 +106,21 @@ const css = `
 .loc-btn-apply { width: 100%; padding: 12px; background: var(--primary); color: #fff; border: none; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; transition: .2s; font-family: inherit; }
 .loc-btn-apply:hover { filter: brightness(1.1); }
 .loc-empty { padding: 20px; text-align: center; color: var(--text-soft); font-size: 12px; font-weight: 700; }
-@media (max-width: 768px) { .preview-modal-overlay, .loc-modal-overlay { padding: 12px; } .preview-modal, .loc-modal-content { max-height: 90vh; border-radius: 12px; } .preview-modal-header, .loc-modal-header { padding: 16px 18px; } .preview-modal-body, .loc-modal-search, .loc-modal-body { padding-left: 18px; padding-right: 18px; } .report-date-row, .report-actions-grid { grid-template-columns: 1fr; } }
+@media (max-width: 768px) {
+  .preview-modal-overlay, .loc-modal-overlay { padding: 12px; }
+  .preview-modal, .loc-modal-content { max-height: 90vh; border-radius: 12px; }
+  .preview-modal-header, .loc-modal-header { padding: 16px 18px; }
+  .preview-modal-body, .loc-modal-search, .loc-modal-body { padding-left: 18px; padding-right: 18px; }
+  .report-date-row, .report-actions-grid { grid-template-columns: 1fr; }
+  .report-card { padding: 16px; }
+  .report-type-selector { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .report-type-label { font-size: 11px; height: 36px; gap: 4px; }
+  .fake-select-report { height: 36px; font-size: 11px; }
+  .report-btn-preview, .report-btn-submit { height: 36px; font-size: 12px; }
+  .preview-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .preview-table { min-width: 600px; font-size: 10px; }
+  .preview-table th, .preview-table td { padding: 6px 8px; white-space: nowrap; }
+}
 `;
 
 function makeToken(): string {

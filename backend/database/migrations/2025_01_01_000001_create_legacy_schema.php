@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Skema 18 tabel legacy app (disalin persis dari SHOW CREATE TABLE).
+     * Skema 19 tabel legacy app + sesi, dengan semua perubahan akhir di-bake.
      * urutan = dependensi FK (child dibuat setelah parent). down() = kebalikan.
      */
     private array $ddl = [
@@ -53,7 +53,7 @@ CREATE TABLE `pengguna` (
   `id_pengguna_lokasi` varchar(11) NOT NULL,
   `username` varchar(100) NOT NULL,
   `password` varchar(100) NOT NULL,
-  `role` enum('Supervisor','Checker','Support','Forklift','SuperAdmin') NOT NULL,
+  `role` enum('Supervisor','Checker','Support','Forklift','SuperAdmin','Auditor') NOT NULL,
   `status` enum('Aktif','Nonaktif') NOT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id_pengguna`),
@@ -121,6 +121,7 @@ SQL,
         'barang_masuk' => <<<'SQL'
 CREATE TABLE `barang_masuk` (
   `id_barang_masuk` int(11) NOT NULL AUTO_INCREMENT,
+  `shipment_id` varchar(100) DEFAULT NULL,
   `id_pengguna_lokasi` varchar(11) NOT NULL,
   `id_pengguna` int(11) NOT NULL,
   `id_produk` int(11) NOT NULL,
@@ -136,6 +137,7 @@ CREATE TABLE `barang_masuk` (
   `batch` varchar(50) DEFAULT NULL,
   `batch_sekarang` varchar(50) DEFAULT NULL,
   `catatan` text DEFAULT NULL,
+  `status` varchar(20) DEFAULT 'Selesai',
   `satuan` enum('GALLON','BOX','MP','PCS') NOT NULL,
   `lokasi_block` varchar(100) DEFAULT NULL,
   `diperbarui_pada` datetime DEFAULT NULL,
@@ -152,6 +154,25 @@ CREATE TABLE `barang_masuk` (
   CONSTRAINT `fk_barang_masuk_pengguna` FOREIGN KEY (`id_pengguna`) REFERENCES `pengguna` (`id_pengguna`) ON UPDATE CASCADE,
   CONSTRAINT `fk_barang_masuk_pengguna_lokasi` FOREIGN KEY (`id_pengguna_lokasi`) REFERENCES `pengguna_lokasi` (`id_pengguna_lokasi`) ON UPDATE CASCADE,
   CONSTRAINT `fk_barang_masuk_produk` FOREIGN KEY (`id_produk`) REFERENCES `produk` (`id_produk`) ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+SQL,
+        'rencana_masuk_deep' => <<<'SQL'
+CREATE TABLE `rencana_masuk_deep` (
+  `id_rencana` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `id_barang_masuk` int(11) NOT NULL,
+  `id_pengguna_lokasi` varchar(11) NOT NULL,
+  `id_deep` int(11) NOT NULL,
+  `jumlah_rencana` int(11) NOT NULL,
+  `best_before` date DEFAULT NULL,
+  `batch` varchar(50) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id_rencana`),
+  KEY `fk_rencana_masuk_barang_masuk` (`id_barang_masuk`),
+  KEY `fk_rencana_masuk_pengguna_lokasi` (`id_pengguna_lokasi`),
+  KEY `fk_rencana_masuk_deep` (`id_deep`),
+  CONSTRAINT `fk_rencana_masuk_barang_masuk` FOREIGN KEY (`id_barang_masuk`) REFERENCES `barang_masuk` (`id_barang_masuk`) ON UPDATE CASCADE,
+  CONSTRAINT `fk_rencana_masuk_pengguna_lokasi` FOREIGN KEY (`id_pengguna_lokasi`) REFERENCES `pengguna_lokasi` (`id_pengguna_lokasi`) ON UPDATE CASCADE,
+  CONSTRAINT `fk_rencana_masuk_deep` FOREIGN KEY (`id_deep`) REFERENCES `deep` (`id_deep`) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
 SQL,
         'barang_keluar' => <<<'SQL'
@@ -231,7 +252,8 @@ CREATE TABLE `stok_gudang` (
   `jumlah_sisa` int(11) NOT NULL,
   `batch` varchar(50) DEFAULT NULL,
   `best_before` date DEFAULT NULL,
-  `satuan` enum('GALLON','BOX','MP') NOT NULL,
+  `satuan` varchar(30) DEFAULT NULL,
+  `status` enum('normal','qi') NOT NULL DEFAULT 'normal',
   `lokasi_block` varchar(100) NOT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id_stok`),
@@ -301,8 +323,10 @@ CREATE TABLE `stok_opname` (
   `alasan` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `jenis_opname` varchar(50) DEFAULT 'Akurasi',
+  `sumber_opname` varchar(20) NOT NULL DEFAULT 'Checker',
   `stok_sebelumnya` int(11) DEFAULT NULL,
   `dirubah_oleh` varchar(100) DEFAULT NULL,
+  `checker_created_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id_opname`),
   KEY `fk_stok_opname_pengguna` (`id_pengguna`),
   KEY `fk_stok_opname_produk` (`id_produk`),
@@ -310,6 +334,7 @@ CREATE TABLE `stok_opname` (
   KEY `idx_opname_lokasi_created` (`id_pengguna_lokasi`,`created_at`),
   KEY `idx_opname_lokasi_tanggal` (`id_pengguna_lokasi`,`tanggal_opname`),
   KEY `idx_opname_produk_batch_line` (`id_pengguna_lokasi`,`id_produk`,`lokasi_block`,`best_before`),
+  KEY `idx_opname_sumber_tanggal` (`id_pengguna_lokasi`, `tanggal_opname`, `sumber_opname`, `created_at`),
   CONSTRAINT `fk_stok_opname_pengguna` FOREIGN KEY (`id_pengguna`) REFERENCES `pengguna` (`id_pengguna`) ON UPDATE CASCADE,
   CONSTRAINT `fk_stok_opname_pengguna_lokasi` FOREIGN KEY (`id_pengguna_lokasi`) REFERENCES `pengguna_lokasi` (`id_pengguna_lokasi`) ON UPDATE CASCADE,
   CONSTRAINT `fk_stok_opname_produk` FOREIGN KEY (`id_produk`) REFERENCES `produk` (`id_produk`) ON UPDATE CASCADE
@@ -377,6 +402,16 @@ SQL,
             DB::statement($sql);
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1;');
+
+        // Tabel sessions (sesi Laravel)
+        Schema::create('sessions', function ($table) {
+            $table->string('id')->primary();
+            $table->foreignId('user_id')->nullable()->index();
+            $table->string('ip_address', 45)->nullable();
+            $table->text('user_agent')->nullable();
+            $table->longText('payload');
+            $table->integer('last_activity')->index();
+        });
     }
 
     public function down(): void
@@ -386,6 +421,7 @@ SQL,
         foreach ($tables as $table) {
             Schema::dropIfExists($table);
         }
+        Schema::dropIfExists('sessions');
         DB::statement('SET FOREIGN_KEY_CHECKS=1;');
     }
 };

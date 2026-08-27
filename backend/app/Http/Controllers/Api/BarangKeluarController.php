@@ -497,7 +497,7 @@ public function store(Request $request)
                         $grouped[$ginNo]['items'][$idxItem]['so_number'] = ($existingSo === '' ? '' : $existingSo.', ').trim($soNumber);
                     }
                 }
-                $grouped[$ginNo]['items'][$idxItem]['jumlah'] += $jumlah;
+                // Kuantitas tidak ditambahkan karena setiap baris di Excel mencantumkan total kuantitas produk untuk GIN tersebut
                 continue;
             }
 
