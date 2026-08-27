@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Pengguna;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -79,18 +80,28 @@ class AuthController extends Controller
         // Hapus token lama agar 1 user tidak menumpuk token di database (opsional)
         $user->tokens()->delete();
 
+        // Generate session token untuk single session
+        $sessionToken = Str::random(60);
+        $user->session_token = $sessionToken;
+        $user->save();
+
         $token = $user->createToken('auth_token')->plainTextToken;
         
         // Masukkan token ke response JSON
         $row['token'] = $token;
+        $row['session_token'] = $sessionToken;
 
         return $this->ok($row, 'Login berhasil');
     }
 
     public function logout(Request $request)
     {
-        // Menghapus token yang sedang digunakan
-        $request->user()->currentAccessToken()->delete();
+        $user = $request->user();
+        // Hapus session token
+        $user->session_token = null;
+        $user->save();
+        // Hapus token Sanctum
+        $user->currentAccessToken()->delete();
         
         return $this->okMessage('Logout berhasil');
     }

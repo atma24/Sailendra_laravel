@@ -19,6 +19,7 @@ class Pengguna extends Authenticatable
         'id_pengguna_lokasi',
         'username',
         'password',
+        'session_token',
         'role',
         'status',
         'created_at',
@@ -27,5 +28,6 @@ class Pengguna extends Authenticatable
     // Sembunyikan password saat data user dipanggil (Best practice keamanan)
     protected $hidden = [
         'password',
+        'session_token',
     ];
 }

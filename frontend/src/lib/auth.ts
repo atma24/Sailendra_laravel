@@ -16,6 +16,7 @@ export type AkunLokasi = {
 export type Session = {
   user: AkunLokasi;
   token: string;
+  session_token: string;
   lokasi: (number | string)[] | "all";
 };
 
