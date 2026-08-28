@@ -139,12 +139,22 @@ class BarangMasukController extends Controller
         $tipePenerimaan = trim((string) ($in['tipe_penerimaan'] ?? 'Primary'));
         $noDn = trim((string) ($in['no_dn'] ?? ''));
         $noMobil = trim((string) ($in['no_mobil'] ?? ''));
+        $shipmentId = trim((string) ($in['shipment_id'] ?? '')); // Penambahan Shipment ID
         $catatan = (isset($in['catatan']) && $in['catatan'] !== '') ? trim((string) $in['catatan']) : null;
         $lokasiBlock = trim((string) ($in['lokasi_block'] ?? ''));
         $lokasiLine = trim((string) ($in['lokasi_line'] ?? ''));
         $durasiDetik = isset($in['durasi_detik']) ? (int) $in['durasi_detik'] : null;
+        
         if ($durasiDetik !== null && $durasiDetik < 0) {
             $durasiDetik = null;
+        }
+
+        // Pengecekan Duplikat Shipment ID
+        if ($shipmentId !== '') {
+            $isExist = DB::table('barang_masuk')->where('shipment_id', $shipmentId)->exists();
+            if ($isExist) {
+                return $this->fail("Gagal menyimpan. Shipment ID {$shipmentId} sudah terdaftar di sistem.");
+            }
         }
 
         $waktuMulai = null;
@@ -448,6 +458,7 @@ class BarangMasukController extends Controller
                 $alokasiPerLine, $idPenggunaLokasi, $idPengguna, $idProduk, $namaProduk,
                 $satuan, $tanggalMasuk, $tipePenerimaan, $bestBefore, $batch, $asalPabrik,
                 $noDn, $namaDriver, $noMobil, $catatan, $waktuMulai, $durasiDetik, $multiplier,
+                $shipmentId,
                 &$idBarangMasukList, &$idStokList, &$ringkasanList, &$lokasiAkhirStr
             ) {
                 $parts = [];
@@ -461,6 +472,7 @@ class BarangMasukController extends Controller
                     $parts[] = $lineLabel.' ('.$jumlahTersimpan.')';
 
                     $idBm = DB::table('barang_masuk')->insertGetId([
+                        'shipment_id' => $shipmentId, // Penambahan Shipment ID
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_pengguna' => $idPengguna,
                         'id_produk' => $idProduk,
@@ -694,24 +706,21 @@ class BarangMasukController extends Controller
 
         $inserted = 0;
         $skipped = 0;
+        $skippedShipments = []; // Array untuk menampung Shipment ID yang bentrok
+
         DB::beginTransaction();
         try {
             foreach ($grouped as $shipmentId => $payload) {
-                $existing = DB::table('barang_masuk')
+                // Pengecekan ketat: Jika shipment_id sudah ada di database (status apapun), langsung skip
+                $isExist = DB::table('barang_masuk')
                     ->where('shipment_id', $shipmentId)
-                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                    ->first();
+                    ->exists();
                     
-                if ($existing && in_array(strtolower($existing->status), ['selesai', 'pending'])) {
+                if ($isExist) {
                     $skipped++;
-                    continue; 
+                    $skippedShipments[] = $shipmentId;
+                    continue; // Skip dan lanjut ke shipment_id berikutnya
                 }
-
-                DB::table('barang_masuk')
-                    ->where('shipment_id', $shipmentId)
-                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                    ->where('status', 'Draft')
-                    ->delete();
 
                 foreach ($payload['items'] as $item) {
                     DB::table('barang_masuk')->insert([
@@ -739,12 +748,13 @@ class BarangMasukController extends Controller
             
             $msg = "Upload selesai! $inserted Shipment ID ditambahkan sebagai Draft.";
             if ($skipped > 0) {
-                $msg .= " ($skipped dilewati karena sudah Pending/Selesai).";
+                $skippedList = implode(', ', $skippedShipments);
+                $msg .= " ($skipped dilewati karena Shipment ID sudah ada: $skippedList).";
             }
             if ($countUnmapped > 0) {
                 $msg .= " Peringatan: $countUnmapped baris diabaikan (produk tidak dikenal).";
             }
-            return $this->ok(['inserted' => $inserted], $msg);
+            return $this->ok(['inserted' => $inserted, 'skipped' => $skipped], $msg);
             
         } catch (Throwable $e) {
             DB::rollBack();
@@ -1348,6 +1358,7 @@ class BarangMasukController extends Controller
         $catatan = isset($in['catatan']) ? trim((string) $in['catatan']) : null;
         $idPenggunaLokasi = trim((string) ($in['id_pengguna_lokasi'] ?? ''));
         $namaPengguna = (string) ($in['nama_pengguna'] ?? '');
+        $shipmentIdBaru = isset($in['shipment_id']) ? trim((string) $in['shipment_id']) : null; // Penambahan
 
         if ($noDn === '') $noDn = null;
         if ($noMobil === '') $noMobil = null;
@@ -1358,7 +1369,7 @@ class BarangMasukController extends Controller
             return DB::transaction(function () use (
                 $in, $idBm, $idProduk, $jumlahBaru, $satuan, $tanggalMasuk, $bestBefore,
                 $asalPabrik, $namaDriver, $lokasiBaru, $tipePenerimaan, $noDn, $noMobil,
-                $catatan, $idPenggunaLokasi, $namaPengguna
+                $catatan, $idPenggunaLokasi, $namaPengguna, $shipmentIdBaru
             ) {
                 $lama = DB::table('barang_masuk')
                     ->where('id_barang_masuk', $idBm)
@@ -1382,6 +1393,16 @@ class BarangMasukController extends Controller
                 if ($jumlahBaru !== null) $upd['jumlah'] = $jumlahBaru;
                 if ($satuan !== null) $upd['satuan'] = $satuan;
                 if ($tanggalMasuk) $upd['tanggal_masuk'] = $tanggalMasuk;
+                
+                // Cek update shipment id
+                if ($shipmentIdBaru !== null && $shipmentIdBaru !== ($lama->shipment_id ?? '')) {
+                    $isExist = DB::table('barang_masuk')->where('shipment_id', $shipmentIdBaru)->exists();
+                    if ($isExist) {
+                        throw new Exception("Shipment ID {$shipmentIdBaru} sudah terdaftar, tidak boleh double.");
+                    }
+                    $upd['shipment_id'] = $shipmentIdBaru;
+                }
+
                 if ($bestBefore !== null) $upd['best_before'] = $bestBefore;
                 if ($tipePenerimaan !== null) {
                     if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT'], true)) {
