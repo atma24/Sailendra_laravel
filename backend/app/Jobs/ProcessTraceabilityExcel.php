@@ -78,19 +78,23 @@ class ProcessTraceabilityExcel implements ShouldQueue
             if ($reader->nodeType == \XMLReader::ELEMENT && $reader->name === 'row') {
                 $cells = [];
                 $sub = $reader->expand();
-                foreach ($sub->getElementsByTagName('c') as $cell) {
-                    $t = $cell->getAttribute('t');
-                    $v = '';
-                    $children = $cell->getElementsByTagName('v');
-                    if ($children->length > 0) {
-                        $v = trim($children->item(0)->nodeValue);
+                if ($sub instanceof \DOMElement) {
+                    foreach ($sub->getElementsByTagName('c') as $cell) {
+                        if ($cell instanceof \DOMElement) {
+                            $t = $cell->getAttribute('t');
+                            $v = '';
+                            $children = $cell->getElementsByTagName('v');
+                            if ($children->length > 0) {
+                                $v = trim($children->item(0)->nodeValue);
+                            }
+                            if ($t === 's' && $v !== '') {
+                                $val = $sharedStrings[(int) $v] ?? '';
+                            } else {
+                                $val = $v;
+                            }
+                            $cells[] = $val;
+                        }
                     }
-                    if ($t === 's' && $v !== '') {
-                        $val = $sharedStrings[(int) $v] ?? '';
-                    } else {
-                        $val = $v;
-                    }
-                    $cells[] = $val;
                 }
                 if ($rowIndex === 0) {
                     $header = $cells;

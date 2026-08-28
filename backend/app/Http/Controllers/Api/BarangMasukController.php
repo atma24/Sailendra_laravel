@@ -25,7 +25,7 @@ class BarangMasukController extends Controller
     private const BLOCK_KHUSUS = ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'FESTIVE', 'HOLD'];
 
     // =========================================================================
-    // 1. GET LIST INBOUND (Ref: barang_masuk/ambil_barang_masuk.php)
+    // 1. GET LIST INBOUND
     // =========================================================================
     public function index(Request $request)
     {
@@ -87,7 +87,7 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    // 2. PREVIEW / REKOMENDASI LOKASI (Ref: layout_gudang/cari_lokasi_block.php?mode=auto_inbound)
+    // 2. PREVIEW / REKOMENDASI LOKASI
     // =========================================================================
     public function preview(Request $request)
     {
@@ -120,7 +120,7 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    // 3. SIMPAN INBOUND (Ref: barang_masuk/tambah_barang_masuk.php)
+    // 3. SIMPAN INBOUND
     // =========================================================================
     public function store(Request $request)
     {
@@ -164,7 +164,7 @@ class BarangMasukController extends Controller
         if (! $penggunaRow) {
             return $this->fail('Pengguna tidak ditemukan.');
         }
-        // Role multi-lokasi (SuperAdmin/Support) boleh transaksi di lokasi mana pun
+        
         $isMultiLokasi = in_array(strtolower(trim((string) $penggunaRow->role)), ['superadmin', 'support'], true);
         if (! $isMultiLokasi && trim((string) $penggunaRow->id_pengguna_lokasi) !== $idPenggunaLokasi) {
             return $this->fail('Lokasi pengguna tidak sesuai dengan lokasi transaksi.', 403);
@@ -177,7 +177,7 @@ class BarangMasukController extends Controller
         $namaProduk = trim((string) $produkRow->nama_produk);
         $isiPerPcs = (int) $produkRow->isi_per_pcs > 0 ? (int) $produkRow->isi_per_pcs : 1;
 
-        // ---- Konversi line kosong milik produk lain (sudah dikonfirmasi frontend) ----
+        // Konversi line kosong
         $konversiIds = [];
         if ($tipePenerimaan !== 'REJECT' && ! empty($in['konversi'])) {
             $rawKonv = is_array($in['konversi']) ? $in['konversi'] : explode(',', (string) $in['konversi']);
@@ -196,7 +196,6 @@ class BarangMasukController extends Controller
             }
         }
 
-        // Otomatis ubah satuan ke PCS dan siapkan multiplier untuk REJECT (Kecuali Gallon)
         $multiplier = 1;
         if ($tipePenerimaan === 'REJECT' && strtoupper($satuan) !== 'GALLON' && strtoupper($satuan) !== 'PCS') {
             $multiplier = $isiPerPcs;
@@ -212,9 +211,8 @@ class BarangMasukController extends Controller
             $bestBefore = '9999-12-31';
         }
 
-        // ---- Resolusi alokasi ----
+        // Resolusi alokasi
         $alokasi = [];
-
         if (array_key_exists('alokasi', $in) && $in['alokasi'] !== null) {
             $src = is_string($in['alokasi']) ? json_decode($in['alokasi'], true) : $in['alokasi'];
             if (! is_array($src)) {
@@ -256,7 +254,7 @@ class BarangMasukController extends Controller
             $alokasi = array_map(fn ($r) => ['id_deep' => (int) $r['id_deep'], 'jumlah' => (int) $r['alokasi']], $auto['rekomendasi']);
         }
 
-        // ---- Validasi block tiap deep ----
+        // Validasi block tiap deep
         foreach ($alokasi as $a) {
             $idDeepCek = (int) $a['id_deep'];
             if ($idDeepCek <= 0) {
@@ -290,7 +288,6 @@ class BarangMasukController extends Controller
             }
         }
 
-        // ---- Validasi field wajib ----
         if ($idPengguna <= 0 || $idProduk <= 0 || $jumlah <= 0 || $satuan === '') {
             return $this->fail('Field wajib: id_pengguna, id_produk, jumlah, satuan');
         }
@@ -307,7 +304,6 @@ class BarangMasukController extends Controller
             $noDn = '';
         }
 
-        // ---- Batch ----
         if ($batch === '') {
             if ($bestBefore === null || $bestBefore === '') {
                 return $this->fail('Best Before wajib untuk membuat batch.');
@@ -330,9 +326,9 @@ class BarangMasukController extends Controller
             return $this->fail('Field wajib: no_mobil');
         }
 
-        // ---- Validasi BB line (barang tidak boleh masuk line ber-BB lebih tua) ----
+        // Validasi BB line
         if ($tipePenerimaan !== 'REJECT' && $bestBefore !== null && $bestBefore !== '' && ! empty($alokasi)) {
-            $deepIdsValidasi = array_values(array_unique(array_filter(array_map(fn ($a) => (int) $a['id_deep'], $alokasi), fn ($id) => $id > 0)));
+            $deepIdsValidasi = array_values(array_unique(array_filter($this->mapDeepIds($alokasi))));
             if (! empty($deepIdsValidasi)) {
                 $rowsBb = DB::table('deep as d')
                     ->join('level as lv', function ($j) {
@@ -367,7 +363,7 @@ class BarangMasukController extends Controller
             }
         }
 
-        // ---- Cek kapasitas tiap deep ----
+        // Cek kapasitas deep
         foreach ($alokasi as $a) {
             $idd = (int) $a['id_deep'];
             $q = (int) $a['jumlah'];
@@ -402,7 +398,7 @@ class BarangMasukController extends Controller
             }
         }
 
-        // ---- Group alokasi per line ----
+        // Group alokasi per line
         $deepIds = array_values(array_unique(array_map(fn ($a) => (int) $a['id_deep'], $alokasi)));
         $mapDeepToLine = [];
         if (! empty($deepIds)) {
@@ -442,7 +438,6 @@ class BarangMasukController extends Controller
             return $this->fail('Alokasi deep kosong / tidak valid');
         }
 
-        // ---- Simpan ----
         $idBarangMasukList = [];
         $idStokList = [];
         $ringkasanList = [];
@@ -462,7 +457,6 @@ class BarangMasukController extends Controller
                         $jumlahLine += $det['jumlah'];
                     }
                     
-                    // Kalikan total dengan multiplier (jika reject akan dikali isi_per_pcs)
                     $jumlahTersimpan = $jumlahLine * $multiplier;
                     $parts[] = $lineLabel.' ('.$jumlahTersimpan.')';
 
@@ -536,8 +530,9 @@ class BarangMasukController extends Controller
             'lokasi_akhir_str' => $lokasiAkhirStr,
         ]);
     }
+
     // =========================================================================
-    // UPLOAD EXCEL OTM INBOUND (Status: DRAFT)
+    // 4. UPLOAD OTM EXCEL, SUBMIT DRAFT, & KONFIRMASI INBOUND
     // =========================================================================
     public function uploadInboundFile(Request $request)
     {
@@ -568,7 +563,6 @@ class BarangMasukController extends Controller
             return $this->fail('File Excel kosong atau tidak bisa dibaca.');
         }
 
-        // Cari Header Otomatis (baris yang mengandung 'Shipment Id')
         $headerRow = [];
         $dataStartIndex = 0;
         foreach ($rowsData as $index => $row) {
@@ -591,15 +585,11 @@ class BarangMasukController extends Controller
             }
         }
 
-        // Mapping HANYA Kolom Kuning sesuai Excel
         $idxShipment = $colMap['Shipment Id'] ?? -1;
         $idxProdukId = $colMap['Material Id'] ?? -1;
         $idxProdukDesc = $colMap['Material Desc'] ?? -1;
-        
-        // --- PERBAIKAN: MAPPING SOURCE ID ---
         $idxAsalId = $colMap['Source Id'] ?? -1; 
         $idxAsalName = $colMap['Source Name'] ?? -1;
-        
         $idxTransporter = $colMap['Actual Transporter Name'] ?? -1;
         $idxQty = $colMap['Actual Quantity'] ?? -1;
         $idxDate = $colMap['Actual PickUp Date'] ?? -1;
@@ -630,7 +620,6 @@ class BarangMasukController extends Controller
 
             if ($jumlah <= 0) continue;
             
-            // Pencarian Produk: Coba dari Nama, jika tidak ketemu coba dari ID Material
             if (!isset($mapProduk[$namaProdukExcel])) {
                 $idProdNum = (int) ($data[$idxProdukId] ?? 0);
                 $found = false;
@@ -647,18 +636,13 @@ class BarangMasukController extends Controller
             }
             $produk = $mapProduk[$namaProdukExcel];
 
-            // --- PERBAIKAN: GABUNGKAN SOURCE ID DAN SOURCE NAME ---
             $asalId = $idxAsalId >= 0 ? trim((string) ($data[$idxAsalId] ?? '')) : '';
             $asalName = $idxAsalName >= 0 ? trim((string) ($data[$idxAsalName] ?? '')) : 'Pabrik';
-            
-            // Outputnya akan jadi "9018 - 9000 ID CIHERANG PLANT TIV"
             $asalPabrik = ($asalId !== '') ? $asalId . ' - ' . $asalName : $asalName;
-            
             $transporter = $idxTransporter >= 0 ? trim((string) ($data[$idxTransporter] ?? '')) : '-';
             $noDn = $idxDn >= 0 ? trim((string) ($data[$idxDn] ?? '')) : '';
             $truckType = $idxTruck >= 0 ? trim((string) ($data[$idxTruck] ?? '')) : '-';
             
-            // Parsing Format Tanggal
             $rawDate = $idxDate >= 0 ? trim((string) ($data[$idxDate] ?? '')) : '';
             $tanggalMasuk = date('Y-m-d');
             if ($rawDate !== '') {
@@ -668,14 +652,13 @@ class BarangMasukController extends Controller
                 }
             }
 
-            // Grouping per Shipment ID
             if (!isset($grouped[$shipmentId])) {
                 $grouped[$shipmentId] = [
                     'shipment_id' => $shipmentId,
                     'id_pengguna' => $idPengguna,
                     'id_pengguna_lokasi' => $idPenggunaLokasi,
                     'tanggal_masuk' => $tanggalMasuk,
-                    'asal_pabrik' => $asalPabrik, // <-- Disimpan dalam format komplit (ID - Nama)
+                    'asal_pabrik' => $asalPabrik,
                     'no_dn' => $noDn,
                     'nama_driver' => $transporter,
                     'no_mobil' => $truckType,
@@ -686,7 +669,6 @@ class BarangMasukController extends Controller
                 ];
             }
 
-            // Cek apakah item (produk yang sama) sudah ada di shipment ini, kalau ada digabung jumlahnya
             $itemTerisi = false;
             foreach ($grouped[$shipmentId]['items'] as &$existingItem) {
                 if ($existingItem['id_produk'] === (int) $produk->id_produk) {
@@ -769,19 +751,13 @@ class BarangMasukController extends Controller
             return $this->fail('Gagal menyimpan ke database: ' . $e->getMessage(), 500);
         }
     }
-    // =========================================================================
-    // SUBMIT DRAFT -> PENDING (Membuat Batch & Booking Lokasi)
-    // =========================================================================
-   // =========================================================================
-    // SUBMIT DRAFT -> PENDING (Membuat Batch & Booking Lokasi)
-    // =========================================================================
+
     public function submitDraft(Request $request)
     {
         $shipmentId = trim((string) $request->input('shipment_id', ''));
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
         $itemsReq = $request->input('items', []); 
 
-        // --- TAMBAHAN TIMER ---
         $waktuMulaiInput = trim((string) $request->input('waktu_mulai_input', ''));
         $durasiDetik = $request->input('durasi_detik');
         if ($durasiDetik !== null && (int)$durasiDetik < 0) {
@@ -796,7 +772,6 @@ class BarangMasukController extends Controller
             }
             $waktuMulai = $dtMulai ? $dtMulai->format('Y-m-d H:i:s') : null;
         }
-        // ----------------------
 
         if ($shipmentId === '' || $idPenggunaLokasi === '' || empty($itemsReq)) {
             return $this->fail('shipment_id, id_pengguna_lokasi, dan items wajib diisi.');
@@ -826,7 +801,6 @@ class BarangMasukController extends Controller
                     continue; 
                 }
 
-                // 1. Generate Batch Otomatis
                 $idPlant = strtoupper(trim(explode('-', $draft->asal_pabrik, 2)[0]));
                 if ($idPlant === '' || $idPlant === 'PABRIK') {
                     $idPlant = 'PABRIK'; 
@@ -847,7 +821,6 @@ class BarangMasukController extends Controller
                     $batchBaru = '-';
                 }
 
-                // 2. Cari Rekomendasi Lokasi
                 $auto = $this->rekomendasiAuto(
                     $idPenggunaLokasi, 
                     (int) $draft->id_produk, 
@@ -866,7 +839,6 @@ class BarangMasukController extends Controller
                     throw new Exception("Tidak ada alokasi lokasi kosong untuk {$draft->nama_produk}");
                 }
 
-                // 3. Simpan ke rencana_masuk_deep
                 foreach ($alokasi as $al) {
                     DB::table('rencana_masuk_deep')->insert([
                         'id_barang_masuk' => $draft->id_barang_masuk,
@@ -879,14 +851,12 @@ class BarangMasukController extends Controller
                     $insertedRencana++;
                 }
 
-                // 4. Update Header barang_masuk jadi Pending
                 $kumpulanLokasi = [];
                 foreach ($alokasi as $al) {
                     $kumpulanLokasi[] = $al['kode_block'] . '-' . $al['nomor_line'];
                 }
                 $lokasiAkhirStr = implode(', ', array_unique($kumpulanLokasi));
 
-                // --- UPDATE DENGAN TIMER ---
                 $updateData = [
                     'status' => 'Pending',
                     'best_before' => $bbReq,
@@ -920,19 +890,13 @@ class BarangMasukController extends Controller
             return $this->fail("Gagal Submit: " . $e->getMessage(), 500);
         }
     }
-    // =========================================================================
-    // KONFIRMASI INBOUND (PENDING -> SELESAI & POTONG KAPASITAS)
-    // =========================================================================
-    // =========================================================================
-    // KONFIRMASI INBOUND (PENDING -> SELESAI & POTONG KAPASITAS)
-    // =========================================================================
+
     public function konfirmasiInbound(Request $request)
     {
         $shipmentId = trim((string) $request->input('shipment_id', ''));
         $idBm = (int) $request->input('id_barang_masuk', 0);
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
 
-        // --- TAMBAHAN TIMER ---
         $waktuMulaiInput = trim((string) $request->input('waktu_mulai_input', ''));
         $durasiDetik = $request->input('durasi_detik');
         if ($durasiDetik !== null && (int)$durasiDetik < 0) {
@@ -947,7 +911,6 @@ class BarangMasukController extends Controller
             }
             $waktuMulai = $dtMulai ? $dtMulai->format('Y-m-d H:i:s') : null;
         }
-        // ----------------------
 
         if ($idPenggunaLokasi === '') {
             return $this->fail('id_pengguna_lokasi wajib diisi.');
@@ -1032,7 +995,6 @@ class BarangMasukController extends Controller
                 }
             }
 
-            // 4. Update Status Barang Masuk & TIMER
             $updateData = [
                 'status' => 'Selesai',
                 'diperbarui_pada' => now()
@@ -1060,6 +1022,7 @@ class BarangMasukController extends Controller
             return $this->fail('Gagal konfirmasi: ' . $e->getMessage(), 500);
         }
     }
+
     public function downloadStockTemplate()
     {
         $produkList = DB::table('produk')->selectRaw("CONCAT(id_produk, ' - ', nama_produk) AS label_produk")->pluck('label_produk')->toArray();
@@ -1232,7 +1195,6 @@ class BarangMasukController extends Controller
             return $this->fail('Tidak ada baris data yang valid di file');
         }
 
-        // Batch + best before diselesaikan sebelum transaksi agar konsisten.
         $final = [];
         foreach ($rows as $r) {
             $namaProdukRow = DB::table('produk')->where('id_produk', $r['id_produk'])->value('nama_produk');
@@ -1360,14 +1322,13 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    // 4. UPDATE INBOUND (Ref: barang_masuk/ubah_barang_masuk.php)
+    // 5. UPDATE INBOUND
     // =========================================================================
     public function update(Request $request)
     {
         $in = $request->all();
         $aksi = strtolower(trim((string) ($in['aksi'] ?? '')));
 
-        // --- TAMBAHAN UNTUK FITUR TAMBAH ITEM BARU ---
         if ($aksi === 'tambah_item') {
             return $this->tambahItemInbound($in);
         }
@@ -1388,18 +1349,10 @@ class BarangMasukController extends Controller
         $idPenggunaLokasi = trim((string) ($in['id_pengguna_lokasi'] ?? ''));
         $namaPengguna = (string) ($in['nama_pengguna'] ?? '');
 
-        if ($noDn === '') {
-            $noDn = null;
-        }
-        if ($noMobil === '') {
-            $noMobil = null;
-        }
-        if ($idBm <= 0) {
-            return $this->fail('id_barang_masuk wajib');
-        }
-        if ($idPenggunaLokasi === '') {
-            return $this->fail('id_pengguna_lokasi wajib');
-        }
+        if ($noDn === '') $noDn = null;
+        if ($noMobil === '') $noMobil = null;
+        if ($idBm <= 0) return $this->fail('id_barang_masuk wajib');
+        if ($idPenggunaLokasi === '') return $this->fail('id_pengguna_lokasi wajib');
 
         try {
             return DB::transaction(function () use (
@@ -1425,20 +1378,11 @@ class BarangMasukController extends Controller
                 $tipeLama = $lama->tipe_penerimaan;
                 $asalLama = $lama->asal_pabrik;
 
-                // ---- Bangun update field ----
                 $upd = [];
-                if ($jumlahBaru !== null) {
-                    $upd['jumlah'] = $jumlahBaru;
-                }
-                if ($satuan !== null) {
-                    $upd['satuan'] = $satuan;
-                }
-                if ($tanggalMasuk) {
-                    $upd['tanggal_masuk'] = $tanggalMasuk;
-                }
-                if ($bestBefore !== null) {
-                    $upd['best_before'] = $bestBefore;
-                }
+                if ($jumlahBaru !== null) $upd['jumlah'] = $jumlahBaru;
+                if ($satuan !== null) $upd['satuan'] = $satuan;
+                if ($tanggalMasuk) $upd['tanggal_masuk'] = $tanggalMasuk;
+                if ($bestBefore !== null) $upd['best_before'] = $bestBefore;
                 if ($tipePenerimaan !== null) {
                     if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT'], true)) {
                         throw new Exception('tipe_penerimaan harus Primary, Secondary, Primary XWH, atau REJECT');
@@ -1475,32 +1419,19 @@ class BarangMasukController extends Controller
                         $asalSave = $asalPabrik;
                     }
                 }
-                if ($forceUpdateAsal) {
-                    $upd['asal_pabrik'] = $asalSave;
-                }
+                if ($forceUpdateAsal) $upd['asal_pabrik'] = $asalSave;
                 if ($noDn !== null) {
-                    if ($noDn === '') {
-                        throw new Exception('no_dn wajib diisi');
-                    }
+                    if ($noDn === '') throw new Exception('no_dn wajib diisi');
                     $upd['no_dn'] = $noDn;
                 }
                 if ($noMobil !== null) {
-                    if ($noMobil === '') {
-                        throw new Exception('no_mobil wajib diisi');
-                    }
+                    if ($noMobil === '') throw new Exception('no_mobil wajib diisi');
                     $upd['no_mobil'] = $noMobil;
                 }
-                if ($namaDriver !== null) {
-                    $upd['nama_driver'] = $namaDriver;
-                }
-                if ($catatan !== null) {
-                    $upd['catatan'] = ($catatan === '' ? null : $catatan);
-                }
-                if ($lokasiBaru !== null) {
-                    $upd['lokasi_block'] = $lokasiBaru;
-                }
+                if ($namaDriver !== null) $upd['nama_driver'] = $namaDriver;
+                if ($catatan !== null) $upd['catatan'] = ($catatan === '' ? null : $catatan);
+                if ($lokasiBaru !== null) $upd['lokasi_block'] = $lokasiBaru;
 
-                // ---- Batch baru jika BB/asal berubah ----
                 $bbUntukBatch = ($bestBefore !== null && $bestBefore !== '') ? $bestBefore : $bbLama;
                 $asalUntukBatch = $asalSave;
                 $tipeAktif = $tipePenerimaan ?? $tipeLama;
@@ -1535,7 +1466,6 @@ class BarangMasukController extends Controller
                         ->update($upd);
                 }
 
-                // ---- Sinkronisasi stok ----
                 if ($jumlahBaru !== null || $lokasiBaru !== null || ($bestBefore !== null && $bestBefore !== $bbLama)) {
                     $rows = DB::table('stok_gudang')
                         ->where('id_pengguna_lokasi', $idPenggunaLokasi)
@@ -1561,7 +1491,6 @@ class BarangMasukController extends Controller
                         $rs->jumlah_sisa = $sum;
                     }
 
-                    // ---- Pindah lokasi ----
                     if ($lokasiBaru !== null && $lokasiBaru !== $lokasiLamaDb) {
                         $idStokHeader = (int) $rs->id_stok;
                         $cur = DB::table('stok_gudang')->where('id_stok', $idStokHeader)->lockForUpdate()->first();
@@ -1579,26 +1508,17 @@ class BarangMasukController extends Controller
                         if ($target && (int) $target->id_stok !== $idStokHeader) {
                             $jumlahMerged = (int) $cur->jumlah_sisa + (int) $target->jumlah_sisa;
                             $locUpd = ['lokasi_block' => $lokasiBaru, 'jumlah_sisa' => $jumlahMerged];
-                            if ($bbNew !== null) {
-                                $locUpd['best_before'] = $bbNew;
-                            }
-                            if ($satNew !== null) {
-                                $locUpd['satuan'] = $satNew;
-                            }
+                            if ($bbNew !== null) $locUpd['best_before'] = $bbNew;
+                            if ($satNew !== null) $locUpd['satuan'] = $satNew;
                             DB::table('stok_gudang')->where('id_stok', $idStokHeader)->update($locUpd);
                             DB::table('stok_gudang')->where('id_stok', $target->id_stok)->delete();
                         } else {
                             $locUpd = ['lokasi_block' => $lokasiBaru];
-                            if ($bbNew !== null) {
-                                $locUpd['best_before'] = $bbNew;
-                            }
-                            if ($satNew !== null) {
-                                $locUpd['satuan'] = $satNew;
-                            }
+                            if ($bbNew !== null) $locUpd['best_before'] = $bbNew;
+                            if ($satNew !== null) $locUpd['satuan'] = $satNew;
                             DB::table('stok_gudang')->where('id_stok', $idStokHeader)->update($locUpd);
                         }
 
-                        // ---- Pindahkan detail deep antar line ----
                         $idLineAsal = 0;
                         $idLineTujuan = 0;
 
@@ -1611,9 +1531,7 @@ class BarangMasukController extends Controller
                                 ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
                                 ->whereRaw("CONCAT(b.kode_block, '-', ln.nomor_line) = ?", [$lokasiLamaDb])
                                 ->value('ln.id_line');
-                            if ($rowLine1) {
-                                $idLineAsal = (int) $rowLine1;
-                            }
+                            if ($rowLine1) $idLineAsal = (int) $rowLine1;
                         }
                         $rowLine2 = DB::table('line as ln')
                             ->join('block as b', function ($j) {
@@ -1623,9 +1541,7 @@ class BarangMasukController extends Controller
                             ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
                             ->whereRaw("CONCAT(b.kode_block, '-', ln.nomor_line) = ?", [$lokasiBaru])
                             ->value('ln.id_line');
-                        if ($rowLine2) {
-                            $idLineTujuan = (int) $rowLine2;
-                        }
+                        if ($rowLine2) $idLineTujuan = (int) $rowLine2;
 
                         if ($idLineAsal > 0 && $idLineTujuan > 0 && $idLineAsal !== $idLineTujuan) {
                             $sumberRows = DB::table('stok_gudang_deep as sgd')
@@ -1681,9 +1597,7 @@ class BarangMasukController extends Controller
                                     $indexSumber = 0;
                                     $jumlahSumber = count($sumberDeeps);
                                     foreach ($tujuanDeeps as $tj) {
-                                        if ($qtySisa <= 0) {
-                                            break;
-                                        }
+                                        if ($qtySisa <= 0) break;
                                         $idDeepTujuan = (int) $tj->id_deep;
                                         $kapasitasSisa = (int) $tj->sisa_kapasitas;
 
@@ -1691,14 +1605,10 @@ class BarangMasukController extends Controller
                                             while ($indexSumber < $jumlahSumber && $sumberDeeps[$indexSumber]->sisa <= 0) {
                                                 $indexSumber++;
                                             }
-                                            if ($indexSumber >= $jumlahSumber) {
-                                                break;
-                                            }
+                                            if ($indexSumber >= $jumlahSumber) break;
                                             $sumber = $sumberDeeps[$indexSumber];
                                             $bisaPindah = min($sumber->sisa, $kapasitasSisa, $qtySisa);
-                                            if ($bisaPindah <= 0) {
-                                                break;
-                                            }
+                                            if ($bisaPindah <= 0) break;
 
                                             DB::table('stok_gudang_deep')->where('id_detail_stok', $sumber->id_detail_stok)->decrement('jumlah', $bisaPindah);
                                             $sumber->sisa -= $bisaPindah;
@@ -1729,7 +1639,6 @@ class BarangMasukController extends Controller
                         }
                     }
 
-                    // ---- Ubah jumlah ----
                     if ($jumlahBaru !== null && $jumlahBaru >= 0) {
                         $lokasiQty = ($lokasiBaru !== null && $lokasiBaru !== '') ? $lokasiBaru : $lokasiLamaDb;
                         $idLineQty = 0;
@@ -1742,9 +1651,7 @@ class BarangMasukController extends Controller
                                 ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
                                 ->whereRaw("CONCAT(b.kode_block, '-', ln.nomor_line) = ?", [$lokasiQty])
                                 ->value('ln.id_line');
-                            if ($rowLineQty) {
-                                $idLineQty = (int) $rowLineQty;
-                            }
+                            if ($rowLineQty) $idLineQty = (int) $rowLineQty;
                         }
 
                         if ($idLineQty > 0) {
@@ -1774,13 +1681,9 @@ class BarangMasukController extends Controller
                                     if ($selisih < 0) {
                                         $harusDikurangi = -$selisih;
                                         foreach ($deepsLine as $deepRow) {
-                                            if ($harusDikurangi <= 0) {
-                                                break;
-                                            }
+                                            if ($harusDikurangi <= 0) break;
                                             $stokDeep = (int) $deepRow->jumlah;
-                                            if ($stokDeep <= 0) {
-                                                continue;
-                                            }
+                                            if ($stokDeep <= 0) continue;
                                             $kurangi = min($stokDeep, $harusDikurangi);
                                             DB::table('stok_gudang_deep')->where('id_detail_stok', $deepRow->id_detail_stok)->decrement('jumlah', $kurangi);
                                             $harusDikurangi -= $kurangi;
@@ -1839,18 +1742,12 @@ class BarangMasukController extends Controller
                                         $bbUntukDetail = ($bestBefore !== null && $bestBefore !== '') ? $bestBefore : $rs->best_before;
 
                                         foreach ($tujuanDeeps as $tujuan) {
-                                            if ($harusDitambah <= 0) {
-                                                break;
-                                            }
+                                            if ($harusDitambah <= 0) break;
                                             $idDeepTujuan = (int) $tujuan->id_deep;
                                             $kapasitasSisa = (int) $tujuan->sisa_kapasitas;
-                                            if ($kapasitasSisa <= 0) {
-                                                continue;
-                                            }
+                                            if ($kapasitasSisa <= 0) continue;
                                             $tambah = min($kapasitasSisa, $harusDitambah);
-                                            if ($tambah <= 0) {
-                                                continue;
-                                            }
+                                            if ($tambah <= 0) continue;
 
                                             if (isset($existingByDeep[$idDeepTujuan])) {
                                                 DB::table('stok_gudang_deep')
@@ -1891,20 +1788,13 @@ class BarangMasukController extends Controller
                         }
                     }
 
-                    // ---- Sinkron BB / batch / satuan ----
                     if (($bestBefore !== null && $bestBefore !== $bbLama) || $satuan !== null || $batchBaru !== '') {
                         $lokTuju = ($lokasiBaru !== null ? $lokasiBaru : $lokasiLamaDb);
 
                         $updStok = [];
-                        if ($bestBefore !== null) {
-                            $updStok['best_before'] = $bestBefore;
-                        }
-                        if ($batchBaru !== '') {
-                            $updStok['batch'] = $batchBaru;
-                        }
-                        if ($satuan !== null) {
-                            $updStok['satuan'] = $satuan;
-                        }
+                        if ($bestBefore !== null) $updStok['best_before'] = $bestBefore;
+                        if ($batchBaru !== '') $updStok['batch'] = $batchBaru;
+                        if ($satuan !== null) $updStok['satuan'] = $satuan;
                         if (! empty($updStok)) {
                             DB::table('stok_gudang')
                                 ->where('id_produk', $idProdukFix)
@@ -1915,28 +1805,24 @@ class BarangMasukController extends Controller
 
                         if (($bestBefore !== null && $bestBefore !== $bbLama) || $batchBaru !== '') {
                             $updDeep = [];
-                            if ($bestBefore !== null) {
-                                $updDeep['best_before'] = $bestBefore;
+                            if ($bestBefore !== null) $updDeep['best_before'] = $bestBefore;
+                            if ($batchBaru !== '') $updDeep['batch'] = $batchBaru;
+                            if (! empty($updDeep)) {
+                                $updDeepSgd = [];
+                                foreach ($updDeep as $k => $v) {
+                                    $updDeepSgd['sgd.'.$k] = $v;
+                                }
+                                DB::table('stok_gudang_deep as sgd')
+                                    ->join('stok_gudang as sg', function ($j) {
+                                        $j->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                                            ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi');
+                                    })
+                                    ->where('sg.id_produk', $idProdukFix)
+                                    ->where('sg.id_barang_masuk', $idBm)
+                                    ->where('sg.lokasi_block', $lokTuju)
+                                    ->where('sg.id_pengguna_lokasi', $idPenggunaLokasi)
+                                    ->update($updDeepSgd);
                             }
-                            if ($batchBaru !== '') {
-                                $updDeep['batch'] = $batchBaru;
-                            }
-                        if (! empty($updDeep)) {
-                            $updDeepSgd = [];
-                            foreach ($updDeep as $k => $v) {
-                                $updDeepSgd['sgd.'.$k] = $v;
-                            }
-                            DB::table('stok_gudang_deep as sgd')
-                                ->join('stok_gudang as sg', function ($j) {
-                                    $j->on('sg.id_stok', '=', 'sgd.id_stok_header')
-                                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi');
-                                })
-                                ->where('sg.id_produk', $idProdukFix)
-                                ->where('sg.id_barang_masuk', $idBm)
-                                ->where('sg.lokasi_block', $lokTuju)
-                                ->where('sg.id_pengguna_lokasi', $idPenggunaLokasi)
-                                ->update($updDeepSgd);
-                        }
                         }
                     }
                 }
@@ -1949,7 +1835,7 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    // 5. HAPUS INBOUND (Ref: barang_masuk/hapus_barang_masuk.php)
+    // 6. HAPUS INBOUND
     // =========================================================================
     public function destroy(Request $request)
     {
@@ -1998,7 +1884,7 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    //  REKOMENDASI AUTO (Ref: cari_lokasi_block.php mode=auto_inbound)
+    // 7. REKOMENDASI AUTO (CORE ALGORITMA ALOKASI & KONVERSI)
     // =========================================================================
     private function rekomendasiAuto(string $idPenggunaLokasi, int $idProduk, float $qty, ?string $bestBefore, string $tipePenerimaan, bool $libatkanKonversi = true): array
     {
@@ -2009,6 +1895,42 @@ class BarangMasukController extends Controller
             ->where('id_produk', $idProduk)
             ->where('id_pengguna_lokasi', $idPenggunaLokasi)
             ->distinct()->pluck('id_line')->map(fn ($v) => (int) $v)->all();
+
+        // 1. Ambil line dari stok aktif
+        $lineAktifStok = DB::table('stok_gudang as s')
+            ->join('block as b', function ($j) use ($idPenggunaLokasi) {
+                $j->on('b.id_pengguna_lokasi', '=', 's.id_pengguna_lokasi');
+            })
+            ->join('line as ln', function ($j) use ($idPenggunaLokasi) {
+                $j->on('ln.id_block', '=', 'b.id_block')
+                    ->on('ln.id_pengguna_lokasi', '=', 'b.id_pengguna_lokasi');
+            })
+            ->where('s.id_produk', $idProduk)
+            ->where('s.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('s.jumlah_sisa', '>', 0)
+            ->whereRaw("s.lokasi_block = CONCAT(UPPER(TRIM(b.kode_block)), '-', ln.nomor_line)")
+            ->distinct()
+            ->pluck('ln.id_line')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        // 2. Ambil line dari transaksi yang sedang Pending
+        $linePendingBooking = DB::table('rencana_masuk_deep as r')
+            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+            ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
+            ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+            ->where('bm.id_produk', $idProduk)
+            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('bm.status', 'Pending')
+            ->distinct()
+            ->pluck('lv.id_line')
+            ->map(fn ($v) => (int) $v)
+            ->all();
+
+        $semuaLineAktif = array_values(array_unique(array_merge($lineProduk, $lineAktifStok, $linePendingBooking)));
+        if (! empty($semuaLineAktif)) {
+            $lineProduk = $semuaLineAktif;
+        }
 
         $deepProduk = DB::table('prioritas_lokasi_produk')
             ->where('id_produk', $idProduk)
@@ -2033,12 +1955,8 @@ class BarangMasukController extends Controller
 
         $punyaLayoutPrioritas = ! empty(array_filter([$deepProduk, $levelProduk, $lineProduk, $blockProduk, $lokasiProduk]));
 
-    
         $stagingCandidates = [];
         if ($isSecondary || $tipePenerimaan === 'REJECT') {
-            
-            // Cari tau produk ini ada di lokasi mana (Gallon / SPS) 
-            // berdasarkan layout prioritasnya agar tidak nyasar ke transit/reject area lain.
             $lokasiPrioritasProduk = DB::table('prioritas_lokasi_produk as p')
                 ->leftJoin('block as b', 'b.id_block', '=', 'p.id_block')
                 ->leftJoin('line as ln', 'ln.id_line', '=', 'p.id_line')
@@ -2057,7 +1975,6 @@ class BarangMasukController extends Controller
                 $qStaging->whereRaw("(UPPER(TRIM(b.kode_block)) = 'RECEH' OR UPPER(TRIM(b.kode_block)) = 'TRANSIT')")
                          ->orderByRaw("CASE WHEN UPPER(TRIM(b.kode_block)) = 'RECEH' THEN 0 WHEN UPPER(TRIM(b.kode_block)) = 'TRANSIT' THEN 1 ELSE 2 END ASC, b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
             } else {
-                // Tipe Penerimaan REJECT (pakai LIKE biar deteksi "BLOCK REJECT")
                 $qStaging->whereRaw("UPPER(TRIM(b.kode_block)) LIKE '%REJECT%'")
                          ->orderByRaw("b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
             }
@@ -2069,7 +1986,6 @@ class BarangMasukController extends Controller
             $stagingCandidates = $qStaging->get()->map(fn ($r) => (array) $r)->all();
         }
 
-        // Kandidat prioritas
         $prior = [];
         if (! empty($deepProduk)) {
             $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'd.id_deep', $deepProduk);
@@ -2111,63 +2027,6 @@ class BarangMasukController extends Controller
             return ['error' => 'Produk belum punya layout line. Silahkan buat layout terlebih dahulu.', 'code' => 422];
         }
 
-        // Info kapasitas per line
-        // Info kapasitas per line
-        $lineInfo = [];
-        $lineInfoRows = DB::table('line as ln')
-            ->join('block as b', function ($j) {
-                $j->on('b.id_block', '=', 'ln.id_block')
-                    ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
-            })
-            ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
-            ->join('level as lv', function ($j) {
-                $j->on('lv.id_line', '=', 'ln.id_line')
-                    ->on('lv.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
-            })
-            ->join('deep as d', function ($j) {
-                $j->on('d.id_level', '=', 'lv.id_level')
-                    ->on('d.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
-            })
-            ->leftJoin('stok_gudang_deep as sd', function ($j) {
-                $j->on('sd.id_deep', '=', 'd.id_deep')
-                    ->on('sd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
-            })
-            ->leftJoin('stok_gudang as s', function ($j) {
-                $j->on('s.id_stok', '=', 'sd.id_stok_header')
-                    ->on('s.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
-            })
-            ->where($this->whereNormalBlockActive($tipePenerimaan))
-            ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->selectRaw('ln.id_line, l.id_lokasi, l.nama_lokasi, b.id_block, b.kode_block, ln.nomor_line, SUM(d.kapasitas) AS kapasitas_total, COALESCE(SUM(CASE WHEN s.jumlah_sisa > 0 THEN sd.jumlah ELSE 0 END), 0) AS terisi_total')
-            ->groupBy('ln.id_line', 'l.id_lokasi', 'l.nama_lokasi', 'b.id_block', 'b.kode_block', 'ln.nomor_line')
-            ->orderBy('l.nama_lokasi')
-            ->orderBy('b.kode_block')
-            ->orderBy('ln.nomor_line')
-            ->get();
-
-        foreach ($lineInfoRows as $rowLine) {
-            $lineInfo[(int) $rowLine->id_line] = $rowLine;
-        }
-
-        // --- TAMBAHAN: Masukkan Booking ke Total Terisi Line ---
-        $bookingLineRows = DB::table('rencana_masuk_deep as r')
-            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
-            ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
-            ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
-            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('bm.status', 'Pending')
-            ->selectRaw('lv.id_line, SUM(r.jumlah_rencana) as total_booking')
-            ->groupBy('lv.id_line')
-            ->get();
-
-        foreach ($bookingLineRows as $bl) {
-            $idL = (int) $bl->id_line;
-            if (isset($lineInfo[$idL])) {
-                $lineInfo[$idL]->terisi_total += (int) $bl->total_booking;
-            }
-        }
-
-        // Peta produk per line
         $lineProductMap = [];
         $lineProductRows = DB::table('line as ln')
             ->join('level as lv', function ($j) {
@@ -2201,7 +2060,6 @@ class BarangMasukController extends Controller
             $lineProductMap[$idLine][$idProd] = (int) $rowLP->qty;
         }
 
-        // Buang line yang dipakai produk lain
         $priorFiltered = [];
         foreach ($prior as $row) {
             $idLine = (int) $row['id_line'];
@@ -2235,7 +2093,7 @@ class BarangMasukController extends Controller
             return ['error' => 'Line produk tidak tersedia, Silahkan buat layout baru atau tunggu line kembali.', 'code' => 422];
         }
 
-        // Filter BB: jangan masukkan ke line yang BB-nya lebih tua
+        // Filter BB
         if (! empty($finalCandidates) && $bestBefore !== null && $bestBefore !== '') {
             $labelLineSet = [];
             foreach ($finalCandidates as $row) {
@@ -2275,9 +2133,6 @@ class BarangMasukController extends Controller
             $finalCandidates = $filtered;
         }
 
-        // Kumpulkan id line & lokasi prioritas
-        $priorLineSeen = [];
-        $priorLineIds = [];
         $priorLokasiIds = [];
         foreach ($lokasiProduk as $idLokProduk) {
             if ($idLokProduk > 0) {
@@ -2285,129 +2140,12 @@ class BarangMasukController extends Controller
             }
         }
         foreach ($finalCandidates as $row) {
-            $idLine = (int) ($row['id_line'] ?? 0);
             $idLok = (int) ($row['id_lokasi'] ?? 0);
-            if ($idLine > 0 && ! isset($priorLineSeen[$idLine])) {
-                $priorLineSeen[$idLine] = true;
-                $priorLineIds[] = $idLine;
-            }
             if ($idLok > 0) {
                 $priorLokasiIds[$idLok] = true;
             }
         }
 
-       // Terisi awal per deep (Digabung dengan Booking Pending)
-        $terisiMapAwal = [];
-        $terisiAwalRows = DB::table('stok_gudang_deep as sd')
-            ->join('stok_gudang as s', function ($j) {
-                $j->on('s.id_stok', '=', 'sd.id_stok_header')
-                    ->on('s.id_pengguna_lokasi', '=', 'sd.id_pengguna_lokasi');
-            })
-            ->where('s.jumlah_sisa', '>', 0)
-            ->where('sd.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->selectRaw('sd.id_deep, COALESCE(SUM(sd.jumlah),0) AS terisi')
-            ->groupBy('sd.id_deep')
-            ->get();
-            
-        foreach ($terisiAwalRows as $rowTA) {
-            $terisiMapAwal[(int) $rowTA->id_deep] = (float) $rowTA->terisi;
-        }
-
-        $bookingAwalRows = DB::table('rencana_masuk_deep as r')
-            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
-            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('bm.status', 'Pending')
-            ->selectRaw('r.id_deep, COALESCE(SUM(r.jumlah_rencana), 0) AS terisi_booking')
-            ->groupBy('r.id_deep')
-            ->get();
-
-        foreach ($bookingAwalRows as $rowBooking) {
-            $idDeepB = (int) $rowBooking->id_deep;
-            if (!isset($terisiMapAwal[$idDeepB])) {
-                $terisiMapAwal[$idDeepB] = 0.0;
-            }
-            $terisiMapAwal[$idDeepB] += (float) $rowBooking->terisi_booking;
-        }
-
-        $totalLeftPrior = 0;
-        foreach ($finalCandidates as $r) {
-            $idDeep = (int) $r['id_deep'];
-            $cap = (float) $r['kapasitas'];
-            $filled = $terisiMapAwal[$idDeep] ?? 0.0;
-            $totalLeftPrior += max(0.0, $cap - $filled);
-        }
-
-        // Peta pemilik per line (dari prioritas_lokasi_produk)
-        $lineOwnerMap = DB::table('prioritas_lokasi_produk')
-            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-            ->whereNotNull('id_line')->where('id_line', '>', 0)
-            ->selectRaw('id_line, MAX(id_produk) AS id_produk')
-            ->groupBy('id_line')
-            ->pluck('id_produk', 'id_line');
-
-        // Pinjam line lain kalau kapasitas prioritas kurang
-        if ($punyaLayoutPrioritas && $totalLeftPrior < $qty) {
-            $borrowLineIds = [];
-            foreach ($lineInfo as $idLine => $info) {
-                $idLok = (int) $info->id_lokasi;
-                if (! $previewMode && ! empty($priorLokasiIds) && ! isset($priorLokasiIds[$idLok])) {
-                    continue;
-                }
-                if (in_array($idLine, $priorLineIds, true)) {
-                    continue;
-                }
-                // Line kosong milik produk lain dikelola via konversi (dgn konfirmasi), bukan numpang.
-                $ownerLine = $lineOwnerMap[$idLine] ?? null;
-                if ($ownerLine !== null && (int) $ownerLine !== $idProduk) {
-                    continue;
-                }
-                $kapTotal = (int) $info->kapasitas_total;
-                $terisiTotal = (int) $info->terisi_total;
-                if ($kapTotal <= 0 || $kapTotal <= $terisiTotal) {
-                    continue;
-                }
-                $prodDalamLine = $lineProductMap[$idLine] ?? [];
-                $adaProdukLain = false;
-                $adaProdukSama = false;
-                foreach ($prodDalamLine as $pid => $dummyQty) {
-                    if ((int) $pid === $idProduk) {
-                        $adaProdukSama = true;
-                    } else {
-                        $adaProdukLain = true;
-                    }
-                }
-                if ($adaProdukLain && ! $adaProdukSama) {
-                    continue;
-                }
-                if ($adaProdukSama && $bestBefore !== null && $bestBefore !== '') {
-                    $labelLine = strtoupper($info->kode_block).'-'.((int) $info->nomor_line);
-                    $bbMinSame = DB::table('stok_gudang')
-                        ->where('lokasi_block', $labelLine)
-                        ->where('id_produk', $idProduk)
-                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                        ->where('jumlah_sisa', '>', 0)
-                        ->min('best_before');
-                    if ($tipePenerimaan !== 'REJECT' && $bbMinSame !== null && $bestBefore > $bbMinSame) {
-                        continue;
-                    }
-                }
-                $borrowLineIds[] = $idLine;
-            }
-
-            if (! empty($borrowLineIds)) {
-                $borrowRows = $this->baseDeep($idPenggunaLokasi)
-                    ->where($this->whereNormalBlockActive($tipePenerimaan))
-                    ->where($this->kategoriLokasi($tipePenerimaan) ?? fn () => true)
-                    ->whereIn('ln.id_line', $borrowLineIds)
-                    ->orderByRaw('l.nama_lokasi, b.kode_block, ln.nomor_line, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC')
-                    ->get()->map(fn ($r) => (array) $r)->all();
-                if (! empty($borrowRows)) {
-                    $finalCandidates = array_merge($finalCandidates, $borrowRows);
-                }
-            }
-        }
-
-        // Terisi + bb per deep (Digabung dengan Booking Pending)
         $terisiMap = [];
         $bbMinDeepMap = [];
         $bbMaxDeepMap = [];
@@ -2428,7 +2166,6 @@ class BarangMasukController extends Controller
             $bbMaxDeepMap[(int) $row->id_deep] = $row->bb_max ?? null;
         }
 
-        // --- TAMBAHAN: Gabungkan data dari Rencana Masuk ---
         $bookingDetailsRows = DB::table('rencana_masuk_deep as r')
             ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
             ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
@@ -2452,54 +2189,49 @@ class BarangMasukController extends Controller
             }
         }
 
-        // Proposisi & alokasi line kosong milik produk lain (konversi dgn konfirmasi frontend)
+        $totalLeftPrior = 0;
+        foreach ($finalCandidates as $r) {
+            $idDeep = (int) $r['id_deep'];
+            $cap = (float) $r['kapasitas'];
+            $filled = $terisiMap[$idDeep] ?? 0.0;
+            $totalLeftPrior += max(0.0, $cap - $filled);
+        }
+
+        // KONVERSI LINE KOSONG DI BLOK YANG SAMA DULU SEBELUM NUMPANG
         $konversiList = [];
-        if ($libatkanKonversi && $tipePenerimaan !== 'REJECT' && ! $previewMode) {
-            $shortfall = $qty;
-            foreach ($finalCandidates as $r) {
-                $idDeepF = (int) $r['id_deep'];
-                $capF = (float) $r['kapasitas'];
-                $filledF = $terisiMap[$idDeepF] ?? 0.0;
-                $shortfall -= max(0.0, $capF - $filledF);
-                if ($shortfall <= 0) {
-                    break;
-                }
-            }
-            if ($shortfall > 0) {
-                $kapasitasTarget = $this->kapasitasRateProduk($idPenggunaLokasi, $idProduk);
-                if ($kapasitasTarget > 0) {
-                    $kLines = $this->cariLineKosongKonversi($idPenggunaLokasi, $idProduk, $tipePenerimaan, array_keys($priorLokasiIds));
-                    foreach ($kLines as $kl) {
-                        if ($shortfall <= 0) {
-                            break;
-                        }
-                        $deepsKonv = $this->deepsLineByIdLine($idPenggunaLokasi, $kl['id_line']);
-                        if (empty($deepsKonv)) {
-                            continue;
-                        }
-                        $deepsKonv = array_map(function ($dk) use ($kapasitasTarget) {
-                            $dk['kapasitas'] = $kapasitasTarget;
-                            return $dk;
-                        }, $deepsKonv);
-                        $finalCandidates = array_merge($finalCandidates, $deepsKonv);
-                        $konversiList[] = [
-                            'id_line' => $kl['id_line'],
-                            'kode_block' => $kl['kode_block'],
-                            'nomor_line' => $kl['nomor_line'],
-                            'label_line' => $kl['kode_block'].'-'.$kl['nomor_line'],
-                            'produk_lama' => $kl['produk_lama'],
-                            'levels' => $kl['levels'],
-                            'jumlah_deep' => $kl['jumlah_deep'],
-                            'kapasitas_baru' => $kapasitasTarget,
-                            'kapasitas_total' => $kl['jumlah_deep'] * $kapasitasTarget,
-                        ];
-                        $shortfall -= $kl['jumlah_deep'] * $kapasitasTarget;
-                    }
+        if ($libatkanKonversi && $tipePenerimaan !== 'REJECT' && ! $previewMode && $totalLeftPrior < $qty) {
+            $shortfall = $qty - $totalLeftPrior;
+            $kapasitasTarget = $this->kapasitasRateProduk($idPenggunaLokasi, $idProduk);
+
+            if ($kapasitasTarget > 0) {
+                $kLines = $this->cariLineKosongKonversi($idPenggunaLokasi, $idProduk, $tipePenerimaan, array_keys($priorLokasiIds));
+                foreach ($kLines as $kl) {
+                    if ($shortfall <= 0) break;
+                    $deepsKonv = $this->deepsLineByIdLine($idPenggunaLokasi, $kl['id_line']);
+                    if (empty($deepsKonv)) continue;
+
+                    $deepsKonv = array_map(function ($dk) use ($kapasitasTarget) {
+                        $dk['kapasitas'] = $kapasitasTarget;
+                        return $dk;
+                    }, $deepsKonv);
+
+                    $finalCandidates = array_merge($finalCandidates, $deepsKonv);
+                    $konversiList[] = [
+                        'id_line' => $kl['id_line'],
+                        'kode_block' => $kl['kode_block'],
+                        'nomor_line' => $kl['nomor_line'],
+                        'label_line' => $kl['kode_block'].'-'.$kl['nomor_line'],
+                        'produk_lama' => $kl['produk_lama'],
+                        'levels' => $kl['levels'],
+                        'jumlah_deep' => $kl['jumlah_deep'],
+                        'kapasitas_baru' => $kapasitasTarget,
+                        'kapasitas_total' => $kl['jumlah_deep'] * $kapasitasTarget,
+                    ];
+                    $shortfall -= $kl['jumlah_deep'] * $kapasitasTarget;
                 }
             }
         }
 
-        // Mode preview: cukup opsi block & line
         if ($previewMode) {
             $previewBlocks = [];
             $previewLines = [];
@@ -2509,7 +2241,7 @@ class BarangMasukController extends Controller
                 $idLine = (int) $r['id_line'];
                 $idDeep = (int) $r['id_deep'];
                 $kapasitas = (float) $r['kapasitas'];
-                $terisi = $terisiMapAwal[$idDeep] ?? 0.0;
+                $terisi = $terisiMap[$idDeep] ?? 0.0;
 
                 if (! isset($previewBlocks[$kodeBlock])) {
                     $previewBlocks[$kodeBlock] = ['kode_block' => $kodeBlock];
@@ -2536,22 +2268,18 @@ class BarangMasukController extends Controller
             ]);
         }
 
-        // Alokasi
         $need = $qty;
         $alloc = [];
         $ringkasan = [];
 
         foreach ($finalCandidates as $r) {
-            if ($need <= 0) {
-                break;
-            }
+            if ($need <= 0) break;
             $idDeep = (int) $r['id_deep'];
             $cap = (float) $r['kapasitas'];
             $filled = $terisiMap[$idDeep] ?? 0.0;
             $left = max(0.0, $cap - $filled);
-            if ($left <= 0) {
-                continue;
-            }
+            if ($left <= 0) continue;
+
             $bbMinDeep = $bbMinDeepMap[$idDeep] ?? null;
             $bbMaxDeep = $bbMaxDeepMap[$idDeep] ?? null;
 
@@ -2610,7 +2338,7 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    //  ALOKASI DARI LINE TERTENTU (Ref: cabang lokasi_line di tambah_barang_masuk.php)
+    // 8. ALOKASI DARI LINE TERTENTU
     // =========================================================================
     private function alokasiDariLine(string $idPenggunaLokasi, int $idProduk, int $jumlah, ?string $bestBefore, string $tipePenerimaan, string $kodeBlock, int $noLine): array
     {
@@ -2684,9 +2412,7 @@ class BarangMasukController extends Controller
 
         if (! empty($deepsDefault) && $bolehPakaiLineDefault) {
             foreach ($deepsDefault as $dp) {
-                if ($need <= 0) {
-                    break;
-                }
+                if ($need <= 0) break;
                 $kapasitas = (int) $dp->kapasitas;
                 $terisi = (int) $dp->terisi;
                 $bbMin = $dp->bb_min ?? null;
@@ -2695,9 +2421,7 @@ class BarangMasukController extends Controller
                     continue;
                 }
                 $free = $kapasitas - $terisi;
-                if ($free <= 0) {
-                    continue;
-                }
+                if ($free <= 0) continue;
                 $take = min($free, $need);
                 $alokasi[] = ['id_deep' => (int) $dp->id_deep, 'jumlah' => $take];
                 $need -= $take;
@@ -2709,7 +2433,6 @@ class BarangMasukController extends Controller
                 return ['error' => 'Lokasi block default tidak valid, tidak bisa mencari line numpang', 'code' => 422];
             }
 
-            // Line prioritas produk
             $prioritasLineProduk = [];
             $prioritasRows = DB::table('prioritas_lokasi_produk as p')
                 ->join('block as b', function ($j) {
@@ -2730,7 +2453,6 @@ class BarangMasukController extends Controller
             }
             $adaPrioritasLineProduk = ! empty($prioritasLineProduk);
 
-            // Cari line numpang yang ada kapasitas
             $qNumpang = DB::table('block as b')
                 ->join('line as ln', function ($j) {
                     $j->on('ln.id_block', '=', 'b.id_block')
@@ -2759,7 +2481,7 @@ class BarangMasukController extends Controller
                 ->selectRaw('b.kode_block, ln.nomor_line, SUM(d.kapasitas) AS total_kapasitas, COALESCE(SUM(CASE WHEN s.id_stok IS NOT NULL THEN sd.jumlah ELSE 0 END),0) AS total_terisi')
                 ->groupBy('b.kode_block', 'ln.nomor_line')
                 ->havingRaw('total_kapasitas > total_terisi AND total_kapasitas > 0')
-                ->orderByRaw('(b.kode_block = ?) DESC, b.kode_block ASC, ln.nomor_line ASC', [$kodeBlock]);
+                ->orderByRaw('(b.kode_block = ?) DESC, ABS(ln.nomor_line - ?) ASC, b.kode_block ASC, ln.nomor_line ASC', [$kodeBlock, $noLine]);
 
             if ($tipePenerimaan === 'Secondary') {
                 $qNumpang->whereNotIn('b.kode_block', ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'FESTIVE', 'HOLD', 'MOBIL']);
@@ -2805,13 +2527,9 @@ class BarangMasukController extends Controller
             $kandidatLine = array_merge($daftarLinePrioritas, $daftarLineNonPrioritas);
 
             foreach ($kandidatLine as $rowLine) {
-                if ($need <= 0) {
-                    break;
-                }
+                if ($need <= 0) break;
                 $deepsNumpang = $this->deepsLine($idPenggunaLokasi, $rowLine->kode_block, (int) $rowLine->nomor_line);
-                if (empty($deepsNumpang)) {
-                    continue;
-                }
+                if (empty($deepsNumpang)) continue;
 
                 $linePunyaStokNumpang = false;
                 $bbMinLineNumpang = null;
@@ -2821,9 +2539,7 @@ class BarangMasukController extends Controller
                     $terisiDeep = (int) $dp->terisi;
                     $bbMinDeep = $dp->bb_min ?? null;
                     $freeDeep = $kapasitasDeep - $terisiDeep;
-                    if ($freeDeep > 0) {
-                        $totalFreeLine += $freeDeep;
-                    }
+                    if ($freeDeep > 0) $totalFreeLine += $freeDeep;
                     if ($terisiDeep > 0 && $bbMinDeep !== null) {
                         $linePunyaStokNumpang = true;
                         if ($bbMinLineNumpang === null || $bbMinDeep < $bbMinLineNumpang) {
@@ -2832,23 +2548,17 @@ class BarangMasukController extends Controller
                     }
                 }
 
-                if ($totalFreeLine <= 0) {
-                    continue;
-                }
+                if ($totalFreeLine <= 0) continue;
 
                 $bolehPakaiLineNumpang = true;
                 if ($tipePenerimaan !== 'REJECT' && $linePunyaStokNumpang && $bestBefore !== null && $bestBefore !== ''
                     && $bbMinLineNumpang !== null && $bestBefore > $bbMinLineNumpang) {
                     $bolehPakaiLineNumpang = false;
                 }
-                if (! $bolehPakaiLineNumpang) {
-                    continue;
-                }
+                if (! $bolehPakaiLineNumpang) continue;
 
                 foreach ($deepsNumpang as $dp) {
-                    if ($need <= 0) {
-                        break;
-                    }
+                    if ($need <= 0) break;
                     $kapasitas = (int) $dp->kapasitas;
                     $terisi = (int) $dp->terisi;
                     $bbMin = $dp->bb_min ?? null;
@@ -2857,9 +2567,7 @@ class BarangMasukController extends Controller
                         continue;
                     }
                     $free = $kapasitas - $terisi;
-                    if ($free <= 0) {
-                        continue;
-                    }
+                    if ($free <= 0) continue;
                     $take = min($free, $need);
                     $alokasi[] = ['id_deep' => (int) $dp->id_deep, 'jumlah' => $take];
                     $need -= $take;
@@ -2875,8 +2583,13 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    //  HELPERS
+    // 9. HELPERS
     // =========================================================================
+    private function mapDeepIds(array $alokasi): array
+    {
+        return array_filter(array_map(fn ($a) => (int) ($a['id_deep'] ?? 0), $alokasi), fn ($id) => $id > 0);
+    }
+
     private function kandidatPrior(string $idPenggunaLokasi, string $tipePenerimaan, string $column, array $ids): array
     {
         $query = $this->baseDeep($idPenggunaLokasi)
@@ -2945,7 +2658,6 @@ class BarangMasukController extends Controller
             ->orderBy('lv.level', 'ASC')
             ->get()->all();
 
-        // --- TAMBAHAN: HITUNG BOOKING DARI RENCANA MASUK ---
         if (!empty($rows)) {
             $deepIds = array_map(fn($r) => $r->id_deep, $rows);
             
@@ -2966,7 +2678,7 @@ class BarangMasukController extends Controller
             foreach ($rows as $row) {
                 if (isset($bookingMap[$row->id_deep])) {
                     $b = $bookingMap[$row->id_deep];
-                    $row->terisi += $b->terisi_booking; // Tambahkan stok yang lagi Otw
+                    $row->terisi += $b->terisi_booking;
                     if ($b->bb_min !== null && ($row->bb_min === null || $b->bb_min < $row->bb_min)) {
                         $row->bb_min = $b->bb_min;
                     }
@@ -2976,7 +2688,6 @@ class BarangMasukController extends Controller
                 }
             }
         }
-        // ---------------------------------------------------
 
         return $rows;
     }
@@ -3037,7 +2748,6 @@ class BarangMasukController extends Controller
 
     private function cariLineKosongKonversi(string $idPenggunaLokasi, int $idProduk, string $tipePenerimaan, array $priorLokasiIds): array
     {
-        // --- TAMBAHAN: KUMPULKAN LINE YANG LAGI DI-BOOKING TRUK PENDING ---
         $bookedLineIds = DB::table('rencana_masuk_deep as r')
             ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
             ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
@@ -3045,7 +2755,6 @@ class BarangMasukController extends Controller
             ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
             ->where('bm.status', 'Pending')
             ->pluck('lv.id_line')->unique();
-        // ------------------------------------------------------------------
 
         $q = DB::table('line as ln')
             ->join('block as b', function ($j) use ($idPenggunaLokasi) {
@@ -3053,11 +2762,11 @@ class BarangMasukController extends Controller
                     ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
             })
             ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
-            ->join('prioritas_lokasi_produk as p', function ($j) use ($idPenggunaLokasi) {
+            ->leftJoin('prioritas_lokasi_produk as p', function ($j) use ($idPenggunaLokasi) {
                 $j->on('p.id_line', '=', 'ln.id_line')
                     ->on('p.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
             })
-            ->join('produk as pr', 'pr.id_produk', '=', 'p.id_produk')
+            ->leftJoin('produk as pr', 'pr.id_produk', '=', 'p.id_produk')
             ->leftJoin('level as lv', function ($j) use ($idPenggunaLokasi) {
                 $j->on('lv.id_line', '=', 'ln.id_line')
                     ->on('lv.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
@@ -3076,11 +2785,13 @@ class BarangMasukController extends Controller
                     ->where('s.jumlah_sisa', '>', DB::raw('0'));
             })
             ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->where('p.id_produk', '<>', $idProduk)
-            ->where('p.id_lokasi', '>', 0)
+            ->where(function ($w) use ($idProduk) {
+                $w->whereNull('p.id_produk')
+                  ->orWhere('p.id_produk', '<>', $idProduk);
+            })
+            ->where('b.id_lokasi', '>', 0)
             ->where($this->whereNormalBlockActive($tipePenerimaan));
 
-        // JANGAN MASUKKAN LINE YANG LAGI DI-BOOKING
         if ($bookedLineIds->isNotEmpty()) {
             $q->whereNotIn('ln.id_line', $bookedLineIds);
         }
@@ -3093,9 +2804,10 @@ class BarangMasukController extends Controller
             $q->whereIn('l.id_lokasi', $priorLokasiIds);
         }
 
-        $q->selectRaw('ln.id_line, b.kode_block, ln.nomor_line, pr.nama_produk AS produk_lama,
+        $q->selectRaw("ln.id_line, b.kode_block, ln.nomor_line, 
+                COALESCE(pr.nama_produk, 'Line Kosong / Belum Ada Produk') AS produk_lama,
                 COALESCE(SUM(CASE WHEN s.id_stok IS NOT NULL THEN sd.jumlah ELSE 0 END),0) AS terisi_line,
-                COUNT(d.id_deep) AS jumlah_deep')
+                COUNT(d.id_deep) AS jumlah_deep")
             ->groupBy('ln.id_line', 'b.kode_block', 'ln.nomor_line', 'pr.nama_produk')
             ->having('terisi_line', '=', 0)
             ->having('jumlah_deep', '>', 0)
@@ -3130,28 +2842,48 @@ class BarangMasukController extends Controller
             ];
         }
 
-        // Preferensi: tetap di satu block — utamakan line kosong di block yang
-        // sudah dipakai produk (line sebelahnya), baru block lain.
-        $produkLokasi = DB::table('prioritas_lokasi_produk as p')
-            ->join('line as ln', function ($j) use ($idPenggunaLokasi) {
+        $blockProduk = [];
+        $priorRows = DB::table('prioritas_lokasi_produk as p')
+            ->leftJoin('line as ln', function ($j) use ($idPenggunaLokasi) {
                 $j->on('ln.id_line', '=', 'p.id_line')
                     ->on('ln.id_pengguna_lokasi', '=', 'p.id_pengguna_lokasi');
             })
-            ->join('block as b', function ($j) use ($idPenggunaLokasi) {
-                $j->on('b.id_block', '=', 'ln.id_block')
-                    ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            ->leftJoin('block as b', function ($j) use ($idPenggunaLokasi) {
+                $j->on('b.id_block', '=', DB::raw('COALESCE(p.id_block, ln.id_block)'))
+                    ->on('b.id_pengguna_lokasi', '=', 'p.id_pengguna_lokasi');
             })
             ->where('p.id_produk', $idProduk)
             ->where('p.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->get(['b.kode_block', 'ln.nomor_line']);
+            ->selectRaw('b.kode_block, ln.nomor_line')
+            ->get();
 
-        $blockProduk = [];
-        foreach ($produkLokasi as $pl) {
-            $kode = strtoupper(trim((string) $pl->kode_block));
-            if (! isset($blockProduk[$kode])) {
-                $blockProduk[$kode] = [];
+        foreach ($priorRows as $pl) {
+            if ($pl->kode_block) {
+                $kode = strtoupper(trim((string) $pl->kode_block));
+                if (! isset($blockProduk[$kode])) {
+                    $blockProduk[$kode] = [];
+                }
+                if ($pl->nomor_line) {
+                    $blockProduk[$kode][] = (int) $pl->nomor_line;
+                }
             }
-            $blockProduk[$kode][] = (int) $pl->nomor_line;
+        }
+
+        $stokAktif = DB::table('stok_gudang')
+            ->where('id_produk', $idProduk)
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('jumlah_sisa', '>', 0)
+            ->pluck('lokasi_block');
+
+        foreach ($stokAktif as $lbl) {
+            if (preg_match('/^([A-Z0-9]+)-(\d+)$/i', trim($lbl), $m)) {
+                $k = strtoupper($m[1]);
+                $l = (int) $m[2];
+                if (! isset($blockProduk[$k])) {
+                    $blockProduk[$k] = [];
+                }
+                $blockProduk[$k][] = $l;
+            }
         }
 
         usort($lines, function ($a, $b) use ($blockProduk) {
@@ -3159,14 +2891,19 @@ class BarangMasukController extends Controller
             $kb = $b['kode_block'];
             $pa = isset($blockProduk[$ka]);
             $pb = isset($blockProduk[$kb]);
+
             if ($pa !== $pb) {
                 return $pa ? -1 : 1;
             }
-            $da = $pa ? min(array_map(fn ($n) => abs($n - $a['nomor_line']), $blockProduk[$ka])) : PHP_INT_MAX;
-            $db = $pb ? min(array_map(fn ($n) => abs($n - $b['nomor_line']), $blockProduk[$kb])) : PHP_INT_MAX;
-            if ($da !== $db) {
-                return $da <=> $db;
+
+            if ($pa && $pb) {
+                $da = !empty($blockProduk[$ka]) ? min(array_map(fn ($n) => abs($n - $a['nomor_line']), $blockProduk[$ka])) : 0;
+                $db = !empty($blockProduk[$kb]) ? min(array_map(fn ($n) => abs($n - $b['nomor_line']), $blockProduk[$kb])) : 0;
+                if ($da !== $db) {
+                    return $da <=> $db;
+                }
             }
+
             if ($ka !== $kb) {
                 return strcmp($ka, $kb);
             }
@@ -3260,6 +2997,7 @@ class BarangMasukController extends Controller
 
         return ['ok' => true, 'kapasitas' => $rate];
     }
+
     private function tambahItemInbound(array $in)
     {
         $idPenggunaLokasi = trim((string) ($in['id_pengguna_lokasi'] ?? ''));
@@ -3277,7 +3015,6 @@ class BarangMasukController extends Controller
         $namaProduk = DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk');
         if (!$namaProduk) return $this->fail('Produk tidak ditemukan di database.');
 
-        // Cari referensi header truk dari item yang sudah ada
         $query = DB::table('barang_masuk')->where('id_pengguna_lokasi', $idPenggunaLokasi);
         if ($shipmentId !== '') {
             $query->where('shipment_id', $shipmentId);
@@ -3316,11 +3053,11 @@ class BarangMasukController extends Controller
             return $this->fail($e->getMessage(), 500);
         }
     }
+
     private function whereNormalBlockActive(string $tipePenerimaan): \Closure
     {
         return function ($q) use ($tipePenerimaan) {
             if ($tipePenerimaan === 'REJECT') {
-                // FIX BUG BLOCK: Ubah pencarian menjadi LIKE agar mendeteksi "BLOCK REJECT"
                 $q->whereRaw("UPPER(TRIM(b.kode_block)) LIKE '%REJECT%'");
                 return;
             }
@@ -3357,8 +3094,8 @@ class BarangMasukController extends Controller
         }
         $idPlant = strtoupper(trim(explode('-', $asal, 2)[0]));
         if ($idPlant === '') {
-            preg_match('/[A-Za-z0-9]+/', $asal, $m);
-            $idPlant = strtoupper(trim($m[0] ?? ''));
+            preg_match('/[A-Za-z0-9]+/', $asal, $mPlant);
+            $idPlant = strtoupper(trim($mPlant[0] ?? ''));
         }
         if ($idPlant === '') {
             return '';
@@ -3373,7 +3110,6 @@ class BarangMasukController extends Controller
             return '';
         }
 
-        // Serial Excel (jumlah hari sejak 1899-12-30).
         if (is_numeric($raw)) {
             $days = (int) $raw;
             if ($days <= 0 || $days > 100000) {
@@ -3382,7 +3118,6 @@ class BarangMasukController extends Controller
             return (new DateTime('1899-12-30'))->modify("+{$days} days")->format('Y-m-d');
         }
 
-        // dd/mm/yyyy atau yyyy/mm/dd atau yyyy-mm-dd (+ waktu opsional).
         $txt = str_replace('/', '-', $raw);
         foreach (['Y-m-d H:i:s', 'Y-m-d', 'd-m-Y H:i:s', 'd-m-Y'] as $fmt) {
             $dt = DateTime::createFromFormat($fmt, $txt);
@@ -3394,7 +3129,6 @@ class BarangMasukController extends Controller
             }
         }
 
-        // Cadangan terakhir via strtotime (mis. "May 9, 2026").
         $ts = strtotime($raw);
         if ($ts === false) {
             return '';
