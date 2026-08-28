@@ -399,12 +399,138 @@ class TraceabilityController extends Controller
             $mapProduk[strtoupper(trim((string) $p->nama_produk))] = (int) $p->id_produk;
         }
 
-        $parsed = $this->bacaFileSpreadsheet($file->getRealPath(), $ext);
-        $headerRow = $parsed['header'];
-        $rowsData = $parsed['rows'];
+        $path = $file->store('temp_uploads');
+        if (! $path) {
+            return $this->fail('Gagal menyimpan file.');
+        }
 
-        if (empty($rowsData)) {
-            return $this->fail('File Excel kosong atau tidak memiliki data yang bisa dibaca.');
+        $fullPath = storage_path('app/' . $path);
+
+        dispatch(new \App\Jobs\ProcessTraceabilityExcel($fullPath, $uploadLokasi, $mapProduk));
+
+        return $this->ok([], 'File diterima, pemrosesan akan berlangsung di latar belakang. Cek status secara berkala.');
+    }
+
+    private function uploadXlsxStream(string $path, array $mapProduk, string $uploadLokasi)
+    {
+        $totalInserted = 0;
+        $totalSkipped = 0;
+        $countUnmapped = 0;
+        $chunk = [];
+        $chunkSize = 500;
+
+        $colMap = [];
+        $headerRow = null;
+
+        try {
+            $this->streamXlsx($path, function ($cells, $rowIndex, $header) use (&$colMap, &$headerRow, &$chunk, &$totalInserted, &$totalSkipped, &$countUnmapped, $mapProduk, $uploadLokasi, $chunkSize) {
+                if ($headerRow === null) {
+                    $headerRow = $header;
+                    foreach ($headerRow as $index => $colName) {
+                        $clean = trim((string) $colName);
+                        if ($clean !== '') {
+                            $colMap[$clean] = $index;
+                        }
+                    }
+                    return;
+                }
+
+                $idxRoute = $colMap['ID_Route'] ?? 1;
+                $idxDriver = $colMap['Driver_Name'] ?? 3;
+                $idxIdCustomer = $colMap['Cust_ID'] ?? 4;
+                $idxNamaCustomer = $colMap['Cust_Name'] ?? 5;
+                $idxSalesGroup = $colMap['Sales_Group'] ?? 7;
+                $idxSo = $colMap['SO_Number'] ?? 9;
+                $idxDn = $colMap['DN_Number'] ?? 10;
+                $idxNamaProduk = $colMap['Product_Name'] ?? 11;
+                $idxTanggal = $colMap['Actual_Date'] ?? 14;
+                $idxJumlah = $colMap['Actual_Qty'] ?? 16;
+                $idxStatusDelivery = $colMap['Status_Delivery'] ?? 18;
+
+                $soNumber = trim((string) ($cells[$idxSo] ?? ''));
+                if ($soNumber === '') {
+                    return;
+                }
+                $namaProdukExcel = strtoupper(trim((string) ($cells[$idxNamaProduk] ?? '')));
+                $jumlah = (int) ($cells[$idxJumlah] ?? 0);
+                if ($namaProdukExcel === '' || $jumlah <= 0) {
+                    return;
+                }
+
+                $idProduk = $mapProduk[$namaProdukExcel] ?? 0;
+                if ($idProduk <= 0) {
+                    $countUnmapped++;
+                }
+
+                $rawDate = trim((string) ($cells[$idxTanggal] ?? ''));
+                $tanggalPengiriman = null;
+                if ($rawDate !== '') {
+                    $parsedDate = date('Y-m-d', strtotime(str_replace('/', '-', $rawDate)));
+                    if ($parsedDate !== '1970-01-01' && $parsedDate !== false) {
+                        $tanggalPengiriman = $parsedDate;
+                    }
+                }
+
+                $chunk[] = [
+                    'id_route' => trim((string) ($cells[$idxRoute] ?? '')),
+                    'nama_driver' => trim((string) ($cells[$idxDriver] ?? '')),
+                    'id_customer' => trim((string) ($cells[$idxIdCustomer] ?? '')),
+                    'nama_customer' => trim((string) ($cells[$idxNamaCustomer] ?? '')),
+                    'sales_group' => trim((string) ($cells[$idxSalesGroup] ?? '')),
+                    'so_number' => $soNumber,
+                    'no_dn' => trim((string) ($cells[$idxDn] ?? '')),
+                    'nama_produk' => trim((string) ($cells[$idxNamaProduk] ?? '')),
+                    'id_produk' => $idProduk,
+                    'id_pengguna_lokasi' => $uploadLokasi,
+                    'tanggal_pengiriman' => $tanggalPengiriman,
+                    'jumlah' => $jumlah,
+                    'status_delivery' => trim((string) ($cells[$idxStatusDelivery] ?? '')),
+                ];
+
+                if (count($chunk) >= $chunkSize) {
+                    $this->processChunk($chunk, $totalInserted, $totalSkipped);
+                    $chunk = [];
+                }
+            });
+
+            if (! empty($chunk)) {
+                $this->processChunk($chunk, $totalInserted, $totalSkipped);
+            }
+
+            $msg = "Berhasil memproses file.";
+            if ($totalInserted > 0) {
+                $msg .= " {$totalInserted} data baru tersimpan.";
+            }
+            if ($totalSkipped > 0) {
+                $msg .= " ({$totalSkipped} baris ganda/duplikat dilewati).";
+            }
+            if ($countUnmapped > 0) {
+                $msg .= " Ada $countUnmapped produk tidak dikenal.";
+            }
+
+            return $this->ok(['inserted' => $totalInserted, 'skipped' => $totalSkipped, 'unmapped' => $countUnmapped], $msg);
+
+        } catch (Exception $e) {
+            return $this->fail($e->getMessage(), 500);
+        }
+    }
+
+    private function uploadCsv(string $path, array $mapProduk, string $uploadLokasi)
+    {
+        $totalInserted = 0;
+        $totalSkipped = 0;
+        $countUnmapped = 0;
+        $chunk = [];
+        $chunkSize = 500;
+
+        if (($handle = fopen($path, 'r')) === false) {
+            return $this->fail('Tidak dapat membaca file CSV.');
+        }
+
+        $headerRow = fgetcsv($handle, 10000, ',');
+        if ($headerRow === false) {
+            fclose($handle);
+            return $this->fail('File CSV kosong atau header tidak valid.');
         }
 
         $colMap = [];
@@ -423,14 +549,11 @@ class TraceabilityController extends Controller
         $idxSo = $colMap['SO_Number'] ?? 9;
         $idxDn = $colMap['DN_Number'] ?? 10;
         $idxNamaProduk = $colMap['Product_Name'] ?? 11;
-        $idxSku = $colMap['SKU'] ?? 12;
         $idxTanggal = $colMap['Actual_Date'] ?? 14;
         $idxJumlah = $colMap['Actual_Qty'] ?? 16;
         $idxStatusDelivery = $colMap['Status_Delivery'] ?? 18;
 
-        $items = [];
-        $countUnmapped = 0;
-        foreach ($rowsData as $data) {
+        while (($data = fgetcsv($handle, 10000, ',')) !== false) {
             $soNumber = trim((string) ($data[$idxSo] ?? ''));
             if ($soNumber === '') {
                 continue;
@@ -455,7 +578,7 @@ class TraceabilityController extends Controller
                 }
             }
 
-            $items[] = [
+            $chunk[] = [
                 'id_route' => trim((string) ($data[$idxRoute] ?? '')),
                 'nama_driver' => trim((string) ($data[$idxDriver] ?? '')),
                 'id_customer' => trim((string) ($data[$idxIdCustomer] ?? '')),
@@ -470,24 +593,153 @@ class TraceabilityController extends Controller
                 'jumlah' => $jumlah,
                 'status_delivery' => trim((string) ($data[$idxStatusDelivery] ?? '')),
             ];
+
+            if (count($chunk) >= $chunkSize) {
+                $this->processChunk($chunk, $totalInserted, $totalSkipped);
+                $chunk = [];
+            }
+        }
+        fclose($handle);
+
+        if (! empty($chunk)) {
+            $this->processChunk($chunk, $totalInserted, $totalSkipped);
         }
 
+        $msg = "Berhasil memproses file.";
+        if ($totalInserted > 0) {
+            $msg .= " {$totalInserted} data baru tersimpan.";
+        }
+        if ($totalSkipped > 0) {
+            $msg .= " ({$totalSkipped} baris ganda/duplikat dilewati).";
+        }
+        if ($countUnmapped > 0) {
+            $msg .= " Ada $countUnmapped produk tidak dikenal.";
+        }
+
+        return $this->ok(['inserted' => $totalInserted, 'skipped' => $totalSkipped, 'unmapped' => $countUnmapped], $msg);
+    }
+
+    private function processChunk(array &$items, int &$inserted, int &$skipped)
+    {
         if (empty($items)) {
-            $msg = 'Gagal memproses file. Data tidak sesuai format.';
-            if ($countUnmapped > 0) {
-                $msg .= " Ada $countUnmapped produk tidak dikenal.";
+            return;
+        }
+
+        $soList = [];
+        foreach ($items as $it) {
+            $so = trim($it['so_number'] ?? '');
+            if ($so !== '') {
+                $soList[] = $so;
+            }
+        }
+        $soList = array_unique($soList);
+
+        $existingTraceRows = DB::table('traceability')
+            ->whereIn('so_number', $soList)
+            ->get(['so_number', 'id_produk', 'tanggal_pengiriman']);
+
+        $existingMap = [];
+        foreach ($existingTraceRows as $ex) {
+            $tgl = $ex->tanggal_pengiriman ? substr($ex->tanggal_pengiriman, 0, 10) : '';
+            $key = $ex->so_number.'|'.(int) $ex->id_produk.'|'.$tgl;
+            $existingMap[$key] = true;
+        }
+
+        $bkRows = DB::table('barang_keluar')
+            ->where(function ($q) use ($soList) {
+                foreach ($soList as $s) {
+                    $q->orWhere('so_number', 'LIKE', '%'.$s.'%');
+                }
+            })
+            ->orderBy('id_barang_keluar', 'DESC')
+            ->get(['id_barang_keluar', 'so_number', 'id_produk', 'id_pengguna_lokasi', 'batch', 'best_before']);
+
+        $bkMapBySoProd = [];
+        $bkMapBySoOnly = [];
+        foreach ($bkRows as $bk) {
+            $arrSo = array_filter(array_map('trim', explode(',', $bk->so_number ?? '')));
+            foreach ($arrSo as $sVal) {
+                $keyProd = $sVal.'|'.(int) $bk->id_produk;
+                if (! isset($bkMapBySoProd[$keyProd])) {
+                    $bkMapBySoProd[$keyProd] = $bk;
+                }
+                if (! isset($bkMapBySoOnly[$sVal])) {
+                    $bkMapBySoOnly[$sVal] = $bk;
+                }
+            }
+        }
+
+        $insertRows = [];
+        foreach ($items as $it) {
+            $soNumber = trim($it['so_number'] ?? '');
+            $idProduk = (int) ($it['id_produk'] ?? 0);
+            $idPenggunaLokasi = ! empty($it['id_pengguna_lokasi']) ? trim($it['id_pengguna_lokasi']) : null;
+            $tanggalPengiriman = ! empty($it['tanggal_pengiriman']) ? substr($it['tanggal_pengiriman'], 0, 10) : null;
+
+            $dupKey = $soNumber.'|'.$idProduk.'|'.($tanggalPengiriman ?? '');
+            if ($soNumber !== '' && $idProduk > 0 && $tanggalPengiriman !== null && isset($existingMap[$dupKey])) {
+                $skipped++;
+                continue;
             }
 
-            return $this->fail($msg);
+            $idBarangKeluar = null;
+            $lokasiDariBk = null;
+            $batchNumber = null;
+            $bestBefore = null;
+
+            $lookupKeyProd = $soNumber.'|'.$idProduk;
+            $lookup1 = $bkMapBySoProd[$lookupKeyProd] ?? null;
+            if ($lookup1) {
+                $idBarangKeluar = $lookup1->id_barang_keluar;
+                $lokasiDariBk = $lookup1->id_pengguna_lokasi;
+                $batchNumber = $lookup1->batch;
+                $bestBefore = $lookup1->best_before ?: null;
+            } else {
+                $lookup2 = $bkMapBySoOnly[$soNumber] ?? null;
+                if ($lookup2) {
+                    $idBarangKeluar = $lookup2->id_barang_keluar;
+                    $lokasiDariBk = $lookup2->id_pengguna_lokasi;
+                    $batchNumber = $lookup2->batch;
+                    $bestBefore = $lookup2->best_before ?: null;
+                }
+            }
+
+            if ($lokasiDariBk !== null) {
+                $idPenggunaLokasi = $lokasiDariBk;
+            }
+            if ($batchNumber === null && ! empty($it['batch_number'])) {
+                $batchNumber = trim($it['batch_number']);
+            }
+
+            $insertRows[] = [
+                'id_barang_keluar' => $idBarangKeluar,
+                'id_pengguna_lokasi' => $idPenggunaLokasi,
+                'id_route' => $it['id_route'] ?? null,
+                'nama_driver' => $it['nama_driver'] ?? null,
+                'id_customer' => $it['id_customer'] ?? null,
+                'nama_customer' => $it['nama_customer'] ?? null,
+                'sales_group' => $it['sales_group'] ?? null,
+                'so_number' => $soNumber,
+                'no_dn' => $it['no_dn'] ?? null,
+                'nama_produk' => $it['nama_produk'] ?? null,
+                'id_produk' => $idProduk,
+                'tanggal_pengiriman' => $tanggalPengiriman,
+                'jumlah' => $it['jumlah'] ?? 0,
+                'batch_number' => $batchNumber,
+                'best_before' => $bestBefore,
+                'status_delivery' => $it['status_delivery'] ?? null,
+            ];
+
+            $existingMap[$dupKey] = true;
+            $inserted++;
         }
 
-        $request->merge(['items' => $items]);
-        $resp = $this->import($request);
+        if (! empty($insertRows)) {
+            foreach (array_chunk($insertRows, 500) as $chunk) {
+                DB::table('traceability')->insert($chunk);
+            }
+        }
 
-        $data = json_decode($resp->getContent(), true);
-        $data['unmapped'] = $countUnmapped;
-        $response = response()->json($data);
-
-        return $response;
+        $items = [];
     }
 }

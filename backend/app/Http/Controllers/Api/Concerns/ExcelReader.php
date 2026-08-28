@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Concerns;
 
 use Exception;
+use XMLReader;
 
 trait ExcelReader
 {
@@ -83,5 +84,68 @@ trait ExcelReader
         }
 
         return ['header' => $header ?? [], 'rows' => $rows];
+    }
+
+    /**
+     * Stream XLSX file row by row using XMLReader (memory efficient).
+     * Calls $rowCallback($cells, $rowIndex, $header) for each data row.
+     */
+    private function streamXlsx(string $path, callable $rowCallback): void
+    {
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            throw new Exception('File XLSX tidak valid.');
+        }
+
+        $sharedXml = $zip->getFromName('xl/sharedStrings.xml');
+        $sharedStrings = [];
+        if ($sharedXml !== false) {
+            $sx = simplexml_load_string($sharedXml);
+            foreach ($sx->si as $si) {
+                $sharedStrings[] = trim((string) ($si->t ?? $si));
+            }
+        }
+
+        $sheetXml = $zip->getFromName('xl/worksheets/sheet1.xml');
+        if ($sheetXml === false) {
+            $sheetXml = $zip->getFromName('xl/worksheets/sheet.xml');
+        }
+        $zip->close();
+        if ($sheetXml === false) {
+            throw new Exception('Sheet tidak ditemukan.');
+        }
+
+        $reader = new XMLReader();
+        $reader->xml($sheetXml);
+        $rowIndex = 0;
+        $header = null;
+
+        while ($reader->read()) {
+            if ($reader->nodeType == XMLReader::ELEMENT && $reader->name === 'row') {
+                $cells = [];
+                $sub = $reader->expand();
+                foreach ($sub->getElementsByTagName('c') as $cell) {
+                    $t = $cell->getAttribute('t');
+                    $v = '';
+                    $children = $cell->getElementsByTagName('v');
+                    if ($children->length > 0) {
+                        $v = trim($children->item(0)->nodeValue);
+                    }
+                    if ($t === 's' && $v !== '') {
+                        $val = $sharedStrings[(int) $v] ?? '';
+                    } else {
+                        $val = $v;
+                    }
+                    $cells[] = $val;
+                }
+                if ($rowIndex === 0) {
+                    $header = $cells;
+                } else {
+                    $rowCallback($cells, $rowIndex, $header);
+                }
+                $rowIndex++;
+            }
+        }
+        $reader->close();
     }
 }
