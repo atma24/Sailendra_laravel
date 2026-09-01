@@ -29,18 +29,13 @@ Route::post('/login', [AuthController::class, 'login']);
 // =========================================================================
 // PROTECTED ROUTES (Wajib Bawa Bearer Token)
 // =========================================================================
-Route::middleware(['auth:sanctum', 'session.token'])->group(function () {
+Route::middleware('auth:sanctum')->group(function () {
 
     // Logout endpoint (menghapus token)
     Route::post('/logout', [AuthController::class, 'logout']);
 
     // Validasi sesi (token masih valid?)
     Route::get('/me', [AuthController::class, 'me']);
-
-    // Check session token (untuk polling)
-    Route::get('/check-session', function (Request $request) {
-        return response()->json(['success' => true, 'message' => 'Session valid']);
-    });
 
     // Reset password akun (semua role)
     Route::post('/reset-password', [AuthController::class, 'resetPassword']);

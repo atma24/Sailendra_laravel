@@ -32,14 +32,10 @@ function authHeaders(): HeadersInit {
     if (!raw) return {};
     const s = JSON.parse(raw);
     if (s?.token) {
-      const headers: HeadersInit = {
+      return {
         Accept: "application/json",
         Authorization: `Bearer ${s.token}`,
       };
-      if (s.session_token) {
-        headers["X-Session-Token"] = s.session_token;
-      }
-      return headers;
     }
   } catch {
     /* ignore */
@@ -68,15 +64,6 @@ export async function api<T = unknown>(
   }
 
   if (!res.ok || (body && body.success === false)) {
-    if (res.status === 401) {
-      // Clear session and redirect to login
-      if (typeof window !== "undefined") {
-        localStorage.removeItem("sailendra_session");
-        if (window.location.pathname !== "/login") {
-          window.location.href = "/login";
-        }
-      }
-    }
     const msg = body?.message || "Terjadi kesalahan pada server";
     throw new ApiError(msg, res.status);
   }

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Concerns\ExcelReader;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class TraceabilityController extends Controller
 {
@@ -404,7 +405,7 @@ class TraceabilityController extends Controller
             return $this->fail('Gagal menyimpan file.');
         }
 
-        $fullPath = storage_path('app/' . $path);
+        $fullPath = Storage::disk('local')->path($path);
 
         dispatch(new \App\Jobs\ProcessTraceabilityExcel($fullPath, $uploadLokasi, $mapProduk));
 

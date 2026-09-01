@@ -41,7 +41,6 @@ export default function LoginPage() {
           nama_pengguna_lokasi: d.nama_pengguna_lokasi,
         },
         token: d.token,
-        session_token: d.session_token,
         lokasi: isMultiRole(d.role) ? [] : d.id_pengguna_lokasi ? [d.id_pengguna_lokasi] : [],
       });
       router.replace(isMultiRole(d.role) ? "/pilih-lokasi" : "/dashboard");
@@ -83,7 +82,7 @@ export default function LoginPage() {
               name="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
+              autoComplete="current-password"
               maxLength={25}
               required
             />
