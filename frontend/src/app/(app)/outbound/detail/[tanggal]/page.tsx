@@ -502,7 +502,7 @@ export default function OutboundDetailPage() {
       sessionStorage.setItem(
         "sailendra_flash_toast",
         JSON.stringify({
-          message: aksi === "revert_to_draft" ? "Outbound dikembalikan ke Draft." : aksi === "konfirmasi" ? "Konfirmasi outbound berhasil." : "Outbound disubmit ke Pending.",
+          message: aksi === "revert_to_draft" ? "Outbound dikembalikan ke Draft." : aksi === "konfirmasi" ? "Konfirmasi outbound berhasil. Inbound otomatis dibuat dari data outbound ini." : "Outbound disubmit ke Pending.",
           type: "success",
         })
       );
@@ -632,6 +632,22 @@ export default function OutboundDetailPage() {
               </div>
             )}
           </>
+        )}
+
+        {isSelesai && (
+          <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: "#dcfce7", color: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <i className="bi bi-arrow-down-up" style={{ fontSize: 14 }}></i>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#166534", marginBottom: 2 }}>Inbound otomatis dibuat</div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280" }}>Data produk dari outbound ini sudah masuk ke Inbound (Secondary). Buka halaman Inbound untuk konfirmasi.</div>
+            </div>
+            <Link href={`/inbound/driver/${encodeURIComponent(tanggal)}${header?.id_pengguna_lokasi ? `?lok=${encodeURIComponent(header.id_pengguna_lokasi)}` : ""}`}
+              style={{ padding: "6px 12px", borderRadius: 8, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <i className="bi bi-box-arrow-in-right" style={{ fontSize: 11 }}></i> Lihat Inbound
+            </Link>
+          </div>
         )}
       </div>
 

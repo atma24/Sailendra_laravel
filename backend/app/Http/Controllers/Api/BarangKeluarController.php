@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
+use DateTime;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -1367,9 +1368,77 @@ $in = $request->all();
                 WHERE bk.id_pengguna_lokasi = ? AND bk.id_barang_keluar IN ($placeholders)
             ", $paramsSync);
 
+            // === AUTO-INBOUND: Buat barang_masuk Secondary dari outbound selesai ===
+            $itemsSelesai = DB::table('barang_keluar')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->whereIn('id_barang_keluar', $idsProses)
+                ->get();
+
+            foreach ($itemsSelesai as $bk) {
+                $bestBeforeBk = $bk->best_before ?? null;
+                $batchBk = $bk->batch ?? null;
+                if (empty($bestBeforeBk) || $bestBeforeBk === '0000-00-00') {
+                    $bestBeforeBk = null;
+                }
+
+                // Resolve batch dari best_before jika kosong
+                if (empty($batchBk) && $bestBeforeBk) {
+                    $idPlant = strtoupper(trim(explode('-', $bk->lokasi_block ?? '', 2)[0]));
+                    if ($idPlant === '' || $idPlant === 'PABRIK') $idPlant = 'PABRIK';
+                    $dtBatch = DateTime::createFromFormat('Y-m-d', $bestBeforeBk);
+                    if ($dtBatch) {
+                        $batchBk = $dtBatch->format('ymd') . $idPlant;
+                    }
+                }
+
+                // Resolve asal_pabrik dari batch code → plant table
+                $asalPabrik = 'Secondary-Outbound';
+                if (!empty($batchBk) && strlen($batchBk) >= 4) {
+                    // Batch format: YYMMDD + ID_PLANT (4-5 karakter terakhir)
+                    $idPlant = substr($batchBk, 6);
+                    if ($idPlant !== '') {
+                        $plantRow = DB::table('plant')
+                            ->where('id_plant', $idPlant)
+                            ->first();
+                        if ($plantRow) {
+                            $asalPabrik = trim($plantRow->id_plant) . ' - ' . trim($plantRow->nama_plant);
+                        } else {
+                            $asalPabrik = $idPlant;
+                        }
+                    }
+                }
+
+                $ginNo = $bk->gin_no ?? '-';
+                $shipmentIdAuto = 'AUTO-' . strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $ginNo)) . '-' . $bk->id_barang_keluar;
+
+                DB::table('barang_masuk')->insert([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'id_pengguna'         => $bk->id_pengguna,
+                    'id_produk'           => $bk->id_produk,
+                    'nama_produk'         => $bk->nama_produk,
+                    'jumlah'              => $bk->jumlah,
+                    'satuan'              => $bk->satuan,
+                    'tanggal_masuk'       => $bk->tanggal_keluar,
+                    'tipe_penerimaan'     => 'Secondary',
+                    'best_before'         => $bestBeforeBk,
+                    'batch'               => $batchBk,
+                    'batch_sekarang'      => $batchBk,
+                    'asal_pabrik'         => $asalPabrik,
+                    'no_dn'               => '',
+                    'nama_driver'         => $bk->nama_driver,
+                    'no_mobil'            => $bk->no_mobil,
+                    'shipment_id'         => $shipmentIdAuto,
+                    'lokasi_block'        => $bk->lokasi_block,
+                    'catatan'             => 'Auto dari Outbound GIN ' . $ginNo,
+                    'status'              => 'Draft',
+                    'created_at'          => now(),
+                ]);
+            }
+            // === END AUTO-INBOUND ===
+
             DB::commit();
 
-            return $this->ok(['ids_dikonfirmasi' => $idsProses], 'Konfirmasi outbound berhasil.');
+            return $this->ok(['ids_dikonfirmasi' => $idsProses, 'auto_inbound_count' => count($itemsSelesai)], 'Konfirmasi outbound berhasil.');
         } catch (Exception $e) {
             DB::rollBack();
 

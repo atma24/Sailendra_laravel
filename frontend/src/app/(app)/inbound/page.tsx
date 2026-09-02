@@ -15,7 +15,8 @@ type BmRow = {
   jumlah: number;
   tanggal_masuk: string;
   nama_driver: string;
-  status: string; // Tambahan status untuk antisipasi
+  status: string;
+  catatan: string;
 };
 
 type TanggalItem = { tanggal: string; total_item: number; total_qty: number };
@@ -45,6 +46,15 @@ const css = `
 .inbound-date-title { font-size: 12px; font-weight: 900; color: var(--text-main); letter-spacing: -0.2px; }
 .inbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; }
 .inbound-meta { font-size: 10px; font-weight: 750; color: var(--text-soft); margin-top: 3px; }
+.inbound-section-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; }
+.inbound-section-divider-line { flex: 1; height: 1px; background: #e5e7eb; }
+.inbound-section-divider-label { font-size: 11px; font-weight: 900; color: #7c3aed; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
+.inbound-section-count { font-size: 10px; font-weight: 800; color: #9ca3af; background: #f3f4f6; padding: 2px 8px; border-radius: 10px; }
+.inbound-pagination { display: flex; justify-content: center; align-items: center; gap: 6px; margin-top: 10px; }
+.inbound-page-btn { min-width: 30px; height: 30px; border-radius: 7px; border: 1px solid #e2e7f0; background: #fff; color: #374151; font-size: 11px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.inbound-page-btn:hover { background: #f3f4f6; border-color: var(--primary); color: var(--primary); }
+.inbound-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.inbound-page-info { font-size: 10px; font-weight: 800; color: #9ca3af; }
 
 /* TOAST CSS */
 .sailendra-toast-wrap { position: fixed; top: 18px; right: 18px; z-index: 3000; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); pointer-events: none; }
@@ -69,6 +79,9 @@ export default function InboundTanggalPage() {
   const [search, setSearch] = useState("");
   const [keyword, setKeyword] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [normalPage, setNormalPage] = useState(1);
+  const [outboundPage, setOutboundPage] = useState(1);
+  const PAGE_SIZE = 10;
   
   // State untuk Upload Excel OTM
   const [uploading, setUploading] = useState(false);
@@ -131,38 +144,39 @@ export default function InboundTanggalPage() {
   if (!session || !loaded) return null;
 
   const q = search.trim().toLowerCase();
-  const singleMap: Record<string, TanggalItem> = {};
-  const lokasiMap: Record<string, { nama: string; tanggal_map: Record<string, TanggalItem> }> = {};
-
-  const push = (map: Record<string, TanggalItem>, tgl: string, row: BmRow) => {
-    if (!map[tgl]) map[tgl] = { tanggal: tgl, total_item: 0, total_qty: 0 };
-    map[tgl].total_item++;
-    map[tgl].total_qty += angka(row.jumlah);
-  };
-
-  rows.forEach((row) => {
-    const t = dateOnly(row.tanggal_masuk);
-    if (!t || t.startsWith("0000")) return;
-    const key = `${t} ${row.nama_driver || ""} ${row.nama_produk || ""}`.toLowerCase();
-    if (q !== "" && !key.includes(q)) return;
-
-    if (multi) {
-      const lok = String(row.id_pengguna_lokasi || "");
-      if (!lokasiMap[lok]) lokasiMap[lok] = { nama: row.nama_pengguna_lokasi || lok, tanggal_map: {} };
-      push(lokasiMap[lok].tanggal_map, t, row);
-    } else {
-      push(singleMap, t, row);
-    }
-  });
-
-  const singleList = Object.values(singleMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const canAdd = session && !["Support", "Forklift"].includes(session.user.role);
 
-  const renderTanggal = (list: TanggalItem[], lokasiName?: string) =>
+  // Split rows: normal vs auto-generated from outbound
+  const normalRows = rows.filter(r => !(r.catatan || "").includes("Auto dari Outbound"));
+  const outboundRows = rows.filter(r => (r.catatan || "").includes("Auto dari Outbound"));
+
+  const buildTanggalMap = (source: BmRow[]) => {
+    const map: Record<string, TanggalItem> = {};
+    source.forEach((row) => {
+      const t = dateOnly(row.tanggal_masuk);
+      if (!t || t.startsWith("0000")) return;
+      const key = `${t} ${row.nama_driver || ""} ${row.nama_produk || ""}`.toLowerCase();
+      if (q !== "" && !key.includes(q)) return;
+      if (!map[t]) map[t] = { tanggal: t, total_item: 0, total_qty: 0 };
+      map[t].total_item++;
+      map[t].total_qty += angka(row.jumlah);
+    });
+    return map;
+  };
+
+  const normalMap = buildTanggalMap(normalRows);
+  const outboundMap = buildTanggalMap(outboundRows);
+  const normalList = Object.values(normalMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const outboundList = Object.values(outboundMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+
+  const normalTotalPages = Math.max(1, Math.ceil(normalList.length / PAGE_SIZE));
+  const outboundTotalPages = Math.max(1, Math.ceil(outboundList.length / PAGE_SIZE));
+  const normalPaged = normalList.slice((normalPage - 1) * PAGE_SIZE, normalPage * PAGE_SIZE);
+  const outboundPaged = outboundList.slice((outboundPage - 1) * PAGE_SIZE, outboundPage * PAGE_SIZE);
+
+  const renderTanggal = (list: TanggalItem[]) =>
     list.length === 0 ? (
-      <div className="inbound-card inbound-empty">
-        {lokasiName ? "Tidak ada data inbound untuk lokasi ini." : "Tidak ada data tanggal inbound."}
-      </div>
+      <div className="inbound-card inbound-empty">Tidak ada data tanggal inbound.</div>
     ) : (
       <div className="inbound-grid">
         {list.map((item) => (
@@ -180,6 +194,21 @@ export default function InboundTanggalPage() {
         ))}
       </div>
     );
+
+  const Pagination = ({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) => {
+    if (total <= 1) return null;
+    return (
+      <div className="inbound-pagination">
+        <button className="inbound-page-btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>
+          <i className="bi bi-chevron-left"></i>
+        </button>
+        <span className="inbound-page-info">{page} / {total}</span>
+        <button className="inbound-page-btn" disabled={page >= total} onClick={() => onChange(page + 1)}>
+          <i className="bi bi-chevron-right"></i>
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="inbound-page">
@@ -224,18 +253,29 @@ export default function InboundTanggalPage() {
         busy={uploading}
       />
 
-      {multi ? (
-        Object.entries(lokasiMap).map(([lok, g]) => (
-          <div key={lok} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, color: "var(--primary)", marginBottom: 7 }}>
-              <i className="bi bi-geo-alt" style={{ marginRight: 6 }}></i>
-              {lok} - {g.nama}
-            </div>
-            {renderTanggal(Object.values(g.tanggal_map).sort((a, b) => b.tanggal.localeCompare(a.tanggal)), g.nama)}
+      {/* === SECTION: Normal Inbound === */}
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 900, color: "var(--text-main)", marginBottom: 7, display: "flex", alignItems: "center", gap: 8 }}>
+          <i className="bi bi-inbox" style={{ color: "var(--primary)" }}></i>
+          Penerimaan Normal
+          <span className="inbound-section-count">{normalList.length}</span>
+        </div>
+        {renderTanggal(normalPaged)}
+        <Pagination page={normalPage} total={normalTotalPages} onChange={setNormalPage} />
+      </div>
+
+      {/* === SECTION: Dari Outbound === */}
+      {outboundList.length > 0 && (
+        <div>
+          <div className="inbound-section-divider">
+            <div className="inbound-section-divider-line"></div>
+            <span className="inbound-section-divider-label">Dari Outbound</span>
+            <span className="inbound-section-count">{outboundList.length}</span>
+            <div className="inbound-section-divider-line"></div>
           </div>
-        ))
-      ) : (
-        renderTanggal(singleList)
+          {renderTanggal(outboundPaged)}
+          <Pagination page={outboundPage} total={outboundTotalPages} onChange={setOutboundPage} />
+        </div>
       )}
     </div>
   );

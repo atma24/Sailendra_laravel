@@ -790,6 +790,7 @@ class BarangMasukController extends Controller
         DB::beginTransaction();
         try {
             $insertedRencana = 0;
+            $processedItems = 0;
 
             foreach ($itemsReq as $it) {
                 $idBm = (int) ($it['id_barang_masuk'] ?? 0);
@@ -829,6 +830,28 @@ class BarangMasukController extends Controller
                 if (in_array((int)$draft->id_produk, [10516938, 10516939])) { 
                     $bbReq = '9999-12-31';
                     $batchBaru = '-';
+                }
+
+                // Qty 0: skip alokasi, langsung Pending tanpa lokasi
+                if ((int) $draft->jumlah <= 0) {
+                    $updateData = [
+                        'status' => 'Pending',
+                        'best_before' => $bbReq,
+                        'batch' => $batchBaru,
+                        'batch_sekarang' => $batchBaru,
+                        'diperbarui_pada' => now()
+                    ];
+                    if ($waktuMulai !== null) {
+                        $updateData['waktu_mulai_input'] = DB::raw("COALESCE(waktu_mulai_input, '{$waktuMulai}')");
+                    }
+                    if ($durasiDetik !== null) {
+                        $updateData['durasi_detik'] = (int)$durasiDetik;
+                    }
+                    DB::table('barang_masuk')
+                        ->where('id_barang_masuk', $draft->id_barang_masuk)
+                        ->update($updateData);
+                    $processedItems++;
+                    continue;
                 }
 
                 $auto = $this->rekomendasiAuto(
@@ -886,14 +909,15 @@ class BarangMasukController extends Controller
                 DB::table('barang_masuk')
                     ->where('id_barang_masuk', $draft->id_barang_masuk)
                     ->update($updateData);
+                $processedItems++;
             }
 
-            if ($insertedRencana === 0) {
+            if ($processedItems === 0) {
                 throw new Exception("Tidak ada data Draft yang valid untuk di-submit.");
             }
 
             DB::commit();
-            return $this->okMessage("Berhasil Submit! Status berubah menjadi Pending dan lokasi telah di-booking.");
+            return $this->okMessage("Berhasil Submit! Status berubah menjadi Pending.");
 
         } catch (Throwable $e) {
             DB::rollBack();
@@ -1343,6 +1367,56 @@ class BarangMasukController extends Controller
             return $this->tambahItemInbound($in);
         }
 
+        // REVERT TO DRAFT: kembalikan semua item Pending -> Draft untuk shipment_id yang sama
+        if ($aksi === 'revert_to_draft') {
+            $shipmentId = trim((string) ($in['shipment_id'] ?? ''));
+            $idPenggunaLokasiRevert = trim((string) ($in['id_pengguna_lokasi'] ?? ''));
+            if ($shipmentId === '' || $idPenggunaLokasiRevert === '') {
+                return $this->fail('shipment_id dan id_pengguna_lokasi wajib untuk revert_to_draft.');
+            }
+            try {
+                return DB::transaction(function () use ($shipmentId, $idPenggunaLokasiRevert) {
+                    $items = DB::table('barang_masuk')
+                        ->where('shipment_id', $shipmentId)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasiRevert)
+                        ->whereRaw("LOWER(TRIM(status)) = 'pending'")
+                        ->lockForUpdate()
+                        ->get();
+
+                    if ($items->isEmpty()) {
+                        throw new Exception('Tidak ada item Pending untuk shipment ini.');
+                    }
+
+                    // Hapus stok_gudang untuk item yang akan di-revert
+                    foreach ($items as $item) {
+                        DB::table('stok_gudang')
+                            ->where('id_pengguna_lokasi', $idPenggunaLokasiRevert)
+                            ->where('id_produk', $item->id_produk)
+                            ->where('id_barang_masuk', $item->id_barang_masuk)
+                            ->delete();
+
+                        // Hapus rencana_masuk_deep jika ada
+                        DB::table('rencana_masuk_deep')
+                            ->where('id_barang_masuk', $item->id_barang_masuk)
+                            ->delete();
+                    }
+
+                    // Update status semua item menjadi Draft
+                    DB::table('barang_masuk')
+                        ->where('shipment_id', $shipmentId)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasiRevert)
+                        ->whereRaw("LOWER(TRIM(status)) = 'pending'")
+                        ->update(['status' => 'Draft']);
+
+                    DB::commit();
+
+                    return $this->ok(['affected' => $items->count()], 'Berhasil dikembalikan ke Draft.');
+                });
+            } catch (Exception $e) {
+                return $this->fail($e->getMessage());
+            }
+        }
+
         $idBm = (int) ($in['id_barang_masuk'] ?? 0);
         $idProduk = (int) ($in['id_produk'] ?? 0);
         $jumlahBaru = isset($in['jumlah']) ? (int) $in['jumlah'] : null;
@@ -1487,7 +1561,8 @@ class BarangMasukController extends Controller
                         ->update($upd);
                 }
 
-                if ($jumlahBaru !== null || $lokasiBaru !== null || ($bestBefore !== null && $bestBefore !== $bbLama)) {
+                // Stock sync hanya untuk item yang SUDAH ada stoknya (Pending/Selesai), skip untuk Draft
+                if (strtolower($lama->status) !== 'draft' && ($jumlahBaru !== null || $lokasiBaru !== null || ($bestBefore !== null && $bestBefore !== $bbLama))) {
                     $rows = DB::table('stok_gudang')
                         ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                         ->where('id_produk', $idProdukFix)

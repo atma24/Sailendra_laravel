@@ -184,6 +184,7 @@ export default function InboundDetailPage() {
 
   const waktuMulaiRef = useRef<Date | null>(null);
   const [draftBb, setDraftBb] = useState<Record<number, string>>({});
+  const [draftCatatan, setDraftCatatan] = useState<Record<number, string>>({});
 
   const [hTanggal, setHTanggal] = useState("");
   const [hMobil, setHMobil] = useState("");
@@ -195,6 +196,7 @@ export default function InboundDetailPage() {
 
   const [iJumlah, setIJumlah] = useState("");
   const [iBestBefore, setIBestBefore] = useState("");
+  const [iCatatan, setICatatan] = useState("");
 
   let toastSeq = 0;
   const notify = (type: string, msg: string) => {
@@ -234,6 +236,15 @@ export default function InboundDetailPage() {
         setRows(fetchedRows);
         setPlants((pr.data || []).sort((a, b) => String(a.id_plant).localeCompare(String(b.id_plant))));
         setProdukList((prodRes.data || []).sort((a, b) => angka(a.id_produk) - angka(b.id_produk)));
+
+        // Pre-fill draftBb dari best_before yang sudah ada
+        const bbMap: Record<number, string> = {};
+        fetchedRows.forEach((row: BmRow) => {
+          if ((row.status || "").toLowerCase() === "draft" && norm(row.best_before) && norm(row.best_before) !== "9999-12-31") {
+            bbMap[row.id_barang_masuk] = norm(row.best_before).slice(0, 10);
+          }
+        });
+        if (Object.keys(bbMap).length > 0) setDraftBb(bbMap);
 
         // Inisialisasi Timer
         const reqShip = !shipment || shipment === "Tanpa Shipment" ? "" : shipment.trim();
@@ -313,13 +324,33 @@ export default function InboundDetailPage() {
   const submitDraftBooking = async () => {
     setBusy(true);
     try {
-      const payloadItems = items.filter(i => (i.status || "").toLowerCase() === "draft").map(i => {
+      const draftItems = items.filter(i => (i.status || "").toLowerCase() === "draft");
+
+      for (const i of draftItems) {
          const isRej = (i.tipe_penerimaan || "").toUpperCase() === "REJECT";
          const noBatch = PRODUK_TANPA_BATCH.includes(angka(i.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(i.nama_produk || "");
-         
          const bb = isRej || noBatch ? "9999-12-31" : (draftBb[i.id_barang_masuk] || "");
          if (!bb) throw new Error(`Best before untuk ${i.nama_produk} belum diisi.`);
-         
+
+         const isSecondary = (i.tipe_penerimaan || "").toUpperCase() === "SECONDARY";
+         const catatanVal = draftCatatan[i.id_barang_masuk] || "";
+         if (angka(i.jumlah) === 0 && isSecondary && !catatanVal) {
+            throw new Error(`Catatan wajib diisi untuk ${i.nama_produk} (jumlah 0).`);
+         }
+         if (angka(i.jumlah) === 0 && isSecondary && catatanVal) {
+            await apiPost('/barang-masuk/update', {
+               id_barang_masuk: i.id_barang_masuk,
+               id_pengguna_lokasi: aktifLokasiId(session),
+               nama_pengguna: session.user.username,
+               catatan: catatanVal
+            });
+         }
+      }
+
+      const payloadItems = draftItems.map(i => {
+         const isRej = (i.tipe_penerimaan || "").toUpperCase() === "REJECT";
+         const noBatch = PRODUK_TANPA_BATCH.includes(angka(i.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(i.nama_produk || "");
+         const bb = isRej || noBatch ? "9999-12-31" : (draftBb[i.id_barang_masuk] || "");
          return { id_barang_masuk: i.id_barang_masuk, best_before: bb };
       });
       
@@ -337,6 +368,23 @@ export default function InboundDetailPage() {
       setTimeout(() => window.location.reload(), 1500);
     } catch (e: any) {
       notify("error", e.message || "Gagal melakukan submit booking.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revertToDraft = async () => {
+    setBusy(true);
+    try {
+      await apiPost('/barang-masuk/update', {
+        aksi: 'revert_to_draft',
+        shipment_id: first.shipment_id || "",
+        id_pengguna_lokasi: aktifLokasiId(session),
+      });
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Berhasil dikembalikan ke Draft.", type: "success" }));
+      window.location.reload();
+    } catch (e) {
+      notify("error", (e as Error).message || "Gagal revert ke Draft.");
     } finally {
       setBusy(false);
     }
@@ -437,12 +485,15 @@ export default function InboundDetailPage() {
     setShowItem(item);
     setIJumlah(String(item.jumlah));
     setIBestBefore(norm(item.best_before).slice(0, 10));
+    setICatatan(norm(item.catatan));
   };
 
   const simpanJumlah = async () => {
     if (!showItem) return;
     const j = angka(iJumlah);
-    if (j <= 0) { notify("error", "Jumlah baru tidak valid."); return; }
+    const isSecondary = (showItem.tipe_penerimaan || "").toUpperCase() === "SECONDARY";
+    if (j < 0) { notify("error", "Jumlah tidak valid."); return; }
+    if (j === 0 && isSecondary && !norm(iCatatan)) { notify("error", "Catatan wajib diisi jika jumlah 0."); return; }
     setBusy(true);
     try {
       const payload: Record<string, unknown> = {
@@ -453,6 +504,7 @@ export default function InboundDetailPage() {
       };
       const isReject = (showItem.tipe_penerimaan || "").toUpperCase() === "REJECT";
       if (!isReject && norm(iBestBefore)) payload.best_before = iBestBefore;
+      if (j === 0 && isSecondary) payload.catatan = iCatatan;
       await apiPost("/barang-masuk/update", payload);
       sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Item inbound berhasil diperbarui.", type: "success" }));
       setShowItem(null);
@@ -583,6 +635,13 @@ export default function InboundDetailPage() {
                   </button>
                 )}
                 {canCrud && (
+                  <button type="button" className={`id-step-btn ${hasPending && !hasDraft ? "id-step-next" : ""}`}
+                    disabled={!(hasPending && !hasDraft)} onClick={() => (hasPending && !hasDraft) && revertToDraft()}>
+                    <i className="bi bi-file-earmark-text-fill"></i>
+                    <span>Draft</span>
+                  </button>
+                )}
+                {canCrud && (
                   <button type="button" className={`id-step-btn ${hasDraft ? "id-step-next" : ""}`}
                     disabled={!hasDraft} onClick={() => hasDraft && submitDraftBooking()}>
                     <i className="bi bi-hourglass-split"></i>
@@ -674,6 +733,19 @@ export default function InboundDetailPage() {
                       placeholder={noBatch ? "Produk Tanpa BB" : "Pilih Best Before"}
                       onChange={(e) => setDraftBb({...draftBb, [item.id_barang_masuk]: e.target.value})} 
                     />
+                    {(item.tipe_penerimaan || "").toUpperCase() === "SECONDARY" && (
+                      <div style={{ marginTop: 6 }}>
+                        <label className="id-text-label" style={{marginBottom: 4}}>Catatan (wajib jika qty 0)</label>
+                        <input 
+                          type="text" 
+                          className="draft-bb-input"
+                          value={draftCatatan[item.id_barang_masuk] || ""}
+                          placeholder="Isi catatan jika qty 0"
+                          maxLength={250}
+                          onChange={(e) => setDraftCatatan({...draftCatatan, [item.id_barang_masuk]: e.target.value})} 
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -770,7 +842,7 @@ export default function InboundDetailPage() {
               </div>
               <div className="dialog-field">
                 <label>Jumlah Baru</label>
-                <input type="number" min={1} value={iJumlah} onChange={(e) => setIJumlah(e.target.value)} />
+                <input type="number" min={0} value={iJumlah} onChange={(e) => setIJumlah(e.target.value)} />
               </div>
               <div className="dialog-field">
                 <label>Best Before</label>
@@ -779,6 +851,13 @@ export default function InboundDetailPage() {
                   readOnly={(showItem.tipe_penerimaan || "").toUpperCase() === "REJECT" || showItem.status.toLowerCase() === "selesai"}
                   onChange={(e) => setIBestBefore(e.target.value)} />
               </div>
+              {angka(iJumlah) === 0 && (showItem.tipe_penerimaan || "").toUpperCase() === "SECONDARY" && (
+                <div className="dialog-field dialog-field-full">
+                  <label>Catatan <span style={{ color: "#ef4444" }}>*</span></label>
+                  <input type="text" value={iCatatan} onChange={(e) => setICatatan(e.target.value)}
+                    placeholder="Wajib diisi jika jumlah 0 (contoh: Tidak diterima / Rusak)" maxLength={250} />
+                </div>
+              )}
             </div>
             <div className="dialog-actions">
               <button type="button" className="dialog-btn dialog-btn-cancel" onClick={() => setShowItem(null)}>Batal</button>
