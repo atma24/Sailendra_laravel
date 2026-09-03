@@ -178,5 +178,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/laporan/gabungan', [LaporanController::class, 'exportGabungan']);
     Route::get('/laporan/mutasi', [LaporanController::class, 'exportMutasi']);
     Route::get('/laporan/stok-opname', [LaporanController::class, 'exportStockOpname']);
+    Route::get('/laporan/stok-opname/detail-pdf', [LaporanController::class, 'detailStockOpnamePdf']);
     Route::get('/laporan/stok-opname/print-ready', [LaporanController::class, 'printReadyStockOpname']);
 });

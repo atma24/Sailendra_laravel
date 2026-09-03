@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
 
@@ -59,12 +59,15 @@ type CompareBatch = {
 };
 type ProdukRow = { id_produk: number; nama_produk: string };
 type ManualRow = {
+  _uid: string;
   id_produk: number | "";
   nama_produk: string;
   lokasi_block: string;
   best_before: string;
   stok_fisik: number | "";
 };
+
+const uid = () => Math.random().toString(36).slice(2, 9);
 
 const angka = (v: unknown) => {
   const n = parseInt(String(v ?? ""), 10);
@@ -134,6 +137,10 @@ const css = `
 .so-input { width: 100%; border: 1px solid #e2e7f0; border-radius: 4px; padding: 4px 6px; font-size: 11px; background: #fbfcff; color: #172033; outline: none; }
 .so-input:focus { border-color: #191970; background: #fff; }
 .btn-aksi { background: #191970; color: #fff; border: none; padding: 4px 9px; border-radius: 4px; font-size: 10px; font-weight: 800; cursor: pointer; font-family: inherit; }
+.so-btn-excel { background: #107c41; color: #fff; }
+.so-btn-excel:hover { background: #0e6b37; color: #fff; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(16,124,65,0.18); }
+.so-btn-pdf { background: #c0392b; color: #fff; }
+.so-btn-pdf:hover { background: #a93226; color: #fff; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(192,57,43,0.18); }
 `;
 
 export default function StockOpnamePage() {
@@ -160,6 +167,7 @@ export default function StockOpnamePage() {
   const [compare, setCompare] = useState<CompareBatch[]>([]);
   const [compareSelected, setCompareSelected] = useState<CompareBatch | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exportBusy, setExportBusy] = useState<"excel" | "pdf" | null>(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -228,6 +236,7 @@ export default function StockOpnamePage() {
               if (seen.has(x.id_produk)) return;
               seen.add(x.id_produk);
               uniq.push({
+                _uid: uid(),
                 id_produk: x.id_produk,
                 nama_produk: x.nama_produk,
                 lokasi_block: "",
@@ -237,10 +246,10 @@ export default function StockOpnamePage() {
             });
             setManualRows(uniq);
           } else {
-            setManualRows([{ id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]);
+            setManualRows([{ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]);
           }
         })
-        .catch(() => setManualRows([{ id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]));
+        .catch(() => setManualRows([{ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]));
     } else {
       setLoading(true);
       apiGet<CatalogRow[]>(`/stok-opname?mode=stok_catalog&${paramsOf().toString()}`)
@@ -258,7 +267,7 @@ export default function StockOpnamePage() {
 
   const addManualRow = () => {
     if (manualRows.length && manualRows[manualRows.length - 1].id_produk === "") return;
-    setManualRows([...manualRows, { id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 }]);
+    setManualRows([...manualRows, { _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 }]);
   };
   const updManual = (i: number, patch: Partial<ManualRow>) => {
     const next = manualRows.slice();
@@ -271,13 +280,13 @@ export default function StockOpnamePage() {
   };
   const dupManual = (i: number) => {
     const next = manualRows.slice();
-    next.splice(i + 1, 0, { ...manualRows[i] });
+    next.splice(i + 1, 0, { ...manualRows[i], _uid: uid() });
     setManualRows(next);
   };
   const rmManual = (i: number) => {
     const next = manualRows.slice();
     next.splice(i, 1);
-    if (next.length === 0) next.push({ id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 });
+    if (next.length === 0) next.push({ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 });
     setManualRows(next);
   };
 
@@ -415,6 +424,61 @@ export default function StockOpnamePage() {
     }
   };
 
+  const exportDetail = async (type: "excel" | "pdf") => {
+    if (!session) return;
+    if (!detailMeta.tanggal) { setErr("Tanggal opname tidak tersedia untuk export."); return; }
+    if (detail.length === 0) { setErr("Tidak ada data untuk di-export."); return; }
+    setExportBusy(type);
+    setErr("");
+    setMsg("");
+    try {
+      const raw = localStorage.getItem("sailendra_session");
+      const token = (raw && JSON.parse(raw)?.token) || "";
+      const sp = paramsOf();
+      sp.set("tanggal_opname", detailMeta.tanggal);
+      if (detailMeta.waktu) sp.set("created_at", detailMeta.waktu);
+      let url = "";
+      let accept = "";
+      if (type === "excel") {
+        sp.set("mode", "export");
+        url = `/api/laporan/stok-opname?${sp.toString()}`;
+        accept = "application/vnd.ms-excel";
+      } else {
+        url = `/api/laporan/stok-opname/detail-pdf?${sp.toString()}`;
+        accept = "application/pdf";
+      }
+      const res = await fetch(url, {
+        headers: { Accept: accept, Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        setErr(txt.slice(0, 200) || (type === "excel" ? "Gagal export Excel." : "Gagal export PDF."));
+        return;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const m = /filename="?([^"]+)"?/.exec(cd);
+      const fallback = type === "excel"
+        ? `Laporan_Stock_Opname_${detailMeta.tanggal.replace(/-/g,"")}.xls`
+        : `Laporan_Detail_Stock_Opname_${detailMeta.tanggal.replace(/-/g,"")}.pdf`;
+      const filename = m ? m[1] : fallback;
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      setMsg(type === "excel" ? "Excel berhasil diunduh." : "PDF berhasil diunduh.");
+      setTimeout(() => setMsg(""), 3000);
+    } catch {
+      setErr(type === "excel" ? "Gagal export Excel." : "Gagal export PDF.");
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
   return (
     <div className="so-page">
       <style>{css}</style>
@@ -480,7 +544,7 @@ export default function StockOpnamePage() {
                   <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th>{canCompare && <th>Petugas</th>}<th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                   <tbody>
                     {fManual.map((h, i) => (
-                      <tr key={i}>
+                      <tr key={`${h.tanggal_opname}-${h.created_at}-${i}`}>
                         <td>{i + 1}</td>
                         <td><strong style={{color:"#111827"}}>{h.tanggal_opname}</strong></td>
                         <td style={{textAlign:"center"}}>{String(h.created_at).slice(11, 16)}</td>
@@ -515,7 +579,7 @@ export default function StockOpnamePage() {
                   <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th>{canCompare && <th>Petugas</th>}<th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                   <tbody>
                     {fAkurasi.map((h, i) => (
-                      <tr key={i}>
+                      <tr key={`${h.tanggal_opname}-${h.created_at}-${i}`}>
                         <td>{i + 1}</td>
                         <td><strong style={{color:"#111827"}}>{h.tanggal_opname}</strong></td>
                         <td style={{textAlign:"center"}}>{String(h.created_at).slice(11, 16)}</td>
@@ -552,7 +616,7 @@ export default function StockOpnamePage() {
                     <thead><tr><th style={{minWidth:180}}>Produk</th><th style={{minWidth:120}}>Lokasi</th><th style={{minWidth:120}}>Best Before</th><th style={{width:100}}>Stok Fisik</th><th style={{width:90}}></th></tr></thead>
                     <tbody>
                       {manualRows.map((r, i) => (
-                        <tr key={i}>
+                        <tr key={r._uid}>
                           <td>
                             <select className="so-form-input" value={r.id_produk} onChange={(e) => updManual(i, { id_produk: Number(e.target.value) || "" })}>
                               <option value="">-- Pilih Produk --</option>
@@ -597,7 +661,7 @@ export default function StockOpnamePage() {
                       {catalog.map((x, i) => {
                         const k = opx(x);
                         return (
-                          <tr key={i}>
+                          <tr key={`${x.id_produk}|${x.lokasi_block}|${x.best_before}|${i}`}>
                             <td>{x.nama_produk}</td>
                             <td>{x.lokasi_block}</td>
                             <td>{x.best_before}</td>
@@ -650,12 +714,21 @@ export default function StockOpnamePage() {
           <div className="so-section">
             {err && <div className="so-err" style={{ marginBottom: 10 }}>{err}</div>}
             {msg && <div className="so-info" style={{ marginBottom: 10 }}>{msg}</div>}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900 }}>
                 Detail Stock Opname: {detailMeta.tanggal}
                 <span style={{ fontSize: 10, fontWeight: 750, color: "#8a93a3" }}> ({detail.length} item)</span>
+                {detailMeta.waktu && <span style={{ fontSize: 10, fontWeight: 650, color: "#6b7280" }}> · {String(detailMeta.waktu).slice(11, 16)} WIB</span>}
               </div>
-              <button type="button" className="so-btn so-btn-secondary" onClick={() => setView("history")}><i className="bi bi-arrow-left"></i> Kembali ke Riwayat</button>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button type="button" className="so-btn so-btn-excel" onClick={() => exportDetail("excel")} disabled={exportBusy !== null || detail.length === 0}>
+                  <i className={exportBusy === "excel" ? "bi bi-hourglass-split" : "bi bi-file-earmark-excel"}></i> {exportBusy === "excel" ? "Export..." : "Export Excel"}
+                </button>
+                <button type="button" className="so-btn so-btn-pdf" onClick={() => exportDetail("pdf")} disabled={exportBusy !== null || detail.length === 0}>
+                  <i className={exportBusy === "pdf" ? "bi bi-hourglass-split" : "bi bi-file-earmark-pdf"}></i> {exportBusy === "pdf" ? "Export..." : "Export PDF"}
+                </button>
+                <button type="button" className="so-btn so-btn-secondary" onClick={() => setView("history")}><i className="bi bi-arrow-left"></i> Kembali</button>
+              </div>
             </div>
             {detail.length === 0 ? (
               <div className="so-empty">Detail kosong.</div>
@@ -708,25 +781,23 @@ function PreviewTable({ rows, showOnline = true }: { rows: DetailRow[]; showOnli
       <table className="so-table">
         <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th>{showOnline && <th>Stok Online</th>}<th>Stok Fisik</th>{showOnline && <th>Selisih</th>}</tr></thead>
         <tbody>
-          {groups.map((g) => (
-            <Fragment key={g.name}>
-              {g.rows.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.nama_produk}</td><td>{r.lokasi_block}</td><td>{r.best_before}</td>
-                  {showOnline && <td>{nf(r.stok_sistem)}</td>}
-                  <td>{nf(r.stok_fisik)}</td>
-                  {showOnline && <td className={clsSelisih(r.selisih)}>{fmtPlus(r.selisih)}</td>}
-                </tr>
-              ))}
-              <tr className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
-                <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
-                {showOnline && <td>{nf(g.s)}</td>}
-                <td>{nf(g.f)}</td>
-                {showOnline && <td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>}
+          {groups.flatMap((g) => [
+            ...g.rows.map((r, i) => (
+              <tr key={`preview-${g.name}-${r.id_produk}-${r.lokasi_block}-${r.best_before}-${i}`}>
+                <td>{r.nama_produk}</td><td>{r.lokasi_block}</td><td>{r.best_before}</td>
+                {showOnline && <td>{nf(r.stok_sistem)}</td>}
+                <td>{nf(r.stok_fisik)}</td>
+                {showOnline && <td className={clsSelisih(r.selisih)}>{fmtPlus(r.selisih)}</td>}
               </tr>
-            </Fragment>
-          ))}
-          <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
+            )),
+            <tr key={`preview-block-${g.name}`} className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
+              <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
+              {showOnline && <td>{nf(g.s)}</td>}
+              <td>{nf(g.f)}</td>
+              {showOnline && <td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>}
+            </tr>,
+          ])}
+          <tr key="preview-grand-total" style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
             <td colSpan={3}>TOTAL KESELURUHAN</td>
             {showOnline && <td>{nf(gs)}</td>}
             <td>{nf(gf)}</td>
@@ -768,12 +839,11 @@ function DetailTable({ rows, editable, vals, setVals, onSave, showSumber }: {
           </tr>
         </thead>
         <tbody>
-          {groups.map((g) => (
-            <Fragment key={g.name}>
-              {g.rows.map((d) => {
-                const ev = vals[d.id_opname] ?? { fisik: String(d.stok_fisik), alasan: d.alasan ?? "" };
-                return (
-                  <tr key={d.id_opname}>
+          {groups.flatMap((g) => [
+            ...g.rows.map((d) => {
+              const ev = vals[d.id_opname] ?? { fisik: String(d.stok_fisik), alasan: d.alasan ?? "" };
+              return (
+                <tr key={`detail-${g.name}-${d.id_opname}`}>
                     <td>{d.nama_produk}</td><td>{d.lokasi_block}</td><td>{d.best_before}</td>
                     <td>{nf(d.stok_sistem)}</td>
                     <td style={{ width: 70 }}>
@@ -799,15 +869,14 @@ function DetailTable({ rows, editable, vals, setVals, onSave, showSumber }: {
                     {editable && <td><button type="button" className="btn-aksi" onClick={() => onSave(d)}><i className="bi bi-save"></i></button></td>}
                   </tr>
                 );
-              })}
-              <tr className="so-block" style={{ background: "#eef0ff", fontWeight: 900 }}>
+              }),
+              <tr key={`detail-block-${g.name}`} className="so-block" style={{ background: "#eef0ff", fontWeight: 900 }}>
                 <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
                 <td>{nf(g.s)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
                 <td colSpan={editable && showSumber ? 5 : editable || showSumber ? 4 : 3}></td>
-              </tr>
-            </Fragment>
-          ))}
-          <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
+              </tr>,
+            ])}
+          <tr key="detail-grand-total" style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
             <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gs)}</td><td>{nf(gf)}</td>
             <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td><td colSpan={editable && showSumber ? 5 : editable || showSumber ? 4 : 3}></td>
           </tr>
@@ -881,10 +950,9 @@ function CompareBatchCard({ batch }: { batch: CompareBatch }) {
         <table className="so-table">
           <thead><tr><th>Produk</th><th>Lokasi</th><th>Best Before</th><th>Checker Fisik</th><th>Auditor Fisik</th><th>Selisih</th></tr></thead>
           <tbody>
-            {groups.map((g) => (
-              <Fragment key={g.name}>
-                {g.rows.map((it) => (
-                  <tr key={`${it.id_produk}|${it.lokasi_block}|${it.best_before}`}>
+            {groups.flatMap((g) => [
+              ...g.rows.map((it) => (
+                <tr key={`compare-${g.name}-${it.id_produk}|${it.lokasi_block}|${it.best_before}`}>
                     <td>{it.nama_produk}</td><td>{it.lokasi_block}</td><td>{it.best_before}</td>
                     <td>{it.checker_fisik !== null ? <span style={{ fontWeight: 700 }}>{nf(it.checker_fisik)}</span> : <span style={{ color: "#8a93a3", fontWeight: 700 }}>-</span>}</td>
                     <td>{it.auditor_fisik !== null ? <span style={{ fontWeight: 700 }}>{nf(it.auditor_fisik)}</span> : <span style={{ color: "#8a93a3", fontWeight: 700 }}>-</span>}</td>
@@ -898,14 +966,13 @@ function CompareBatchCard({ batch }: { batch: CompareBatch }) {
                       )}
                     </td>
                   </tr>
-                ))}
-                <tr className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
+                )),
+                <tr key={`compare-block-${g.name}`} className="so-block" style={{ background: "#eef2ff", fontWeight: 900 }}>
                   <td colSpan={3} style={{ color: "#191970" }}>TOTAL BLOCK {g.name}</td>
                   <td>{nf(g.c)}</td><td>{nf(g.f)}</td><td className={clsSelisih(g.se)}>{fmtPlus(g.se)}</td>
-                </tr>
-              </Fragment>
-            ))}
-            <tr style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
+                </tr>,
+              ])}
+            <tr key="compare-grand-total" style={{ background: "#f8f9fa", fontWeight: 900, fontSize: 12 }}>
               <td colSpan={3}>TOTAL KESELURUHAN</td><td>{nf(gc)}</td><td>{nf(gf)}</td>
               <td className={clsSelisih(gse)}>{fmtPlus(gse)}</td>
             </tr>
