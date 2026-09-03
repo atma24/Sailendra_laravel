@@ -64,7 +64,7 @@ type ManualRow = {
   nama_produk: string;
   lokasi_block: string;
   best_before: string;
-  stok_fisik: number | "";
+  stok_fisik: string;
 };
 
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -159,7 +159,7 @@ export default function StockOpnamePage() {
   const [tanggal, setTanggal] = useState(() => new Date().toISOString().slice(0, 10));
   const [catalog, setCatalog] = useState<CatalogRow[]>([]);
   const [produkList, setProdukList] = useState<ProdukRow[]>([]);
-  const [akurasiFisik, setAkurasiFisik] = useState<Record<string, number>>({});
+  const [akurasiFisik, setAkurasiFisik] = useState<Record<string, string>>({});
   const [manualRows, setManualRows] = useState<ManualRow[]>([]);
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [detailMeta, setDetailMeta] = useState({ tanggal: "", waktu: "" });
@@ -256,8 +256,8 @@ export default function StockOpnamePage() {
         .then((r) => {
           const rows = r.data || [];
           setCatalog(rows);
-          const f: Record<string, number> = {};
-          rows.forEach((x) => { f[opKey(x)] = angka(x.stok_sistem); });
+          const f: Record<string, string> = {};
+          rows.forEach((x) => { f[opKey(x)] = String(angka(x.stok_sistem)); });
           setAkurasiFisik(f);
         })
         .catch((e) => setErr(e.message || "Gagal memuat stok sistem."))
@@ -267,7 +267,7 @@ export default function StockOpnamePage() {
 
   const addManualRow = () => {
     if (manualRows.length && manualRows[manualRows.length - 1].id_produk === "") return;
-    setManualRows([...manualRows, { _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 }]);
+    setManualRows([...manualRows, { _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]);
   };
   const updManual = (i: number, patch: Partial<ManualRow>) => {
     const next = manualRows.slice();
@@ -286,7 +286,7 @@ export default function StockOpnamePage() {
   const rmManual = (i: number) => {
     const next = manualRows.slice();
     next.splice(i, 1);
-    if (next.length === 0) next.push({ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: 0 });
+    if (next.length === 0) next.push({ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" });
     setManualRows(next);
   };
 
@@ -296,14 +296,14 @@ export default function StockOpnamePage() {
     if (jenis === "Manual") {
       items = manualRows.filter((r) => angka(r.id_produk) > 0).map((r) => ({
         id_produk: r.id_produk, nama_produk: r.nama_produk,
-        lokasi_block: r.lokasi_block, best_before: r.best_before, stok_fisik: r.stok_fisik, alasan: "",
+        lokasi_block: r.lokasi_block, best_before: r.best_before, stok_fisik: angka(r.stok_fisik), alasan: "",
       }));
       if (!items.length) { setErr("Tidak ada baris produk valid."); return; }
     } else {
       items = catalog.map((x) => ({
         id_produk: x.id_produk, nama_produk: x.nama_produk,
         lokasi_block: x.lokasi_block, best_before: x.best_before,
-        stok_fisik: akurasiFisik[opx(x)] ?? 0, alasan: "",
+        stok_fisik: angka(akurasiFisik[opx(x)] ?? ""), alasan: "",
       }));
     }
     setLoading(true); setErr(""); setMsg("");
@@ -625,7 +625,7 @@ export default function StockOpnamePage() {
                           </td>
                           <td><input type="text" className="so-input so-printblank" placeholder="Misal: A-1" value={r.lokasi_block} onChange={(e) => updManual(i, { lokasi_block: e.target.value })} /></td>
                           <td><input type="text" className="so-input so-printblank" placeholder="Misal: 2026-12-31" value={r.best_before} onChange={(e) => updManual(i, { best_before: e.target.value })} /></td>
-                          <td><input type="number" className="so-input so-printblank" min="0" value={r.stok_fisik} onChange={(e) => updManual(i, { stok_fisik: Number(e.target.value) || 0 })} /></td>
+                          <td><input type="text" inputMode="numeric" pattern="[0-9]*" className="so-input so-printblank" placeholder="0" value={r.stok_fisik} onChange={(e) => updManual(i, { stok_fisik: e.target.value.replace(/[^0-9]/g, "") })} /></td>
                           <td style={{whiteSpace:"nowrap"}}>
                             <button type="button" className="btn-duplicate" title="Duplikat Baris" onClick={() => dupManual(i)}><i className="bi bi-files"></i></button>
                             <button type="button" className="btn-remove" onClick={() => rmManual(i)}><i className="bi bi-trash"></i></button>
@@ -667,9 +667,9 @@ export default function StockOpnamePage() {
                             <td>{x.best_before}</td>
                             <td>
                               <input type="hidden" />
-                              <input type="number" className="so-input" min="0" style={{width:100}} placeholder="0"
-                                value={akurasiFisik[k] ?? 0}
-                                onChange={(e) => setAkurasiFisik({ ...akurasiFisik, [k]: Number(e.target.value) || 0 })} />
+                              <input type="text" inputMode="numeric" pattern="[0-9]*" className="so-input" style={{width:100}} placeholder="0"
+                                value={akurasiFisik[k] ?? ""}
+                                onChange={(e) => setAkurasiFisik({ ...akurasiFisik, [k]: e.target.value.replace(/[^0-9]/g, "") })} />
                             </td>
                           </tr>
                         );
