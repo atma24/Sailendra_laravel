@@ -30,9 +30,21 @@ export default function Sidebar({
   const [openParent, setOpenParent] = useState<string | null>(
     menus.find((m) => isChildOpen(m, pathname))?.title ?? null
   );
+  // Saat sheet mobile terbuka, paksa mode expanded agar teks menu/logout
+  // selalu tampil walau user mengaktifkan collapse di desktop.
+  const effectiveCollapsed = collapsed && !open;
 
   return (
-    <aside className={`sidebar ${open ? "show" : ""} ${collapsed ? "collapsed" : ""}`}>
+    <aside
+      className={`sidebar ${open ? "show" : ""} ${collapsed ? "collapsed" : ""}`}
+      id="mobile-menu-sheet"
+      role={open ? "dialog" : undefined}
+      aria-modal={open ? true : undefined}
+      aria-label="Menu navigasi"
+    >
+      <div className="sheet-handle" aria-hidden="true">
+        <span />
+      </div>
       <div className="brand-area">
           <button
             type="button"
@@ -42,13 +54,13 @@ export default function Sidebar({
                 onToggleCollapse();
               }
             }}
-            title={collapsed ? "Perluas Sidebar" : "Kecilkan Sidebar"}
+            title={effectiveCollapsed ? "Perluas Sidebar" : "Kecilkan Sidebar"}
           >
           <div className="brand-logo">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logosailendra.png" alt="Logo Sailendra" />
           </div>
-          {!collapsed && <span className="brand-name">Sailendra</span>}
+          {!effectiveCollapsed && <span className="brand-name">Sailendra</span>}
         </button>
         {onClose && (
           <button
@@ -67,38 +79,39 @@ export default function Sidebar({
           href="/dashboard"
           onClick={onClose}
           className={`nav-link-custom ${pathname === "/dashboard" || pathname === "/" ? "active" : ""}`}
-          title={collapsed ? "Dashboard" : undefined}
+          title={effectiveCollapsed ? "Dashboard" : undefined}
         >
           <i className="bi bi-buildings-fill nav-icon"></i>
-          {!collapsed && <span className="nav-text">Dashboard</span>}
+          {!effectiveCollapsed && <span className="nav-text">Dashboard</span>}
         </Link>
 
         {menus.map((m) => {
           if (m.children?.length) {
-            const open = openParent === m.title;
+            const parentOpen = openParent === m.title;
             return (
               <div key={m.title}>
                 <button
                   type="button"
-                  className={`nav-button-custom ${open ? "open" : ""}`}
-                  onClick={() => setOpenParent(open ? null : m.title)}
-                  title={collapsed ? m.title : undefined}
+                  className={`nav-button-custom ${parentOpen ? "open" : ""}`}
+                  onClick={() => setOpenParent(parentOpen ? null : m.title)}
+                  title={effectiveCollapsed ? m.title : undefined}
+                  aria-expanded={parentOpen}
                 >
                   <i className={`${m.icon} nav-icon`}></i>
-                  {!collapsed && <span className="nav-text">{m.title}</span>}
-                  {!collapsed && <i className="bi bi-chevron-down chevron"></i>}
+                  {!effectiveCollapsed && <span className="nav-text">{m.title}</span>}
+                  {!effectiveCollapsed && <i className="bi bi-chevron-down chevron"></i>}
                 </button>
 
-                <div className={`submenu-wrap ${open ? "show" : ""}`}>
+                <div className={`submenu-wrap ${parentOpen ? "show" : ""}`}>
                   {m.children.map((c) => (
                     <Link
                       key={c.path}
                       href={c.path}
                       onClick={onClose}
                       className={`submenu-link ${pathname.startsWith(c.path) ? "active" : ""}`}
-                      title={collapsed ? c.title : undefined}
+                      title={effectiveCollapsed ? c.title : undefined}
                     >
-                      {!collapsed && <span>{c.title}</span>}
+                      {!effectiveCollapsed && <span>{c.title}</span>}
                     </Link>
                   ))}
                 </div>
@@ -111,10 +124,10 @@ export default function Sidebar({
               href={m.path!}
               onClick={onClose}
               className={`nav-link-custom ${pathname === m.path || pathname.startsWith(m.path + "/") ? "active" : ""}`}
-              title={collapsed ? m.title : undefined}
+              title={effectiveCollapsed ? m.title : undefined}
             >
               <i className={`${m.icon} nav-icon`}></i>
-              {!collapsed && <span className="nav-text">{m.title}</span>}
+              {!effectiveCollapsed && <span className="nav-text">{m.title}</span>}
             </Link>
           );
         })}
@@ -123,7 +136,7 @@ export default function Sidebar({
       <div className="sidebar-footer">
         <button type="button" className="logout-btn" onClick={onLogout} title="Keluar dari Aplikasi">
           <i className="bi bi-box-arrow-right"></i>
-          {!collapsed && <span>Logout</span>}
+          {!effectiveCollapsed && <span>Logout</span>}
         </button>
       </div>
     </aside>

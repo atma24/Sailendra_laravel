@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
+import MobileBottomNav from "@/components/MobileBottomNav";
 import { apiGet } from "@/lib/api";
 import { clearSession, getSession, isMultiRole, type Session } from "@/lib/auth";
 import "../app-shell.css";
@@ -63,6 +64,27 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }, [router, auth]);
 
+  // Tutup bottom-sheet setiap pindah halaman (mobile).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- route change must reset sheet UI state
+    setSidebarOpen(false);
+  }, [pathname]);
+
+  // Kunci scroll body + tombol Escape saat sheet terbuka.
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setSidebarOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sidebarOpen]);
+
   if (!auth.loaded || !auth.session) return null;
 
   function toggleCollapse() {
@@ -81,6 +103,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
+      {sidebarOpen && (
+        <div
+          className="sheet-backdrop"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <Sidebar
         session={auth.session}
         onLogout={logout}
@@ -119,6 +148,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+
+      <MobileBottomNav
+        menuOpen={sidebarOpen}
+        onMenu={() => setSidebarOpen(true)}
+        onLogout={logout}
+      />
     </div>
   );
 }
