@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use App\Http\Controllers\Controller;
 use App\Models\Deep;
+use App\Models\PengaturanProduk;
 use App\Models\Plant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -188,7 +189,7 @@ class LayoutGudangController extends Controller
                         $bbFinal = null;
 
                         if ($terpakai > 0 && $pidDeep > 0) {
-                            if (in_array($pidDeep, [10516938, 10516939], true)) {
+                            if (PengaturanProduk::isTanpaBatch($pidDeep)) {
                                 $bbFinal = '9999-12-31';
                             } else {
                                 $bbFinal = $bbProdDeep;
@@ -196,7 +197,7 @@ class LayoutGudangController extends Controller
                         }
 
                         $deep['best_before'] = $bbFinal;
-                        if (in_array($pidDeep, [10516938, 10516939], true)) {
+                        if (PengaturanProduk::isTanpaBatch($pidDeep)) {
                             $deep['batch'] = '-';
                             $deep['batch_produk'] = '-';
                         }
@@ -216,7 +217,7 @@ class LayoutGudangController extends Controller
                         } elseif ($terpakai <= 0 || $pidDeep <= 0) {
                             $deep['status'] = 'blank';
                         } else {
-                            if (in_array($pidDeep, [10516938, 10516939], true)) {
+                            if (PengaturanProduk::isTanpaBatch($pidDeep)) {
                                 $deep['status'] = 'gallon';
                             } else {
                                 if ($bbRef === null) {

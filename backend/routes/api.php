@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\LevelController;
 use App\Http\Controllers\Api\LineController;
 use App\Http\Controllers\Api\LokasiController;
 use App\Http\Controllers\Api\MutasiController;
+use App\Http\Controllers\Api\PengaturanProdukController;
 use App\Http\Controllers\Api\PenggunaController;
 use App\Http\Controllers\Api\PenggunaLokasiController;
 use App\Http\Controllers\Api\PlantController;
@@ -93,11 +94,17 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Layout Gudang (Aksi Edit/Ubah)
         Route::post('/layout-gudang/simpan-layout', [LayoutGudangController::class, 'simpanLayout']);
+
         Route::post('/layout-gudang/salin-block', [LayoutGudangController::class, 'salinBlock']);
         Route::post('/layout-gudang/ubah-plant-line', [LayoutGudangController::class, 'ubahPlantLine']);
         Route::post('/layout-gudang/ubah-bb-jumlah-line', [LayoutGudangController::class, 'ubahBbJumlahLine']);
         Route::post('/layout-gudang/transfer-stok-line', [LayoutGudangController::class, 'transferStokLine']);
         Route::post('/layout-gudang/prioritas-lokasi-produk', [LayoutGudangController::class, 'prioritasLokasiProduk']);
+
+        // Pengaturan Produk (urutan blok + FEFO per lokasi)
+        Route::get('/pengaturan-produk', [PengaturanProdukController::class, 'index']);
+        Route::post('/pengaturan-produk', [PengaturanProdukController::class, 'store']);
+        Route::post('/pengaturan-produk/reset', [PengaturanProdukController::class, 'reset']);
     });
 
     // ---------------------------------------------------------------------

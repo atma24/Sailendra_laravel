@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 export type MasterField = {
   key: string;
   label: string;
-  type: "text" | "number" | "select";
+  type: "text" | "number" | "select" | "checkbox";
   options?: string[];
   min?: number;
   maxLength?: number;
@@ -178,20 +178,27 @@ export default function MasterCrud({ config }: { config: MasterCrudConfig }) {
   const openCreate = () => {
     setMode("tambah");
     const init: Record<string, string> = {};
-    config.fields.forEach((f) => { init[f.key] = f.type === "select" ? (f.options?.[0] || "") : ""; });
+    config.fields.forEach((f) => { init[f.key] = f.type === "select" ? (f.options?.[0] || "") : f.type === "checkbox" ? "0" : ""; });
     setValues(init);
   };
 
   const openEdit = (row: Record<string, unknown>) => {
     setMode("edit");
     const init: Record<string, string> = {};
-    config.fields.forEach((f) => { init[f.key] = s(row[f.key]); });
+    config.fields.forEach((f) => {
+      if (f.type === "checkbox") {
+        const v = row[f.key];
+        init[f.key] = v === true || v === 1 || v === "1" ? "1" : "0";
+      } else {
+        init[f.key] = s(row[f.key]);
+      }
+    });
     setValues(init);
   };
 
   const save = async () => {
     for (const f of config.fields) {
-      if (f.type === "select") continue;
+      if (f.type === "select" || f.type === "checkbox") continue;
       if (s(values[f.key]) === "") { notify("warning", "Data belum lengkap", `Isi ${f.label}.`); return; }
       if (f.type === "number" && parseInt(s(values[f.key]), 10) <= 0) { notify("warning", "Data belum lengkap", `${f.label} harus lebih dari 0.`); return; }
     }
@@ -355,6 +362,17 @@ export default function MasterCrud({ config }: { config: MasterCrudConfig }) {
                     <select className="mc-form-control" id={f.key} value={values[f.key] ?? ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}>
                       {f.options!.map((o) => <option key={o} value={o}>{o}</option>)}
                     </select>
+                  ) : f.type === "checkbox" ? (
+                    <label style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 38, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#0F172A" }}>
+                      <input
+                        type="checkbox"
+                        id={f.key}
+                        checked={(values[f.key] ?? "0") === "1"}
+                        onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.checked ? "1" : "0" }))}
+                        style={{ width: 18, height: 18, accentColor: "#191970" }}
+                      />
+                      <span>Ya</span>
+                    </label>
                   ) : (
                     <input
                       type={f.type}

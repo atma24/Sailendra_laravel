@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, useSession } from "@/lib/auth";
 
-type Produk = { id_produk: number; nama_produk: string; satuan: string; isi_per_pcs: number };
+type Produk = { id_produk: number; nama_produk: string; satuan: string; isi_per_pcs: number; tanpa_batch?: number | boolean };
 type Lokasi = { id_lokasi: number; nama_lokasi: string; kategori: string };
 type Block = { id_block: number; id_lokasi: number; kode_block: string };
 type Line = { id_line: number; id_block: number; nomor_line: number };
@@ -16,7 +16,9 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const norm = (v: unknown) => String(v ?? "").trim();
-const PRODUK_TANPA_BATCH = [10516938, 10516939];
+// Flag tanpa_batch dari Master Data Produk (BB otomatis 9999, batch "-").
+const isTanpaBatch = (p: { tanpa_batch?: unknown }) =>
+  p.tanpa_batch === true || p.tanpa_batch === 1 || p.tanpa_batch === "1";
 
 const STATUS_OPTIONS: Record<string, string> = {
   GS_GS: "Goods Stock - Goods Stock",
@@ -199,7 +201,7 @@ useEffect(() => {
     if (!s) s = "BOX";
     setSatuan(s);
 
-    if (PRODUK_TANPA_BATCH.includes(p.id_produk)) {
+    if (isTanpaBatch(p)) {
       setBestBefore("9999-12-31");
     } else {
       setBestBefore("");
@@ -207,7 +209,7 @@ useEffect(() => {
     setBbList([]);
     setBbOpen(false);
 
-    if (jenis === "GS_QI" && !PRODUK_TANPA_BATCH.includes(p.id_produk)) {
+    if (jenis === "GS_QI" && !isTanpaBatch(p)) {
       fetchBB(0, p.id_produk);
     }
   };

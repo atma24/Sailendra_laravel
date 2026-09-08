@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
+use App\Models\PengaturanProduk;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;
@@ -19,8 +20,6 @@ class BarangMasukController extends Controller
 {
     use ApiResponse;
     use ExcelReader;
-
-    private const PRODUK_TANPA_BATCH = [10516938, 10516939];
 
     private const BLOCK_KHUSUS = ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'FESTIVE', 'HOLD'];
 
@@ -37,6 +36,7 @@ class BarangMasukController extends Controller
         $query = DB::table('barang_masuk as bm')
             ->leftJoin('pengguna as u', 'u.id_pengguna', '=', 'bm.id_pengguna')
             ->leftJoin('pengguna_lokasi as pl', 'pl.id_pengguna_lokasi', '=', 'bm.id_pengguna_lokasi')
+            ->leftJoin('produk as pr', 'pr.id_produk', '=', 'bm.id_produk')
             ->leftJoin(DB::raw('(
                 SELECT id_pengguna_lokasi, id_produk, id_barang_masuk, lokasi_block, SUM(jumlah_sisa) AS jumlah_sisa
                 FROM stok_gudang
@@ -52,8 +52,9 @@ class BarangMasukController extends Controller
                 'bm.id_pengguna', 'u.username AS dibuat_oleh', 'bm.id_produk', 'bm.nama_produk',
                 'bm.jumlah', 'bm.satuan', 'bm.tanggal_masuk', 'bm.tipe_penerimaan', 'bm.best_before',
                 'bm.batch', 'bm.asal_pabrik', 'bm.no_dn', 'bm.nama_driver', 'bm.no_mobil',
-                'bm.shipment_id', 'bm.catatan', 'bm.lokasi_block', 'bm.created_at', 'bm.status','bm.waktu_mulai_input', 
+                'bm.shipment_id', 'bm.catatan', 'bm.lokasi_block', 'bm.created_at', 'bm.status','bm.waktu_mulai_input',
                 'bm.durasi_detik',
+                DB::raw('COALESCE(pr.tanpa_batch,0) AS tanpa_batch'),
                 DB::raw('COALESCE(sg.jumlah_sisa,0) AS stok_sisa')
             );
 
@@ -149,13 +150,10 @@ class BarangMasukController extends Controller
             $durasiDetik = null;
         }
 
-        // Pengecekan Duplikat Shipment ID
-        if ($shipmentId !== '') {
-            $isExist = DB::table('barang_masuk')->where('shipment_id', $shipmentId)->exists();
-            if ($isExist) {
-                return $this->fail("Gagal menyimpan. Shipment ID {$shipmentId} sudah terdaftar di sistem.");
-            }
-        }
+        // Catatan: 1 shipment_id boleh dipakai banyak item (multi-item shipment).
+        // Tidak ada penolakan duplikat di sini; proteksi upload ganda OTM
+        // ada di uploadInboundFile, dan rename shipment dijaga di update().
+        // Pengaman double-submit form mengandalkan busy state di frontend.
 
         $waktuMulai = null;
         if (isset($in['waktu_mulai_input']) && $in['waktu_mulai_input'] !== '') {
@@ -211,7 +209,7 @@ class BarangMasukController extends Controller
             $multiplier = $isiPerPcs;
             $satuan = 'PCS';
         }
-        if (in_array($idProduk, self::PRODUK_TANPA_BATCH, true)) {
+        if (PengaturanProduk::isTanpaBatch($idProduk)) {
             $bestBefore = '9999-12-31';
             $asalPabrik = '-';
             $batch = '-';
@@ -336,8 +334,11 @@ class BarangMasukController extends Controller
             return $this->fail('Field wajib: no_mobil');
         }
 
+        // Pengaturan produk: produk non-FEFO boleh campur BB dalam satu line/deep.
+        $ikutFefo = PengaturanProduk::untuk($idPenggunaLokasi, $idProduk)['ikut_fefo'];
+
         // Validasi BB line
-        if ($tipePenerimaan !== 'REJECT' && $bestBefore !== null && $bestBefore !== '' && ! empty($alokasi)) {
+        if ($ikutFefo && $tipePenerimaan !== 'REJECT' && $bestBefore !== null && $bestBefore !== '' && ! empty($alokasi)) {
             $deepIdsValidasi = array_values(array_unique(array_filter($this->mapDeepIds($alokasi))));
             if (! empty($deepIdsValidasi)) {
                 $rowsBb = DB::table('deep as d')
@@ -396,7 +397,7 @@ class BarangMasukController extends Controller
             $bbMin = $rowTerisi->bb_min ?? null;
             $bbMax = $rowTerisi->bb_max ?? null;
 
-            if ($tipePenerimaan !== 'REJECT' && $terisi > 0 && $bestBefore !== null && $bestBefore !== '' && ($bbMin !== null || $bbMax !== null)) {
+            if ($ikutFefo && $tipePenerimaan !== 'REJECT' && $terisi > 0 && $bestBefore !== null && $bestBefore !== '' && ($bbMin !== null || $bbMax !== null)) {
                 if ($bbMin !== $bestBefore || $bbMax !== $bestBefore) {
                     return $this->fail('Lokasi penyimpanan tidak dapat digunakan karena sudah berisi dengan batch yang berbeda.', 422);
                 }
@@ -541,6 +542,64 @@ class BarangMasukController extends Controller
             'lokasi_akhir' => $ringkasanList,
             'lokasi_akhir_str' => $lokasiAkhirStr,
         ]);
+    }
+
+    // =========================================================================
+    // 3b. SIMPAN BATCH ATOMIK (satu transaksi untuk banyak item)
+    //     Dipakai form inbound manual: gagal di 1 item = semua dibatalkan,
+    //     tidak ada item yang tersimpan. Memakai ulang store() per item di
+    //     dalam satu transaksi luar (transaksi bersarang = savepoint).
+    // =========================================================================
+    public function storeBatch(Request $request)
+    {
+        $in = $request->all();
+        $items = $in['items'] ?? null;
+        if (! is_array($items) || empty($items)) {
+            return $this->fail('items wajib berupa array dan tidak kosong');
+        }
+        if (count($items) > 100) {
+            return $this->fail('Maksimal 100 item per pengiriman');
+        }
+
+        $headerKeys = [
+            'id_pengguna', 'id_pengguna_lokasi', 'tanggal_masuk', 'tipe_penerimaan',
+            'nama_driver', 'no_mobil', 'shipment_id', 'no_dn', 'catatan',
+            'waktu_mulai_input', 'durasi_detik',
+        ];
+        $header = array_intersect_key($in, array_flip($headerKeys));
+
+        $hasil = [];
+        try {
+            DB::transaction(function () use ($header, $items, &$hasil) {
+                foreach ($items as $idx => $it) {
+                    $no = $idx + 1;
+                    if (! is_array($it)) {
+                        throw new Exception("Item ke-{$no} tidak valid.");
+                    }
+                    $nama = trim((string) ($it['nama_produk'] ?? ''));
+                    if ($nama === '') {
+                        $nama = "Item ke-{$no}";
+                    }
+                    $resp = $this->store(Request::create('/barang-masuk', 'POST', array_merge($header, $it)));
+                    $body = $resp->getData(true);
+                    if (! is_array($body) || empty($body['success'])) {
+                        $pesan = is_array($body) && isset($body['message']) && $body['message'] !== ''
+                            ? (string) $body['message']
+                            : 'gagal menyimpan';
+                        throw new Exception("{$nama}: {$pesan}");
+                    }
+                    $hasil[] = [
+                        'id_barang_masuk' => $body['data']['id_barang_masuk'] ?? null,
+                        'lokasi_akhir_str' => $body['data']['lokasi_akhir_str'] ?? '',
+                        'lokasi_akhir' => $body['data']['lokasi_akhir'] ?? [],
+                    ];
+                }
+            });
+        } catch (Throwable $e) {
+            return $this->fail($e->getMessage().'. Tidak ada item yang tersimpan.', 422);
+        }
+
+        return $this->ok(['items' => $hasil], 'Inbound disimpan ('.count($hasil).' item).');
     }
 
     // =========================================================================
@@ -827,7 +886,7 @@ class BarangMasukController extends Controller
                     $batchBaru = '999999' . $idPlant;
                     $bbReq = '9999-12-31';
                 }
-                if (in_array((int)$draft->id_produk, [10516938, 10516939])) { 
+                if (PengaturanProduk::isTanpaBatch((int) $draft->id_produk)) {
                     $bbReq = '9999-12-31';
                     $batchBaru = '-';
                 }
@@ -1237,7 +1296,7 @@ class BarangMasukController extends Controller
             $bestBefore = $this->normalizeBestBefore($r['best_before']);
             $batch = $r['batch'];
 
-            if (in_array($r['id_produk'], self::PRODUK_TANPA_BATCH, true)) {
+            if (PengaturanProduk::isTanpaBatch((int) $r['id_produk'])) {
                 $bestBefore = '9999-12-31';
                 $batch = '-';
             }
@@ -2051,6 +2110,10 @@ class BarangMasukController extends Controller
 
         $punyaLayoutPrioritas = ! empty(array_filter([$deepProduk, $levelProduk, $lineProduk, $blockProduk, $lokasiProduk]));
 
+        // Pengaturan produk: urutan blok + FEFO (default = perilaku lama).
+        $setProduk = PengaturanProduk::untuk($idPenggunaLokasi, $idProduk);
+        $urutanBlokPutaway = $setProduk['ada_setting'] ? $setProduk['urutan_blok'] : null;
+
         $stagingCandidates = [];
         if ($isSecondary || $tipePenerimaan === 'REJECT') {
             $lokasiPrioritasProduk = DB::table('prioritas_lokasi_produk as p')
@@ -2069,7 +2132,7 @@ class BarangMasukController extends Controller
 
             if ($isSecondary) {
                 $qStaging->whereRaw("(UPPER(TRIM(b.kode_block)) = 'RECEH' OR UPPER(TRIM(b.kode_block)) = 'TRANSIT')")
-                         ->orderByRaw("CASE WHEN UPPER(TRIM(b.kode_block)) = 'RECEH' THEN 0 WHEN UPPER(TRIM(b.kode_block)) = 'TRANSIT' THEN 1 ELSE 2 END ASC, b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
+                         ->orderByRaw(PengaturanProduk::caseUrutanSql('b', 'l', $setProduk['urutan_blok']).", b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
             } else {
                 $qStaging->whereRaw("UPPER(TRIM(b.kode_block)) LIKE '%REJECT%'")
                          ->orderByRaw("b.kode_block ASC, ln.nomor_line ASC, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC");
@@ -2084,19 +2147,19 @@ class BarangMasukController extends Controller
 
         $prior = [];
         if (! empty($deepProduk)) {
-            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'd.id_deep', $deepProduk);
+            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'd.id_deep', $deepProduk, $urutanBlokPutaway);
         } elseif (! empty($levelProduk)) {
-            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'd.id_level', $levelProduk);
+            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'd.id_level', $levelProduk, $urutanBlokPutaway);
         } elseif (! empty($lineProduk)) {
-            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'ln.id_line', $lineProduk);
+            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'ln.id_line', $lineProduk, $urutanBlokPutaway);
         } elseif (! empty($blockProduk)) {
-            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'b.id_block', $blockProduk);
+            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'b.id_block', $blockProduk, $urutanBlokPutaway);
         } elseif (! empty($lokasiProduk)) {
-            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'b.id_lokasi', $lokasiProduk);
+            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'b.id_lokasi', $lokasiProduk, $urutanBlokPutaway);
         }
 
         if (empty($prior) && ! empty($lineProduk)) {
-            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'ln.id_line', $lineProduk);
+            $prior = $this->kandidatPrior($idPenggunaLokasi, $tipePenerimaan, 'ln.id_line', $lineProduk, $urutanBlokPutaway);
         }
 
         $previewEmpty = [
@@ -2156,27 +2219,62 @@ class BarangMasukController extends Controller
             $lineProductMap[$idLine][$idProd] = (int) $rowLP->qty;
         }
 
-        $priorFiltered = [];
-        foreach ($prior as $row) {
-            $idLine = (int) $row['id_line'];
-            $prodDalamLine = $lineProductMap[$idLine] ?? [];
-            $adaProdukSama = false;
-            $adaProdukLain = false;
-            foreach ($prodDalamLine as $pid => $dummyQty) {
-                if ((int) $pid === $idProduk) {
-                    $adaProdukSama = true;
-                } else {
-                    $adaProdukLain = true;
+        // Booking Pending (termasuk item lain se-shipment yang baru dibooking
+        // dalam submit yang sama) ikut dihitung sebagai penghuni line, agar
+        // item berikutnya tidak menumpuk/campur ke line tersebut.
+        $pendingBbMap = [];
+        $pendingLines = DB::table('rencana_masuk_deep as r')
+            ->join('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'r.id_barang_masuk')
+            ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
+            ->join('level as lv', function ($j) {
+                $j->on('lv.id_level', '=', 'd.id_level')
+                    ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
+            })
+            ->join('line as ln', function ($j) {
+                $j->on('ln.id_line', '=', 'lv.id_line')
+                    ->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+            })
+            ->join('block as b', function ($j) {
+                $j->on('b.id_block', '=', 'ln.id_block')
+                    ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+            })
+            ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('bm.status', 'Pending')
+            ->selectRaw("ln.id_line, bm.id_produk, CONCAT(UPPER(TRIM(b.kode_block)), '-', ln.nomor_line) AS label_line, MIN(r.best_before) AS bb_min")
+            ->groupBy('ln.id_line', 'bm.id_produk', DB::raw("CONCAT(UPPER(TRIM(b.kode_block)), '-', ln.nomor_line)"))
+            ->get();
+
+        foreach ($pendingLines as $rowPL) {
+            $idLine = (int) $rowPL->id_line;
+            $idProd = (int) $rowPL->id_produk;
+            if (! isset($lineProductMap[$idLine])) {
+                $lineProductMap[$idLine] = [];
+            }
+            if (! isset($lineProductMap[$idLine][$idProd])) {
+                $lineProductMap[$idLine][$idProd] = 0;
+            }
+            if ($idProd === $idProduk && ! empty($rowPL->label_line) && ! empty($rowPL->bb_min)) {
+                $lbl = $rowPL->label_line;
+                if (! isset($pendingBbMap[$lbl]) || $rowPL->bb_min < $pendingBbMap[$lbl]) {
+                    $pendingBbMap[$lbl] = $rowPL->bb_min;
                 }
             }
-            if ($adaProdukLain && ! $adaProdukSama) {
-                continue;
-            }
-            $priorFiltered[] = $row;
         }
-        $prior = $priorFiltered;
 
-        $finalCandidates = array_merge($stagingCandidates, $prior);
+        $prior = $this->saringCampurProduk($prior, $lineProductMap, $idProduk);
+        $stagingCandidates = $this->saringCampurProduk($stagingCandidates, $lineProductMap, $idProduk);
+
+        // Urutan gabung ikut bobot setting produk (Secondary + ada setting).
+        // REGULER di depan staging = prior dulu, staging jadi fallback.
+        // Default & tanpa setting: staging dulu (perilaku lama).
+        $stagingDulu = true;
+        if ($isSecondary && $setProduk['ada_setting']) {
+            $pos = array_flip($setProduk['urutan_blok']);
+            $stagingDulu = min($pos['RECEH'], $pos['TRANSIT']) <= $pos['REGULER'];
+        }
+        $finalCandidates = $stagingDulu
+            ? array_merge($stagingCandidates, $prior)
+            : array_merge($prior, $stagingCandidates);
 
         if (empty($finalCandidates)) {
             if ($previewMode) {
@@ -2212,6 +2310,12 @@ class BarangMasukController extends Controller
                 foreach ($bbRows as $rowBB) {
                     if (! empty($rowBB->lokasi_block) && ! empty($rowBB->bb_release)) {
                         $bbMap[$rowBB->lokasi_block] = $rowBB->bb_release;
+                    }
+                }
+                // BB dari booking Pending ikut jadi patokan BB tertua per line.
+                foreach ($pendingBbMap as $lbl => $bbMin) {
+                    if (! isset($bbMap[$lbl]) || ($bbMin !== null && $bbMin < $bbMap[$lbl])) {
+                        $bbMap[$lbl] = $bbMin;
                     }
                 }
             }
@@ -2686,7 +2790,36 @@ class BarangMasukController extends Controller
         return array_filter(array_map(fn ($a) => (int) ($a['id_deep'] ?? 0), $alokasi), fn ($id) => $id > 0);
     }
 
-    private function kandidatPrior(string $idPenggunaLokasi, string $tipePenerimaan, string $column, array $ids): array
+    /**
+     * Saring kandidat deep agar 1 line hanya berisi 1 produk:
+     * buang deep yang line-nya sudah berisi produk lain (tanpa produk ini).
+     * Line kosong atau line berisi produk yang sama tetap lolos.
+     */
+    private function saringCampurProduk(array $rows, array $lineProductMap, int $idProduk): array
+    {
+        $out = [];
+        foreach ($rows as $row) {
+            $idLine = (int) ($row['id_line'] ?? 0);
+            $prodDalamLine = $lineProductMap[$idLine] ?? [];
+            $adaProdukSama = false;
+            $adaProdukLain = false;
+            foreach ($prodDalamLine as $pid => $dummyQty) {
+                if ((int) $pid === $idProduk) {
+                    $adaProdukSama = true;
+                } else {
+                    $adaProdukLain = true;
+                }
+            }
+            if ($adaProdukLain && ! $adaProdukSama) {
+                continue;
+            }
+            $out[] = $row;
+        }
+
+        return $out;
+    }
+
+    private function kandidatPrior(string $idPenggunaLokasi, string $tipePenerimaan, string $column, array $ids, ?array $urutanBlok = null): array
     {
         $query = $this->baseDeep($idPenggunaLokasi)
             ->where($this->whereNormalBlockActive($tipePenerimaan))
@@ -2697,8 +2830,13 @@ class BarangMasukController extends Controller
             $query->where($kategori);
         }
 
+        $orderDasar = 'l.nama_lokasi, b.kode_block, ln.nomor_line, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC';
+        $order = $urutanBlok !== null
+            ? PengaturanProduk::caseUrutanSql('b', 'l', $urutanBlok).', '.$orderDasar
+            : $orderDasar;
+
         return $query
-            ->orderByRaw('l.nama_lokasi, b.kode_block, ln.nomor_line, d.deep ASC, CAST(lv.level AS UNSIGNED) ASC')
+            ->orderByRaw($order)
             ->get()->map(fn ($r) => (array) $r)->all();
     }
 

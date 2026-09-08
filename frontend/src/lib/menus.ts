@@ -18,6 +18,7 @@ const masterData = {
     { title: "History Layout Gudang", path: layout("history-layout-gudang"), page: "history_layout_gudang" },
     { title: "List Produk", path: layout("produk"), page: "produk" },
     { title: "List Plant", path: layout("plant"), page: "plant" },
+    { title: "Pengaturan Produk", path: layout("pengaturan-produk"), page: "pengaturan_produk" },
   ],
 };
 

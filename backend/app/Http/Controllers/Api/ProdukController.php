@@ -62,6 +62,7 @@ class ProdukController extends Controller
                 'nama_produk' => $namaProduk,
                 'satuan' => $satuan,
                 'isi_per_pcs' => $isiPerPcs,
+                'tanpa_batch' => filter_var($request->input('tanpa_batch') ?? false, FILTER_VALIDATE_BOOLEAN),
                 'created_at' => now(),
             ]);
 
@@ -106,6 +107,10 @@ class ProdukController extends Controller
                 return $this->fail('Isi per pcs harus lebih dari 0');
             }
             $produk->isi_per_pcs = $isiPerPcs;
+        }
+
+        if ($request->has('tanpa_batch')) {
+            $produk->tanpa_batch = filter_var($request->input('tanpa_batch'), FILTER_VALIDATE_BOOLEAN);
         }
 
         if (! $produk->isDirty()) {
