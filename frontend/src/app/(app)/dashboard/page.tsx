@@ -51,8 +51,11 @@ const dashCss = `
   display: flex;
   flex-direction: column;
   gap: 20px;
+  width: 100%;
   max-width: 1600px;
+  min-width: 0;
   margin: 0 auto;
+  overflow-x: clip;
 }
 
 /* Header & Welcome Banner */
@@ -165,6 +168,8 @@ const dashCss = `
   outline: none;
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* Metric KPI Cards Grid */
@@ -388,6 +393,8 @@ const dashCss = `
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+  width: 100%;
+  min-width: 0;
 }
 
 .chart-card {
@@ -398,6 +405,10 @@ const dashCss = `
   box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03);
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .chart-card-full {
@@ -408,6 +419,7 @@ const dashCss = `
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  flex-wrap: wrap;
   margin-bottom: 18px;
   gap: 10px;
 }
@@ -436,13 +448,21 @@ const dashCss = `
 .canvas-wrapper {
   position: relative;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 290px;
+}
+
+.canvas-wrapper canvas {
+  max-width: 100% !important;
 }
 
 /* Stock Health Section */
 .multi-select-container {
   position: relative;
-  min-width: 200px;
+  min-width: 160px;
+  max-width: 100%;
+  flex-shrink: 1;
 }
 
 .multi-select-btn {
@@ -472,6 +492,7 @@ const dashCss = `
   top: calc(100% + 4px);
   right: 0;
   width: 260px;
+  max-width: calc(100vw - 60px);
   max-height: 240px;
   overflow-y: auto;
   background: #FFFFFF;
@@ -684,6 +705,9 @@ const dashCss = `
 }
 
 @media (max-width: 640px) {
+  .dash-container {
+    gap: 14px;
+  }
   .dash-welcome-card {
     padding: 18px 20px;
   }
@@ -692,10 +716,49 @@ const dashCss = `
   }
   .dash-filter-pill {
     width: 100%;
+    max-width: 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
   }
   .kpi-grid {
     grid-template-columns: 1fr;
+  }
+  .kpi-card {
+    padding: 16px;
+  }
+  .kpi-value {
+    font-size: 22px;
+  }
+  .dash-main-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .chart-card {
+    padding: 16px;
+    border-radius: 14px;
+  }
+  .card-header-flex {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .card-header-title {
+    font-size: 14px;
+  }
+  .multi-select-container {
+    width: 100%;
+    min-width: 0;
+  }
+  .multi-select-btn {
+    width: 100%;
+  }
+  .multi-select-dropdown {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: 100%;
+  }
+  .canvas-wrapper {
+    height: 240px;
   }
   .dash-alert-banner {
     flex-direction: column;
@@ -777,6 +840,8 @@ export default function DashboardPage() {
   const loadCharts = useCallback(() => {
     const Chart = (window as unknown as { Chart?: new (ctx: string | CanvasRenderingContext2D, cfg: unknown) => unknown }).Chart;
     if (!Chart || !summary) return;
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+    const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
     // Line Chart: Daily Inbound vs Outbound
     const line = lineRef.current;
@@ -828,9 +893,9 @@ export default function DashboardPage() {
               position: "top",
               labels: {
                 usePointStyle: true,
-                boxWidth: 8,
-                font: { size: 12, weight: "700", family: "inherit" },
-                padding: 16,
+                boxWidth: isMobile ? 6 : 8,
+                font: { size: isMobile ? 10 : 12, weight: "700", family: "inherit" },
+                padding: isMobile ? 10 : 16,
               },
             },
             tooltip: {
@@ -849,7 +914,13 @@ export default function DashboardPage() {
             },
             x: {
               grid: { display: false },
-              ticks: { font: { size: 11, weight: "600" }, color: "#64748B" },
+              ticks: {
+                font: { size: isMobile ? 9 : 11, weight: "600" },
+                color: "#64748B",
+                maxTicksLimit: isMobile ? 6 : 15,
+                maxRotation: isMobile ? 45 : 0,
+                autoSkip: true,
+              },
             },
           },
           interaction: { mode: "nearest", axis: "x", intersect: false },
@@ -884,11 +955,11 @@ export default function DashboardPage() {
           cutout: "70%",
           plugins: {
             legend: {
-              position: "right",
+              position: isMobile ? "bottom" : "right",
               labels: {
                 usePointStyle: true,
-                padding: 12,
-                font: { size: 11, weight: "600", family: "inherit" },
+                padding: isMobile ? 8 : 12,
+                font: { size: isMobile ? 10 : 11, weight: "600", family: "inherit" },
               },
             },
             tooltip: {
@@ -926,7 +997,7 @@ export default function DashboardPage() {
               backgroundColor: "#191970",
               hoverBackgroundColor: "#2A2A8F",
               borderRadius: 6,
-              barThickness: 24,
+              barThickness: isMobile ? 18 : 24,
             },
           ],
         },
@@ -951,17 +1022,45 @@ export default function DashboardPage() {
             y: {
               reverse: false,
               grid: { display: false },
-              ticks: { font: { size: 11, weight: "600" }, color: "#334155" },
+              ticks: {
+                font: { size: isMobile ? 10 : 11, weight: "600" },
+                color: "#334155",
+                callback: function (
+                  this: { getLabelForValue?: (v: number) => string },
+                  val: unknown
+                ): string {
+                  const raw =
+                    typeof this.getLabelForValue === "function"
+                      ? this.getLabelForValue(val as number)
+                      : String(val);
+                  return isMobile ? truncate(raw, 18) : raw;
+                },
+              },
             },
           },
         },
       });
     }
-  }, [summary]);
+  }, [summary, showAllPenjualan]);
 
   useEffect(() => {
     loadCharts();
-  }, [loadCharts, showAllPenjualan]);
+  }, [loadCharts]);
+
+  // Render ulang chart saat viewport berubah (rotasi HP / resize)
+  // agar opsi mobile (legend, ticks) ikut menyesuaikan.
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    function onResize() {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => loadCharts(), 200);
+    }
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (t) clearTimeout(t);
+    };
+  }, [loadCharts]);
 
   useEffect(() => {
     return () => {
