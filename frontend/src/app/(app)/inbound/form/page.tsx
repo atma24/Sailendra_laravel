@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiPost, apiGet } from "@/lib/api";
 import { aktifLokasiId, useSession } from "@/lib/auth";
 
-type Produk = { id_produk: number; nama_produk: string; satuan: string };
+type Produk = { id_produk: number; nama_produk: string; satuan: string; tanpa_batch?: number | boolean };
 type Plant = { id_plant: string; nama_plant: string };
 type PreviewRec = { id_deep: number; alokasi: number; label_lokasi: string; kode_block: string; nomor_line: number; label_line: string };
 type KonversiLevel = { level: number; jumlah_deep: number };
@@ -32,7 +32,9 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const norm = (v: unknown) => String(v ?? "").trim();
-const PRODUK_TANPA_BATCH = [10516938, 10516939];
+// Flag tanpa_batch dari Master Data Produk (BB otomatis 9999, batch "-").
+const isTanpaBatch = (p: { tanpa_batch?: unknown }) =>
+  p.tanpa_batch === true || p.tanpa_batch === 1 || p.tanpa_batch === "1";
 
 const css = `
 .inbound-form-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 32px; max-width: 1100px; margin: 0 auto; }
@@ -164,7 +166,7 @@ export default function InboundFormPage() {
   const idPenggunaLokasi = aktifLokasiId(session);
 
   const isReject = tipe === "REJECT";
-  const isNoBatchGlobal = (id: number) => PRODUK_TANPA_BATCH.includes(id);
+  const isNoBatchGlobal = (p: Produk) => isTanpaBatch(p);
 
   const emptyItem = (): Item => ({
     id_produk: 0, nama_produk: "", satuan: "", jumlah: "", best_before: "",
@@ -178,8 +180,7 @@ export default function InboundFormPage() {
     setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
 
   const pickProduk = (idx: number, p: Produk) => {
-    const noBatch = isNoBatchGlobal(p.id_produk) ||
-      /JUG (AQUA|VIT) 19L PC 55 MM/i.test(p.nama_produk || "");
+    const noBatch = isNoBatchGlobal(p);
     updateItem(idx, {
       id_produk: p.id_produk,
       nama_produk: `${p.id_produk} - ${p.nama_produk}`,
@@ -254,7 +255,9 @@ export default function InboundFormPage() {
     return bb && kodePlant ? bb + kodePlant : "";
   };
 
-  // --- PERBAIKAN: SIMPAN SEMUA DENGAN KONVERSI OTOMATIS TERSINKRONISASI ---
+  // --- SIMPAN ATOMIK: validasi + preview semua dulu (tanpa menyimpan),
+  // --- lalu kirim sekaligus ke /barang-masuk/batch dalam 1 transaksi.
+  // --- Gagal di 1 item = tidak ada yang tersimpan, isian form tetap utuh.
   const simpan = async () => {
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
     if (tipe !== "Secondary" && tipe !== "REJECT" && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
@@ -262,10 +265,12 @@ export default function InboundFormPage() {
     if (norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
 
     setBusy(true);
-    const success: ResultItem[] = [];
     const failed: ResultItem[] = [];
+    const payloads: Record<string, unknown>[] = [];
+    const names: string[] = [];
     const waktuMulai = `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`;
 
+    // Fase 1: validasi + preview per item (read-only, belum menyimpan apa pun).
     for (let idx = 0; idx < items.length; idx++) {
       const it = items[idx];
       const no = idx + 1;
@@ -298,8 +303,8 @@ export default function InboundFormPage() {
         const konvLines = rRec.data?.konversi || [];
 
         // Sinkronkan ID line konversi langsung dari rekomendasi backend terkini
-        const idKonversiKirim = konvLines.length 
-          ? konvLines.map((l) => l.id_line) 
+        const idKonversiKirim = konvLines.length
+          ? konvLines.map((l) => l.id_line)
           : (it.konversi || []);
 
         if (konvLines.length && !(it.konversi || []).length) {
@@ -312,11 +317,13 @@ export default function InboundFormPage() {
           continue;
         }
 
-        const r = await apiPost<{ lokasi_akhir?: { line: string; qty: number }[]; lokasi_akhir_str?: string }>("/barang-masuk", {
+        names.push(it.nama_produk || `Produk ID ${it.id_produk}`);
+        payloads.push({
           shipment_id: shipmentId,
           id_pengguna: session.user.id_pengguna,
           id_pengguna_lokasi: idPenggunaLokasi,
           id_produk: it.id_produk,
+          nama_produk: it.nama_produk,
           jumlah: angka(it.jumlah),
           satuan: it.satuan || "BOX",
           tanggal_masuk: tanggal,
@@ -334,11 +341,8 @@ export default function InboundFormPage() {
           waktu_mulai_input: waktuMulai,
           durasi_detik: timer,
         });
-        
-        const lokasi = r.data?.lokasi_akhir_str || r.data?.lokasi_akhir?.map((l) => l.line).join(", ") || "-";
-        success.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "OK", lokasi, slot: lokasi });
       } catch (e) {
-        let m = (e as Error).message || `Gagal menyimpan item ke-${no}.`;
+        let m = (e as Error).message || `Gagal memeriksa item ke-${no}.`;
         const low = m.toLowerCase();
         if (low.includes("kirim: alokasi") || low.includes("lokasi_line") || low.includes("lokasi_block")) {
           m = "Line produk tidak tersedia. Silakan buat layout baru atau tunggu line kembali.";
@@ -349,8 +353,30 @@ export default function InboundFormPage() {
         failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: m });
       }
     }
-    setBusy(false);
-    setResults({ success, failed });
+
+    // Ada yang gagal di fase validasi/preview: tidak menyimpan apa pun.
+    if (failed.length) {
+      setBusy(false);
+      setResults({ success: [], failed });
+      return;
+    }
+
+    // Fase 2: simpan sekaligus dalam 1 transaksi (atomik).
+    try {
+      const r = await apiPost<{ items?: { lokasi_akhir_str?: string; lokasi_akhir?: { line: string; qty: number }[] }[] }>(
+        "/barang-masuk/batch",
+        { items: payloads }
+      );
+      const success: ResultItem[] = (r.data?.items || []).map((b, i) => {
+        const lokasi = b.lokasi_akhir_str || (b.lokasi_akhir || []).map((l) => l.line).join(", ") || "-";
+        return { nama_produk: names[i] || `Item ke-${i + 1}`, message: "OK", lokasi, slot: lokasi };
+      });
+      setResults({ success, failed: [] });
+    } catch (e) {
+      setResults({ success: [], failed: [{ nama_produk: "Semua item", message: `${(e as Error).message || "Gagal menyimpan."}` }] });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const notify = (type: string, msg: string) => {
@@ -526,8 +552,13 @@ export default function InboundFormPage() {
           <div className="inbound-success-modal">
             <div className="inbound-success-title">
               <i className={`bi ${results.failed.length ? "bi-info-circle-fill" : "bi-check-circle-fill"}`}></i>
-              <span>{results.failed.length ? "Sebagian Gagal" : "Inbound Disimpan"}</span>
+              <span>{results.failed.length ? (results.success.length ? "Sebagian Gagal" : "Gagal Menyimpan") : "Inbound Disimpan"}</span>
             </div>
+            {results.failed.length > 0 && results.success.length === 0 && (
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-soft)", marginBottom: 8 }}>
+                Tidak ada item yang tersimpan. Perbaiki isian lalu simpan ulang — isian form tidak hilang.
+              </div>
+            )}
             <div className="inbound-success-list">
               {results.success.map((s, i) => (
                 <div className="inbound-success-item" key={`s${i}`}>
@@ -551,7 +582,13 @@ export default function InboundFormPage() {
               ))}
             </div>
             <div className="inbound-success-action">
-              <button type="button" className="inbound-success-close" onClick={() => { setResults(null); window.location.href = "/inbound"; }}>Tutup</button>
+              <button type="button" className="inbound-success-close" onClick={() => {
+                const adaGagal = (results?.failed.length ?? 0) > 0;
+                setResults(null);
+                // Hanya keluar dari form bila semua tersimpan; bila gagal,
+                // tetap di form dengan isian yang sama agar tinggal perbaiki.
+                if (!adaGagal) window.location.href = "/inbound";
+              }}>Tutup</button>
             </div>
           </div>
         </div>

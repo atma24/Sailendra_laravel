@@ -31,6 +31,7 @@ type BmRow = {
   stok_sisa: number;
   status: string;
   shipment_id: string;
+  tanpa_batch?: number | boolean;
   waktu_mulai_input?: string;
   durasi_detik?: number;
 };
@@ -42,7 +43,9 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const norm = (v: unknown) => String(v ?? "").trim();
-const PRODUK_TANPA_BATCH = [10516938, 10516939];
+// Flag tanpa_batch dari Master Data Produk (BB otomatis 9999, batch "-").
+const isTanpaBatch = (r: { tanpa_batch?: unknown }) =>
+  r.tanpa_batch === true || r.tanpa_batch === 1 || r.tanpa_batch === "1";
 
 const css = `
 .inbound-detail-page { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
@@ -328,7 +331,7 @@ export default function InboundDetailPage() {
 
       for (const i of draftItems) {
          const isRej = (i.tipe_penerimaan || "").toUpperCase() === "REJECT";
-         const noBatch = PRODUK_TANPA_BATCH.includes(angka(i.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(i.nama_produk || "");
+          const noBatch = isTanpaBatch(i);
          const bb = isRej || noBatch ? "9999-12-31" : (draftBb[i.id_barang_masuk] || "");
          if (!bb) throw new Error(`Best before untuk ${i.nama_produk} belum diisi.`);
 
@@ -349,7 +352,7 @@ export default function InboundDetailPage() {
 
       const payloadItems = draftItems.map(i => {
          const isRej = (i.tipe_penerimaan || "").toUpperCase() === "REJECT";
-         const noBatch = PRODUK_TANPA_BATCH.includes(angka(i.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(i.nama_produk || "");
+          const noBatch = isTanpaBatch(i);
          const bb = isRej || noBatch ? "9999-12-31" : (draftBb[i.id_barang_masuk] || "");
          return { id_barang_masuk: i.id_barang_masuk, best_before: bb };
       });
@@ -678,7 +681,7 @@ export default function InboundDetailPage() {
           {items.map((item) => {
             const itemStatus = (item.status || "selesai").toLowerCase();
             const isItemReject = (item.tipe_penerimaan || "").toUpperCase() === "REJECT";
-            const noBatch = PRODUK_TANPA_BATCH.includes(angka(item.id_produk)) || /JUG (AQUA|VIT) 19L PC 55 MM/i.test(item.nama_produk || "");
+            const noBatch = isTanpaBatch(item);
 
             return (
               <div key={item.id_barang_masuk} className="id-item-card">

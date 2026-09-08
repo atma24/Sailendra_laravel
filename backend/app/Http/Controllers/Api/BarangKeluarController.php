@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
+use App\Models\PengaturanProduk;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;
@@ -1369,71 +1370,97 @@ $in = $request->all();
             ", $paramsSync);
 
             // === AUTO-INBOUND: Buat barang_masuk Secondary dari outbound selesai ===
+            // 1 GIN = 1 shipment_id, agar semua item dalam 1 GIN tampil sebagai
+            // 1 detail inbound (bukan 1 detail per item).
             $itemsSelesai = DB::table('barang_keluar')
                 ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                 ->whereIn('id_barang_keluar', $idsProses)
                 ->get();
 
+            $fallbackShipment = 'AUTO-OB'.(int) $header->id_barang_keluar;
+            $grupPerGin = [];
             foreach ($itemsSelesai as $bk) {
-                $bestBeforeBk = $bk->best_before ?? null;
-                $batchBk = $bk->batch ?? null;
-                if (empty($bestBeforeBk) || $bestBeforeBk === '0000-00-00') {
-                    $bestBeforeBk = null;
+                $ginRaw = trim((string) ($bk->gin_no ?? ''));
+                $ginBersih = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $ginRaw));
+                if ($ginBersih === '') {
+                    $shipmentKey = $fallbackShipment;
+                    $ginLabel = '-';
+                } else {
+                    $shipmentKey = 'AUTO-'.$ginBersih;
+                    $ginLabel = $ginRaw;
                 }
+                if (! isset($grupPerGin[$shipmentKey])) {
+                    $grupPerGin[$shipmentKey] = [
+                        'shipment_id' => $shipmentKey,
+                        'gin_no' => $ginLabel,
+                        'items' => [],
+                    ];
+                }
+                $grupPerGin[$shipmentKey]['items'][] = $bk;
+            }
 
-                // Resolve batch dari best_before jika kosong
-                if (empty($batchBk) && $bestBeforeBk) {
-                    $idPlant = strtoupper(trim(explode('-', $bk->lokasi_block ?? '', 2)[0]));
-                    if ($idPlant === '' || $idPlant === 'PABRIK') $idPlant = 'PABRIK';
-                    $dtBatch = DateTime::createFromFormat('Y-m-d', $bestBeforeBk);
-                    if ($dtBatch) {
-                        $batchBk = $dtBatch->format('ymd') . $idPlant;
+            foreach ($grupPerGin as $grup) {
+                $shipmentIdAuto = $grup['shipment_id'];
+                $ginNo = $grup['gin_no'];
+
+                foreach ($grup['items'] as $bk) {
+                    $bestBeforeBk = $bk->best_before ?? null;
+                    $batchBk = $bk->batch ?? null;
+                    if (empty($bestBeforeBk) || $bestBeforeBk === '0000-00-00') {
+                        $bestBeforeBk = null;
                     }
-                }
 
-                // Resolve asal_pabrik dari batch code → plant table
-                $asalPabrik = 'Secondary-Outbound';
-                if (!empty($batchBk) && strlen($batchBk) >= 4) {
-                    // Batch format: YYMMDD + ID_PLANT (4-5 karakter terakhir)
-                    $idPlant = substr($batchBk, 6);
-                    if ($idPlant !== '') {
-                        $plantRow = DB::table('plant')
-                            ->where('id_plant', $idPlant)
-                            ->first();
-                        if ($plantRow) {
-                            $asalPabrik = trim($plantRow->id_plant) . ' - ' . trim($plantRow->nama_plant);
-                        } else {
-                            $asalPabrik = $idPlant;
+                    // Resolve batch dari best_before jika kosong
+                    if (empty($batchBk) && $bestBeforeBk) {
+                        $idPlant = strtoupper(trim(explode('-', $bk->lokasi_block ?? '', 2)[0]));
+                        if ($idPlant === '' || $idPlant === 'PABRIK') $idPlant = 'PABRIK';
+                        $dtBatch = DateTime::createFromFormat('Y-m-d', $bestBeforeBk);
+                        if ($dtBatch) {
+                            $batchBk = $dtBatch->format('ymd') . $idPlant;
                         }
                     }
-                }
 
-                $ginNo = $bk->gin_no ?? '-';
-                $shipmentIdAuto = 'AUTO-' . strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $ginNo)) . '-' . $bk->id_barang_keluar;
+                    // Resolve asal_pabrik dari batch code → plant table
+                    $asalPabrik = 'Secondary-Outbound';
+                    if (!empty($batchBk) && strlen($batchBk) >= 4) {
+                        // Batch format: YYMMDD + ID_PLANT (4-5 karakter terakhir)
+                        $idPlant = substr($batchBk, 6);
+                        if ($idPlant !== '') {
+                            $plantRow = DB::table('plant')
+                                ->where('id_plant', $idPlant)
+                                ->first();
+                            if ($plantRow) {
+                                $asalPabrik = trim($plantRow->id_plant) . ' - ' . trim($plantRow->nama_plant);
+                            } else {
+                                $asalPabrik = $idPlant;
+                            }
+                        }
+                    }
 
-                DB::table('barang_masuk')->insert([
-                    'id_pengguna_lokasi' => $idPenggunaLokasi,
-                    'id_pengguna'         => $bk->id_pengguna,
-                    'id_produk'           => $bk->id_produk,
-                    'nama_produk'         => $bk->nama_produk,
-                    'jumlah'              => $bk->jumlah,
-                    'satuan'              => $bk->satuan,
-                    'tanggal_masuk'       => $bk->tanggal_keluar,
-                    'tipe_penerimaan'     => 'Secondary',
-                    'best_before'         => $bestBeforeBk,
-                    'batch'               => $batchBk,
-                    'batch_sekarang'      => $batchBk,
-                    'asal_pabrik'         => $asalPabrik,
-                    'no_dn'               => '',
-                    'nama_driver'         => $bk->nama_driver,
-                    'no_mobil'            => $bk->no_mobil,
-                    'shipment_id'         => $shipmentIdAuto,
-                    'lokasi_block'        => $bk->lokasi_block,
-                    'catatan'             => 'Auto dari Outbound GIN ' . $ginNo,
-                    'status'              => 'Draft',
-                    'created_at'          => now(),
-                ]);
-            }
+                    DB::table('barang_masuk')->insert([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_pengguna'         => $bk->id_pengguna,
+                        'id_produk'           => $bk->id_produk,
+                        'nama_produk'         => $bk->nama_produk,
+                        'jumlah'              => $bk->jumlah,
+                        'satuan'              => $bk->satuan,
+                        'tanggal_masuk'       => $bk->tanggal_keluar,
+                        'tipe_penerimaan'     => 'Secondary',
+                        'best_before'         => $bestBeforeBk,
+                        'batch'               => $batchBk,
+                        'batch_sekarang'      => $batchBk,
+                        'asal_pabrik'         => $asalPabrik,
+                        'no_dn'               => '',
+                        'nama_driver'         => $bk->nama_driver,
+                        'no_mobil'            => $bk->no_mobil,
+                        'shipment_id'         => $shipmentIdAuto,
+                        'lokasi_block'        => $bk->lokasi_block,
+                        'catatan'             => 'Auto dari Outbound GIN ' . $ginNo,
+                        'status'              => 'Draft',
+                        'created_at'          => now(),
+                    ]);
+                } // end items dalam 1 GIN (1 shipment)
+            } // end grup per GIN
             // === END AUTO-INBOUND ===
 
             DB::commit();
@@ -1532,7 +1559,7 @@ $in = $request->all();
             COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') $whereExtra
-            ORDER BY {$this->prioritasBlokFefoSql('bl', 'lk')}, sgd.best_before IS NULL, sgd.best_before ASC, lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC
+            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
         ";
 
         return $this->prosesRencanaDariQuery($sql, $params, $jumlahButuh, []);
@@ -1546,7 +1573,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
             WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND ln.id_line = ? AND (sg.batch = ? OR COALESCE(sgd.batch, sg.batch) = ?) AND (? = '' OR sgd.best_before = ?) AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
-            ORDER BY {$this->prioritasBlokFefoSql('bl', 'lk')}, sgd.best_before IS NULL, sgd.best_before ASC, lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC
+            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
         ";
 
         return $this->prosesRencanaDariQuery($sql, [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk, $idLine, $batch, $batch, $bestBeforeManual, $bestBeforeManual], $jumlahButuh, []);
@@ -1561,7 +1588,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
-            ORDER BY {$this->prioritasBlokFefoSql('bl', 'lk')}, sgd.best_before IS NULL, sgd.best_before ASC, lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC
+            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
         ";
 
         return $this->prosesRencanaDariQuery($sql, [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk], $jumlahButuh, $stokBookingSementara);
@@ -1868,22 +1895,26 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         }
     }
 
-    private function prioritasBlokFefoSql($aliasBlock = 'bl', $aliasLokasi = 'lk')
+    private function prioritasBlokFefoSql($aliasBlock = 'bl', $aliasLokasi = 'lk', ?array $urutan = null)
     {
-        return "
-            CASE
-                WHEN UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%MOBIL%'
-                  OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%MOBIL%'
-                  OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%MOBIL%' THEN 0
-                WHEN UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%RECEH%'
-                  OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%RECEH%'
-                  OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%RECEH%' THEN 1
-                WHEN UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%TRANSIT%'
-                  OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%TRANSIT%'
-                  OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%TRANSIT%' THEN 2
-                ELSE 3
-            END ASC
-        ";
+        return PengaturanProduk::caseUrutanSql(
+            $aliasBlock,
+            $aliasLokasi,
+            PengaturanProduk::normalisasiUrutan($urutan ?? PengaturanProduk::URUTAN_DEFAULT)
+        );
+    }
+
+    /**
+     * ORDER BY lengkap untuk rencana outbound: urutan blok per produk,
+     * lalu FEFO (best_before) kecuali produk diset ikut_fefo=0.
+     */
+    private function orderRencanaOutbound($idPenggunaLokasi, $idProduk)
+    {
+        $set = PengaturanProduk::untuk((string) $idPenggunaLokasi, (int) $idProduk);
+        $orderBlok = $this->prioritasBlokFefoSql('bl', 'lk', $set['urutan_blok']);
+        $orderFefo = $set['ikut_fefo'] ? 'sgd.best_before IS NULL, sgd.best_before ASC, ' : '';
+
+        return "{$orderBlok}, {$orderFefo}lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC";
     }
 
     private function filterLokasiOutboundNormal($aliasBlock = 'bl', $aliasLokasi = 'lk')
