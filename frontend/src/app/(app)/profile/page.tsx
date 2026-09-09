@@ -281,7 +281,7 @@ export default function ProfilePage() {
             <div className="management-title">Ganti Password</div>
           </div>
         </div>
-        <form onSubmit={handleResetPassword} className="reset-form">
+        <form onSubmit={handleResetPassword} className="reset-form" autoComplete="off">
           <div className="reset-field">
             <label className="reset-label">Password Saat Ini</label>
             <div className="reset-input-wrap">
@@ -292,6 +292,8 @@ export default function ProfilePage() {
                 value={curPass}
                 onChange={(e) => setCurPass(e.target.value)}
                 maxLength={25}
+                name="current-password"
+                autoComplete="current-password"
               />
               <button
                 type="button"
@@ -314,6 +316,8 @@ export default function ProfilePage() {
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
                 maxLength={25}
+                name="new-password"
+                autoComplete="new-password"
               />
               <button
                 type="button"
@@ -336,6 +340,8 @@ export default function ProfilePage() {
                 value={confirmPass}
                 onChange={(e) => setConfirmPass(e.target.value)}
                 maxLength={25}
+                name="confirm-password"
+                autoComplete="new-password"
               />
               <button
                 type="button"

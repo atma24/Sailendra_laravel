@@ -54,7 +54,7 @@ export default function LoginPage() {
   return (
     <AuthShell title="Login" error={error}>
       <style>{AUTH_FORM_CSS}</style>
-      <form onSubmit={onSubmit}>
+      <form onSubmit={onSubmit} autoComplete="off">
         <div className="auth-field">
           <label>Username</label>
           <div className="auth-input-wrap">
@@ -82,7 +82,7 @@ export default function LoginPage() {
               name="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
+              autoComplete="new-password"
               maxLength={25}
               required
             />
