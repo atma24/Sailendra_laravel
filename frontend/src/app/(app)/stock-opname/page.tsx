@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 type HistRow = {
   tanggal_opname: string;
@@ -170,6 +171,14 @@ export default function StockOpnamePage() {
   const [exportBusy, setExportBusy] = useState<"excel" | "pdf" | null>(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [pageCompare, setPageCompare] = useState(1);
+  const [pageManual, setPageManual] = useState(1);
+  const [pageAkurasi, setPageAkurasi] = useState(1);
+  const [pageCatalog, setPageCatalog] = useState(1);
+  useEffect(() => { setPageCompare(1); }, [compare.length]);
+  useEffect(() => { setPageManual(1); }, [qManual, hist.length]);
+  useEffect(() => { setPageAkurasi(1); }, [qAkurasi, hist.length]);
+  useEffect(() => { setPageCatalog(1); }, [catalog.length]);
 
   const paramsOf = useCallback(() => {
     const sp = new URLSearchParams();
@@ -491,13 +500,14 @@ export default function StockOpnamePage() {
               {compare.length === 0 ? (
                 <div className="so-empty">Belum ada data Auditor untuk dibandingkan.</div>
               ) : (
+                <>
                 <div className="so-table-wrap">
                   <table className="so-table">
                     <thead><tr><th style={{width:40}}>No</th><th>Tanggal</th><th>Auditor</th><th>Checker</th><th style={{textAlign:"center"}}>Item</th><th>Status</th><th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                     <tbody>
-                      {compare.map((b, i) => (
+                      {paginate(compare, pageCompare, PAGE_SIZE).map((b, i) => (
                         <tr key={b.created_at}>
-                          <td>{i + 1}</td>
+                          <td>{(pageCompare - 1) * PAGE_SIZE + i + 1}</td>
                           <td><strong style={{color:"#111827"}}>{b.tanggal_opname}</strong></td>
                           <td>
                             <div>{String(b.created_at).slice(11, 16)}</div>
@@ -521,6 +531,8 @@ export default function StockOpnamePage() {
                     </tbody>
                   </table>
                 </div>
+                <Pagination page={pageCompare} totalPages={totalPagesOf(compare.length, PAGE_SIZE)} totalItems={compare.length} pageSize={PAGE_SIZE} onChange={setPageCompare} />
+                </>
               )}
             </div>
           )}
@@ -543,9 +555,9 @@ export default function StockOpnamePage() {
                 <table className="so-table">
                   <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th>{canCompare && <th>Petugas</th>}<th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                   <tbody>
-                    {fManual.map((h, i) => (
+                    {paginate(fManual, pageManual, PAGE_SIZE).map((h, i) => (
                       <tr key={`${h.tanggal_opname}-${h.created_at}-${i}`}>
-                        <td>{i + 1}</td>
+                        <td>{(pageManual - 1) * PAGE_SIZE + i + 1}</td>
                         <td><strong style={{color:"#111827"}}>{h.tanggal_opname}</strong></td>
                         <td style={{textAlign:"center"}}>{String(h.created_at).slice(11, 16)}</td>
                         <td>{h.jumlah_produk} Produk</td>
@@ -558,6 +570,7 @@ export default function StockOpnamePage() {
                 </table>
               </div>
             )}
+            <Pagination page={pageManual} totalPages={totalPagesOf(fManual.length, PAGE_SIZE)} totalItems={fManual.length} pageSize={PAGE_SIZE} onChange={setPageManual} />
           </div>
 
           <div className="so-card">
@@ -578,9 +591,9 @@ export default function StockOpnamePage() {
                 <table className="so-table">
                   <thead><tr><th style={{width:50}}>No</th><th>Tanggal Opname</th><th style={{textAlign:"center"}}>Waktu Simpan</th><th>Total Item</th><th>Status</th>{canCompare && <th>Petugas</th>}<th style={{textAlign:"right"}}>Aksi</th></tr></thead>
                   <tbody>
-                    {fAkurasi.map((h, i) => (
+                    {paginate(fAkurasi, pageAkurasi, PAGE_SIZE).map((h, i) => (
                       <tr key={`${h.tanggal_opname}-${h.created_at}-${i}`}>
-                        <td>{i + 1}</td>
+                        <td>{(pageAkurasi - 1) * PAGE_SIZE + i + 1}</td>
                         <td><strong style={{color:"#111827"}}>{h.tanggal_opname}</strong></td>
                         <td style={{textAlign:"center"}}>{String(h.created_at).slice(11, 16)}</td>
                         <td>{h.jumlah_produk} Produk</td>
@@ -593,6 +606,7 @@ export default function StockOpnamePage() {
                 </table>
               </div>
             )}
+            <Pagination page={pageAkurasi} totalPages={totalPagesOf(fAkurasi.length, PAGE_SIZE)} totalItems={fAkurasi.length} pageSize={PAGE_SIZE} onChange={setPageAkurasi} />
           </div>
         </>
       )}
@@ -654,11 +668,12 @@ export default function StockOpnamePage() {
               {catalog.length === 0 ? (
                 <div className="so-info">Tidak ada data stok untuk lokasi ini. Pastikan sudah ada stok yang masuk.</div>
               ) : (
+                <>
                 <div className="so-table-wrap" style={{ marginBottom: 12 }}>
                   <table className="so-table">
                     <thead><tr><th style={{minWidth:160}}>Produk</th><th style={{minWidth:90}}>Lokasi</th><th style={{minWidth:90}}>Best Before</th><th style={{width:100}}>Stok Fisik</th></tr></thead>
                     <tbody>
-                      {catalog.map((x, i) => {
+                      {paginate(catalog, pageCatalog, PAGE_SIZE).map((x, i) => {
                         const k = opx(x);
                         return (
                           <tr key={`${x.id_produk}|${x.lokasi_block}|${x.best_before}|${i}`}>
@@ -677,6 +692,8 @@ export default function StockOpnamePage() {
                     </tbody>
                   </table>
                 </div>
+                <Pagination page={pageCatalog} totalPages={totalPagesOf(catalog.length, PAGE_SIZE)} totalItems={catalog.length} pageSize={PAGE_SIZE} onChange={setPageCatalog} />
+                </>
               )}
               {catalog.length > 0 && (
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
@@ -767,15 +784,17 @@ export default function StockOpnamePage() {
 }
 
 function PreviewTable({ rows, showOnline = true }: { rows: DetailRow[]; showOnline?: boolean }) {
-  const groups = groupRows(rows).map((g) => ({
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [rows]);
+  const groups = groupRows(paginate(rows, page, PAGE_SIZE)).map((g) => ({
     ...g,
     s: g.rows.reduce((a, r) => a + r.stok_sistem, 0),
     f: g.rows.reduce((a, r) => a + r.stok_fisik, 0),
     se: g.rows.reduce((a, r) => a + r.selisih, 0),
   }));
-  const gs = groups.reduce((a, g) => a + g.s, 0);
-  const gf = groups.reduce((a, g) => a + g.f, 0);
-  const gse = groups.reduce((a, g) => a + g.se, 0);
+  const gs = rows.reduce((a, r) => a + r.stok_sistem, 0);
+  const gf = rows.reduce((a, r) => a + r.stok_fisik, 0);
+  const gse = rows.reduce((a, r) => a + r.selisih, 0);
   return (
     <div className="so-table-wrap">
       <table className="so-table">
@@ -805,6 +824,7 @@ function PreviewTable({ rows, showOnline = true }: { rows: DetailRow[]; showOnli
           </tr>
         </tbody>
       </table>
+      <Pagination page={page} totalPages={totalPagesOf(rows.length, PAGE_SIZE)} totalItems={rows.length} pageSize={PAGE_SIZE} onChange={setPage} />
     </div>
   );
 }
@@ -817,15 +837,17 @@ function DetailTable({ rows, editable, vals, setVals, onSave, showSumber }: {
   onSave: (d: DetailRow) => void;
   showSumber?: boolean;
 }) {
-  const groups = groupRows(rows).map((g) => ({
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [rows]);
+  const groups = groupRows(paginate(rows, page, PAGE_SIZE)).map((g) => ({
     ...g,
     s: g.rows.reduce((a, r) => a + r.stok_sistem, 0),
     f: g.rows.reduce((a, r) => a + r.stok_fisik, 0),
     se: g.rows.reduce((a, r) => a + r.selisih, 0),
   }));
-  const gs = groups.reduce((a, g) => a + g.s, 0);
-  const gf = groups.reduce((a, g) => a + g.f, 0);
-  const gse = groups.reduce((a, g) => a + g.se, 0);
+  const gs = rows.reduce((a, r) => a + r.stok_sistem, 0);
+  const gf = rows.reduce((a, r) => a + r.stok_fisik, 0);
+  const gse = rows.reduce((a, r) => a + r.selisih, 0);
   return (
     <div className="so-table-wrap">
       <table className="so-table">
@@ -882,6 +904,7 @@ function DetailTable({ rows, editable, vals, setVals, onSave, showSumber }: {
           </tr>
         </tbody>
       </table>
+      <Pagination page={page} totalPages={totalPagesOf(rows.length, PAGE_SIZE)} totalItems={rows.length} pageSize={PAGE_SIZE} onChange={setPage} />
     </div>
   );
 }
@@ -907,9 +930,11 @@ function PetugasCell({ sumber, nama }: { sumber?: string; nama?: string }) {
 }
 
 function CompareBatchCard({ batch }: { batch: CompareBatch }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [batch]);
   const groups: { name: string; rows: CompareRow[]; c: number; f: number; se: number; na: number; nc: number }[] = [];
   const map: Record<string, CompareRow[]> = {};
-  batch.items.forEach((it) => {
+  paginate(batch.items, page, PAGE_SIZE).forEach((it) => {
     const b = blockOf(it.lokasi_block);
     (map[b] = map[b] || []).push(it);
   });
@@ -986,6 +1011,7 @@ function CompareBatchCard({ batch }: { batch: CompareBatch }) {
             )}
           </tbody>
         </table>
+        <Pagination page={page} totalPages={totalPagesOf(batch.items.length, PAGE_SIZE)} totalItems={batch.items.length} pageSize={PAGE_SIZE} onChange={setPage} />
       </div>
     </div>
   );

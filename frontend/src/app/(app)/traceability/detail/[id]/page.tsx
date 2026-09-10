@@ -16,6 +16,7 @@ type TraceDetail = {
   id_route: string;
   nama_driver: string;
   driver_gudang: string;
+  no_mobil: string;
   status_barang_keluar: string;
   id_barang_keluar: number;
   nama_produk: string;
@@ -153,12 +154,12 @@ export default function TraceabilityDetailPage() {
             <div className="trace-dtl-text-value">{norm(row.no_dn) || "-"}</div>
           </div>
           <div className="trace-dtl-text-row">
-            <div className="trace-dtl-text-label">Customer</div>
-            <div className="trace-dtl-text-value">{norm(row.nama_customer) || "-"}</div>
-          </div>
-          <div className="trace-dtl-text-row">
             <div className="trace-dtl-text-label">ID Customer</div>
             <div className="trace-dtl-text-value">{norm(row.id_customer) || "-"}</div>
+          </div>
+          <div className="trace-dtl-text-row">
+            <div className="trace-dtl-text-label">Customer</div>
+            <div className="trace-dtl-text-value">{norm(row.nama_customer) || "-"}</div>
           </div>
           <div className="trace-dtl-text-row">
             <div className="trace-dtl-text-label">Sales Group</div>
@@ -175,6 +176,10 @@ export default function TraceabilityDetailPage() {
           <div className="trace-dtl-text-row">
             <div className="trace-dtl-text-label">Driver Gudang</div>
             <div className="trace-dtl-text-value">{norm(row.driver_gudang) || "-"}</div>
+          </div>
+          <div className="trace-dtl-text-row">
+            <div className="trace-dtl-text-label">No Mobil</div>
+            <div className="trace-dtl-text-value">{norm(row.no_mobil) || "-"}</div>
           </div>
           <div className="trace-dtl-text-row">
             <div className="trace-dtl-text-label">Status Gudang</div>

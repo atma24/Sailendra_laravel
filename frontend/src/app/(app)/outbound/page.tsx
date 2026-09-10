@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiGet, getUploadUrl } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 import { useToast } from "@/components/ToastProvider";
 import { chunkExcelFile } from "@/lib/excelChunk";
 
@@ -26,6 +27,40 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const dateOnly = (v: unknown) => String(v ?? "").slice(0, 10);
+
+function PagedTanggal({ items, lokasiName, resetKey }: { items: TanggalItem[]; lokasiName?: string; resetKey: string }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [resetKey]);
+  if (items.length === 0) {
+    return (
+      <div className="outbound-card outbound-empty">
+        {lokasiName ? "Tidak ada data outbound untuk lokasi ini." : "Tidak ada data tanggal outbound."}
+      </div>
+    );
+  }
+  const total = totalPagesOf(items.length, PAGE_SIZE);
+  const paged = paginate(items, page, PAGE_SIZE);
+  return (
+    <>
+      <div className="outbound-grid">
+        {paged.map((item) => (
+          <Link key={item.tanggal} className="outbound-card outbound-date-card"
+            href={`/outbound/driver/${encodeURIComponent(item.tanggal)}`}>
+            <div className="outbound-card-top">
+              <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
+              <div>
+                <div className="outbound-date-title">{item.tanggal}</div>
+                <div className="outbound-meta">{item.total_item} item · {item.total_qty} qty</div>
+              </div>
+              <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
+            </div>
+          </Link>
+        ))}
+      </div>
+      <Pagination page={page} totalPages={total} totalItems={items.length} pageSize={PAGE_SIZE} onChange={setPage} />
+    </>
+  );
+}
 
 const css = `
 .outbound-page { display: flex; flex-direction: column; gap: 7px; }
@@ -172,28 +207,9 @@ export default function OutboundTanggalPage() {
     }
   };
 
-  const renderTanggal = (list: TanggalItem[], lokasiName?: string) =>
-    list.length === 0 ? (
-      <div className="outbound-card outbound-empty">
-        {lokasiName ? "Tidak ada data outbound untuk lokasi ini." : "Tidak ada data tanggal outbound."}
-      </div>
-    ) : (
-      <div className="outbound-grid">
-        {list.map((item) => (
-          <Link key={item.tanggal} className="outbound-card outbound-date-card"
-            href={`/outbound/driver/${encodeURIComponent(item.tanggal)}`}>
-            <div className="outbound-card-top">
-              <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
-              <div>
-                <div className="outbound-date-title">{item.tanggal}</div>
-                <div className="outbound-meta">{item.total_item} item · {item.total_qty} qty</div>
-              </div>
-              <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
-            </div>
-          </Link>
-        ))}
-      </div>
-    );
+  const renderTanggal = (list: TanggalItem[], lokasiName?: string) => (
+    <PagedTanggal items={list} lokasiName={lokasiName} resetKey={`${search}|${keyword}|${rows.length}`} />
+  );
 
   return (
     <div className="outbound-page">

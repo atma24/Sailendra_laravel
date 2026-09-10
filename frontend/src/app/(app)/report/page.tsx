@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, useSession, type Session } from "@/lib/auth";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 type Row = Record<string, string | number | null>;
 type Preview = { success: boolean; is_gabungan?: boolean; periode?: string; count?: number; items?: Row[]; inbound?: Row[]; outbound?: Row[] };
@@ -131,6 +132,30 @@ function makeToken(): string {
   return "";
 }
 
+function PreviewTable({ tableKey, items }: { tableKey: TypeKey; items: Row[] | undefined }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [items]);
+  const cols = columnsFor(tableKey);
+  if (!items || items.length === 0) return <div className="preview-status">Tidak ada catatan aktivitas operasional pada tanggal ini.</div>;
+  return (
+    <div className="preview-table-wrap">
+      <table className="preview-table">
+        <thead>
+          <tr>{cols.map((c) => <th key={c}>{COL_LABEL[c] || c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {paginate(items, page, PAGE_SIZE).map((row, i) => (
+            <tr key={(page - 1) * PAGE_SIZE + i}>
+              {cols.map((c) => <td key={c}>{c === "no" ? (page - 1) * PAGE_SIZE + i + 1 : esc(row[c])}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Pagination page={page} totalPages={totalPagesOf(items.length, PAGE_SIZE)} totalItems={items.length} pageSize={PAGE_SIZE} onChange={setPage} />
+    </div>
+  );
+}
+
 export default function ReportPage() {
   // 1. Pindahkan deklarasi 'today' ke atas agar bisa digunakan sebagai initial state
   const today = new Date().toISOString().slice(0, 10);
@@ -243,26 +268,9 @@ export default function ReportPage() {
   };
 
 
-  const renderTable = (key: TypeKey, items: Row[] | undefined) => {
-    const cols = columnsFor(key);
-    if (!items || items.length === 0) return <div className="preview-status">Tidak ada catatan aktivitas operasional pada tanggal ini.</div>;
-    return (
-      <div className="preview-table-wrap">
-        <table className="preview-table">
-          <thead>
-            <tr>{cols.map((c) => <th key={c}>{COL_LABEL[c] || c}</th>)}</tr>
-          </thead>
-          <tbody>
-            {items.map((row, i) => (
-              <tr key={i}>
-                {cols.map((c) => <td key={c}>{c === "no" ? i + 1 : esc(row[c])}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
+  const renderTable = (key: TypeKey, items: Row[] | undefined) => (
+    <PreviewTable tableKey={key} items={items} />
+  );
 
   return (
     <div className="report-page-container">

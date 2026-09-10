@@ -305,6 +305,9 @@ class BarangMasukController extends Controller
         if ($asalPabrik === null || $asalPabrik === '') {
             return $this->fail('Field wajib: asal_pabrik');
         }
+        if (in_array($tipePenerimaan, ['Primary', 'Primary XWH'], true) && $shipmentId === '') {
+            return $this->fail('Field wajib: shipment_id untuk Penerimaan Primary / Primary XWH');
+        }
         if ($tipePenerimaan !== 'Secondary' && $tipePenerimaan !== 'REJECT' && $noDn === '') {
             return $this->fail('Field wajib: no_dn untuk Penerimaan Primary / Primary XWH');
         }
@@ -332,6 +335,10 @@ class BarangMasukController extends Controller
 
         if ($noMobil === '') {
             return $this->fail('Field wajib: no_mobil');
+        }
+        $noMobil = strtoupper($noMobil);
+        if (! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) {
+            return $this->fail('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
         }
 
         // Pengaturan produk: produk non-FEFO boleh campur BB dalam satu line/deep.
@@ -1321,17 +1328,57 @@ class BarangMasukController extends Controller
             return $this->fail('Terdapat kesalahan di file (tidak ada data yang disimpan):'."\n".implode("\n", array_slice($errors, 0, 20)));
         }
 
+        // FEFO upload: dalam satu line, batch tertua harus menempati slot yang
+        // diambil duluan oleh outbound (deep/level nomor besar = muka/release).
+        // Urutkan stabil per line BB tua dulu; pengisian deep dibalik di bawah.
+        // Tanpa ini, urutan alokasi ngikut urutan baris Excel dan batch muda
+        // bisa menutup batch tua di belakangnya (ketumpuk).
+        $finalIdx = 0;
+        foreach ($final as &$fr) {
+            $fr['_urut_asal'] = $finalIdx++;
+        }
+        unset($fr);
+        usort($final, function ($a, $b) {
+            $la = $a['kode_block'].'-'.$a['no_line'];
+            $lb = $b['kode_block'].'-'.$b['no_line'];
+            if ($la !== $lb) {
+                return $la <=> $lb;
+            }
+            if ($a['best_before'] !== $b['best_before']) {
+                return $a['best_before'] <=> $b['best_before'];
+            }
+            return $a['_urut_asal'] <=> $b['_urut_asal'];
+        });
+
         $stat = [];
         try {
             DB::transaction(function () use ($final, $idPenggunaLokasi, $idPengguna, &$stat) {
+                // Daftar kategori lokasi yang dikenal (UPPER, tanpa spasi) untuk filter slot.
+                // Kategori baris yang kosong / tidak dikenal => fallback perilaku lama (semua lokasi).
+                $kategoriDikenal = DB::table('lokasi')
+                    ->distinct()
+                    ->whereNotNull('kategori')
+                    ->pluck('kategori')
+                    ->map(fn ($v) => strtoupper(trim((string) $v)))
+                    ->filter(fn ($v) => $v !== '')
+                    ->all();
                 foreach ($final as $r) {
                     $bestBefore = $r['best_before'] === '' ? null : $r['best_before'];
                     $lineLabel = $r['kode_block'].'-'.$r['no_line'];
 
-                    $deeps = $this->deepsLine($idPenggunaLokasi, $r['kode_block'], $r['no_line']);
+                    $katBaris = strtoupper(trim((string) ($r['kategori'] ?? '')));
+                    $katFilter = ($katBaris !== '' && in_array($katBaris, $kategoriDikenal, true)) ? $katBaris : null;
+
+                    $deeps = $this->deepsLine($idPenggunaLokasi, $r['kode_block'], $r['no_line'], $katFilter);
                     if (empty($deeps)) {
                         throw new Exception("Baris {$r['line_no']}: line $lineLabel tidak ditemukan di layout");
                     }
+
+                    // Isi dari slot muka dulu (deep/level besar = diambil duluan
+                    // oleh outbound). Karena baris sudah urut BB tua dulu per
+                    // line, batch tertua jatuh di muka (release), termuda di
+                    // belakang (hold).
+                    $deeps = array_reverse($deeps);
 
                     $need = $r['jumlah'];
                     $alokasi = [];
@@ -1580,6 +1627,8 @@ class BarangMasukController extends Controller
                 }
                 if ($noMobil !== null) {
                     if ($noMobil === '') throw new Exception('no_mobil wajib diisi');
+                    $noMobil = strtoupper($noMobil);
+                    if (! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) throw new Exception('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
                     $upd['no_mobil'] = $noMobil;
                 }
                 if ($namaDriver !== null) $upd['nama_driver'] = $namaDriver;
@@ -2858,7 +2907,7 @@ class BarangMasukController extends Controller
             ->where('b.id_pengguna_lokasi', $idPenggunaLokasi);
     }
 
-    private function deepsLine(string $idPenggunaLokasi, string $kodeBlock, int $noLine): array
+    private function deepsLine(string $idPenggunaLokasi, string $kodeBlock, int $noLine, ?string $kategori = null): array
     {
         $rows = DB::table('block as b')
             ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
@@ -2886,6 +2935,7 @@ class BarangMasukController extends Controller
             ->where('b.kode_block', $kodeBlock)
             ->where('ln.nomor_line', $noLine)
             ->where('b.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->when($kategori !== null && trim($kategori) !== '', fn ($q) => $q->whereRaw('UPPER(TRIM(l.kategori)) = ?', [strtoupper(trim($kategori))]))
             ->selectRaw('d.id_deep, d.kapasitas, COALESCE(SUM(CASE WHEN s.id_stok IS NOT NULL THEN sd.jumlah ELSE 0 END),0) AS terisi, b.id_lokasi, MIN(s.best_before) AS bb_min, MAX(s.best_before) AS bb_max')
             ->groupBy('d.id_deep', 'd.kapasitas', 'b.id_lokasi')
             ->orderBy('d.deep', 'ASC')

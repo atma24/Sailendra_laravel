@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 export type MasterField = {
   key: string;
@@ -151,11 +152,11 @@ export default function MasterCrud({ config }: { config: MasterCrudConfig }) {
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = PAGE_SIZE;
   const toastSeq = useRef(0);
 
-  const totalPages = Math.ceil(rows.length / pageSize) || 1;
-  const paginatedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = totalPagesOf(rows.length, pageSize);
+  const paginatedRows = paginate(rows, page, pageSize);
 
   useEffect(() => {
     setPage(1);
@@ -307,41 +308,7 @@ export default function MasterCrud({ config }: { config: MasterCrudConfig }) {
                 </tbody>
               </table>
 
-              {totalPages > 1 && (
-                <div className="master-pagination-wrap">
-                  <div className="pagination-info">
-                    Menampilkan {(page - 1) * pageSize + 1} - {Math.min(page * pageSize, rows.length)} dari {rows.length} data
-                  </div>
-                  <div className="pagination-controls">
-                    <button
-                      type="button"
-                      className="page-btn"
-                      disabled={page === 1}
-                      onClick={() => setPage(page - 1)}
-                    >
-                      <i className="bi bi-chevron-left"></i>
-                    </button>
-                    {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        className={`page-btn ${page === p ? "active" : ""}`}
-                        onClick={() => setPage(p)}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="page-btn"
-                      disabled={page === totalPages}
-                      onClick={() => setPage(page + 1)}
-                    >
-                      <i className="bi bi-chevron-right"></i>
-                    </button>
-                  </div>
-                </div>
-              )}
+              <Pagination page={page} totalPages={totalPages} totalItems={rows.length} pageSize={pageSize} onChange={setPage} />
             </>
           )}
         </div>

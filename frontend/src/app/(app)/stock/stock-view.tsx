@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 type ListRow = {
   id_produk: number;
@@ -28,6 +29,12 @@ type DetailRow = {
   best_before: string;
   satuan: string;
   status: string;
+};
+type TotalSemuaRow = {
+  total_qty: number;
+  qty_qi: number;
+  qty_bad: number;
+  total_sku?: number;
 };
 type Produk = {
   id_produk: number;
@@ -120,7 +127,10 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const showBar = zona !== "reject"; // Tampilkan bar kecuali di zona reject
   const zonaLabel = STOCK_ZONES.find(([z]) => z === zona)?.[1] || "Stock";
   const [list, setList] = useState<ListRow[]>([]);
-  const [kaps, setKaps] = useState<Map<number, number>>(new Map());
+  const [kapsRows, setKapsRows] = useState<KapRow[]>([]);
+  const [totalKapRak, setTotalKapRak] = useState(0);
+  const [semuaKat, setSemuaKat] = useState<string[]>([]);
+  const [totalSemua, setTotalSemua] = useState<TotalSemuaRow | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
   const [modal, setModal] = useState<{ id: number; nama: string } | null>(null);
@@ -128,6 +138,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMsg, setExportMsg] = useState("");
+  const [page, setPage] = useState(1);
 
   // Helper fungsi buat nentuin warna progress bar berdasarkan zona
   const getBarColor = (z: string) => {
@@ -216,18 +227,45 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
         const b = paramsOf();
         // Load kapasitas juga untuk zona selain reject supaya bar bisa ngitung persen
         if (showBar) {
-          const [lr, kr] = await Promise.all([
+          if (isNormal) {
+            const [lr, kr, tr, kt, kl] = await Promise.all([
+              apiGet<ListRow[]>(`/stok?zona=${zona}&${b}`),
+              apiGet<KapRow[]>(`/stok?mode=kapasitas_produk&${b}`),
+              apiGet<TotalSemuaRow[]>(`/stok?mode=total_semua&${b}`).catch(() => ({ data: [] as TotalSemuaRow[] })),
+              apiGet<{ total_kapasitas: number }[]>(`/stok?mode=kapasitas_total&${b}`).catch(() => ({ data: [] as { total_kapasitas: number }[] })),
+              apiGet<{ kategori_lokasi: string }[]>(`/stok?mode=kategori_layout&${b}`).catch(() => ({ data: [] as { kategori_lokasi: string }[] })),
+            ]);
+            if (cancelled) return;
+            setList(lr.data || []);
+            setKapsRows(kr.data || []);
+            const t = (tr.data || [])[0] as TotalSemuaRow | undefined;
+            setTotalSemua(t ? { total_qty: angka(t.total_qty), qty_qi: angka(t.qty_qi), qty_bad: angka(t.qty_bad) } : null);
+            setTotalKapRak(angka((kt.data || [])[0]?.total_kapasitas));
+            setSemuaKat((kl.data || []).map((r) => norm(r.kategori_lokasi)).filter((c) => c !== ""));
+          } else {
+            const [lr, kr, kt, kl] = await Promise.all([
+              apiGet<ListRow[]>(`/stok?zona=${zona}&${b}`),
+              apiGet<KapRow[]>(`/stok?mode=kapasitas_produk&${b}`),
+              apiGet<{ total_kapasitas: number }[]>(`/stok?mode=kapasitas_total&${b}`).catch(() => ({ data: [] as { total_kapasitas: number }[] })),
+              apiGet<{ kategori_lokasi: string }[]>(`/stok?mode=kategori_layout&${b}`).catch(() => ({ data: [] as { kategori_lokasi: string }[] })),
+            ]);
+            if (cancelled) return;
+            setList(lr.data || []);
+            setKapsRows(kr.data || []);
+            setTotalSemua(null);
+            setTotalKapRak(angka((kt.data || [])[0]?.total_kapasitas));
+            setSemuaKat((kl.data || []).map((r) => norm(r.kategori_lokasi)).filter((c) => c !== ""));
+          }
+        } else {
+          const [lr, kl] = await Promise.all([
             apiGet<ListRow[]>(`/stok?zona=${zona}&${b}`),
-            apiGet<KapRow[]>(`/stok?mode=kapasitas_produk&${b}`),
+            apiGet<{ kategori_lokasi: string }[]>(`/stok?mode=kategori_layout&${b}`).catch(() => ({ data: [] as { kategori_lokasi: string }[] })),
           ]);
           if (cancelled) return;
           setList(lr.data || []);
-          setKaps(new Map((kr.data || []).map((r) => [r.id_produk, angka(r.total_kapasitas)])));
-        } else {
-          const lr = await apiGet<ListRow[]>(`/stok?zona=${zona}&${b}`);
-          if (cancelled) return;
-          setList(lr.data || []);
-          setKaps(new Map());
+          setKapsRows([]);
+          setTotalSemua(null);
+          setSemuaKat((kl.data || []).map((r) => norm(r.kategori_lokasi)).filter((c) => c !== ""));
         }
       } catch {
         /* keep old */
@@ -236,7 +274,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, paramsOf, zona, showBar]);
+  }, [session, paramsOf, zona, showBar, isNormal]);
 
   const openModal = (id: number, nama: string) => {
     if (!session) return;
@@ -249,34 +287,85 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
       .finally(() => setDetailLoading(false));
   };
 
+  // Kapasitas per (produk, kategori) dari assignment layout.
+  const kapOf = (id: number, kat: string) =>
+    kapsRows
+      .filter((k) => k.id_produk === id && norm(k.kategori_lokasi) === kat)
+      .reduce((s, k) => s + angka(k.total_kapasitas), 0);
+
   const products: Produk[] = list.map((r) => {
-    const kap = kaps.get(r.id_produk) || 0;
+    const kat = norm(r.kategori_lokasi);
+    const kap = kapOf(r.id_produk, kat);
     const qty = angka(r.total_qty);
-    return { id_produk: r.id_produk, nama_produk: norm(r.nama_produk), kategori_lokasi: norm(r.kategori_lokasi), satuan: norm(r.satuan), qty, qty_qi: angka(r.qty_qi), qty_bad: angka(r.qty_bad), kapasitas: kap, persen: persen(qty, kap) };
+    return { id_produk: r.id_produk, nama_produk: norm(r.nama_produk), kategori_lokasi: kat, satuan: norm(r.satuan), qty, qty_qi: angka(r.qty_qi), qty_bad: angka(r.qty_bad), kapasitas: kap, persen: persen(qty, kap) };
   });
 
+  // Produk terdaftar di layout tapi stoknya 0 tetap ditampilkan (0%).
+  const kunciStok = new Set(products.map((p) => `${p.id_produk}|${p.kategori_lokasi}`));
+  const sudahNol = new Set<string>();
+  const produkNol: Produk[] = [];
+  kapsRows.forEach((k) => {
+    const kat = norm(k.kategori_lokasi);
+    const key = `${k.id_produk}|${kat}`;
+    if (kunciStok.has(key) || sudahNol.has(key)) return;
+    sudahNol.add(key);
+    const kap = angka(k.total_kapasitas);
+    produkNol.push({ id_produk: k.id_produk, nama_produk: norm(k.nama_produk), kategori_lokasi: kat, satuan: norm(k.satuan), qty: 0, qty_qi: 0, qty_bad: 0, kapasitas: kap, persen: persen(0, kap) });
+  });
+  const semuaProduk = [...products, ...produkNol];
+
   const ql = q.trim().toLowerCase();
-  const filtered = products.filter((p) =>
+  const filtered = semuaProduk.filter((p) =>
     ql === "" || p.nama_produk.toLowerCase().includes(ql) || p.kategori_lokasi.toLowerCase().includes(ql)
   );
-  const byCat: Record<string, Produk[]> = {};
-  filtered.forEach((p) => { (byCat[p.kategori_lokasi] = byCat[p.kategori_lokasi] || []).push(p); });
-  const cats = Object.keys(byCat).sort((a, b) => {
-    const ia = CAT_ORDER.indexOf(a === "LAINNYA" ? a : a);
-    const ib = CAT_ORDER.indexOf(b === "LAINNYA" ? b : b);
+  useEffect(() => { setPage(1); }, [q, zona, list.length, kapsRows.length]);
+  // Ringkasan per kategori dari FULL list; kartu dari halaman aktif.
+  const urutKatFull = (a: string, b: string) => {
+    const ia = CAT_ORDER.indexOf(a);
+    const ib = CAT_ORDER.indexOf(b);
     return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.localeCompare(b);
-  });
+  };
+  const byCatFull: Record<string, Produk[]> = {};
+  filtered.forEach((p) => { (byCatFull[p.kategori_lokasi] = byCatFull[p.kategori_lokasi] || []).push(p); });
+  const catsFull = Object.keys(byCatFull).sort(urutKatFull);
+  const pagedFiltered = paginate(filtered, page, PAGE_SIZE);
+  const byCat: Record<string, Produk[]> = {};
+  pagedFiltered.forEach((p) => { (byCat[p.kategori_lokasi] = byCat[p.kategori_lokasi] || []).push(p); });
+  const cats = Object.keys(byCat).sort(urutKatFull);
+  // Kategori layout yang tidak punya stok sama sekali tetap ditampilkan
+  // (tidak ikut pagination, disembunyikan saat ada pencarian).
+  const adaIsi = new Set(filtered.map((p) => p.kategori_lokasi));
+  const katKosong = (ql === "" ? semuaKat : []).filter((c) => !adaIsi.has(c)).sort(urutKatFull);
 
   const sumQty = (p: Produk[]) => p.reduce((s, x) => s + x.qty, 0);
   const sumQa = (p: Produk[]) => p.reduce((s, x) => s + x.qty_qi, 0);
-  const sumBad = (p: Produk[]) => p.reduce((s, x) => s + x.qty_bad, 0);
+  // qty_bad dari API adalah MAX per id_produk yang diduplikasi per baris kategori,
+  // jadi jumlahkan unik per id_produk agar tidak double-count.
+  const sumBad = (p: Produk[]) => {
+    const m = new Map<number, number>();
+    p.forEach((x) => { m.set(x.id_produk, Math.max(m.get(x.id_produk) || 0, x.qty_bad)); });
+    let s = 0; m.forEach((v) => { s += v; });
+    return s;
+  };
   const sumKap = (p: Produk[]) => p.reduce((s, x) => s + x.kapasitas, 0);
-  const tQ = sumQty(filtered); const tK = sumKap(filtered);
-  const gab = { qty: tQ, qa: sumQa(filtered), bad: sumBad(filtered), kap: tK, persen: persen(tQ, tK) };
+  const tQ = sumQty(filtered);
+  // Gabungan di halaman normal = total semua zona (termasuk bad/reject/dll) agar sama
+  // dengan Total Stok Fisik dashboard. Di halaman zona khusus, gab = total zona tsb.
+  // Gabungan: pembilang = total stok (semua zona di halaman normal,
+  // zona tsb di halaman zona khusus), penyebut = TOTAL kapasitas rak gudang
+  // (bukan kapasitas prioritas produk) agar persennya jujur.
+  const gab = isNormal && totalSemua
+    ? { qty: totalSemua.total_qty, qa: totalSemua.qty_qi, bad: totalSemua.qty_bad, kap: totalKapRak, persen: persen(totalSemua.total_qty, totalKapRak) }
+    : { qty: tQ, qa: sumQa(filtered), bad: sumBad(filtered), kap: totalKapRak, persen: persen(tQ, totalKapRak) };
 
   const groupTotal = (c: string) => {
-    const p = byCat[c]; const qty = sumQty(p); const kap = sumKap(p);
-    return { qty, qa: sumQa(p), bad: sumBad(p), kap, persen: persen(qty, kap) };
+    const p = byCatFull[c] || []; const qty = sumQty(p); const kap = sumKap(p);
+    const qa = sumQa(p); const bad = sumBad(p);
+    // Di halaman normal: total_qty = stok lokasi normal saja, qty_bad terpisah.
+    // Tampilkan gabungan (normal + bad), cukup beri tanda BAD. QI sudah termasuk di qty.
+    // Di halaman zona khusus: qty sudah = stok zona tsb, jangan ditambah bad lagi.
+    const disp = isNormal ? qty + bad : qty;
+    return { qty, qa, bad, kap, disp, persen: persen(disp, kap) };
   };
 
   const sections = detail.reduce<{ parent: string; blocks: Record<string, { total: number; rows: { bb: string; qty: number; status: string }[] }> }[]>((acc, d) => {
@@ -351,16 +440,16 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
         <div className="stock-summary-grid">
           <div className="stock-summary-card wide">
             <div className="stock-summary-top"><div className="stock-summary-title">Gabungan</div><div className="stock-percent-pill">{gab.persen}%</div></div>
-            <div className="stock-progress">{barFill(gab.qty, gab.qa, gab.bad, gab.kap)}</div>
-            <div className="stock-summary-bottom">Stok: {num(gab.qty)} / {num(gab.kap)} {gab.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(gab.bad)}</span>}</div>
+            <div className="stock-progress">{isNormal && totalSemua ? barFill(Math.max(0, gab.qty - gab.bad), gab.qa, gab.bad, gab.kap) : barFill(gab.qty, gab.qa, gab.bad, gab.kap)}</div>
+            <div className="stock-summary-bottom">Stok: {num(gab.qty)} / {num(gab.kap)} {gab.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(gab.bad)}</span>}{isNormal && totalSemua && gab.qa > 0 && <span style={{ color: "#B45309" }}> · QI {num(gab.qa)}</span>}</div>
           </div>
-          {cats.map((c) => {
+          {catsFull.map((c) => {
             const s = groupTotal(c);
             return (
               <div key={c} className={"stock-summary-card" + (s.persen >= 60 ? " wide" : "")}>
                 <div className="stock-summary-top"><div className="stock-summary-title">{c}</div><div className="stock-percent-pill">{s.persen}%</div></div>
                 <div className="stock-progress">{barFill(s.qty, s.qa, s.bad, s.kap)}</div>
-                <div className="stock-summary-bottom">Stok: {num(s.qty)} / {num(s.kap)} {s.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(s.bad)}</span>}</div>
+                <div className="stock-summary-bottom">Stok: {num(s.disp)} / {num(s.kap)} {s.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(s.bad)}</span>}</div>
               </div>
             );
           })}
@@ -380,9 +469,9 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
       {!isNormal && (
         <div className="stock-card" style={{ padding: "10px 12px", display: "flex", gap: 7, overflowX: "auto", alignItems: "center" }}>
           <span style={{ fontSize: 12, fontWeight: 900, color: "#191970", whiteSpace: "nowrap", marginRight: 4 }}>{zonaLabel}:</span>
-          {cats.map((c) => (
+          {catsFull.map((c) => (
             <span key={c} className="stock-special-link active" style={{ whiteSpace: "nowrap" }}>
-              {c} · {num(sumQty(byCat[c]))}
+              {c} · {num(sumQty(byCatFull[c]))}
             </span>
           ))}
           <span className="stock-special-link" style={{ whiteSpace: "nowrap" }}>
@@ -391,14 +480,20 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
         </div>
       )}
 
-      {cats.length === 0 ? (
+      {cats.length === 0 && katKosong.length === 0 ? (
         <div className="stock-card stock-empty">Tidak ada data {isNormal ? "stock" : zonaLabel.toLowerCase()}.</div>
       ) : (
-        cats.map((c) => (
+        <>
+        {cats.map((c) => (
           <div key={c} className="stock-card stock-category-section" style={{ padding: 10 }}>
             <div className="stock-category-title">{c}</div>
             <div className="stock-product-grid">
-              {byCat[c].map((p) => (
+              {byCat[c].map((p) => {
+                // Angka tampil = normal + bad (satu angka, badge BAD sebagai tanda).
+                // QI sudah termasuk di qty. Di halaman zona khusus jangan ditambah lagi.
+                const disp = isNormal ? p.qty + p.qty_bad : p.qty;
+                const persenD = persen(disp, p.kapasitas);
+                return (
                 <div key={p.id_produk} className="stock-product-card" onClick={() => openModal(p.id_produk, p.nama_produk)}>
                   <div className="stock-product-name" title={p.nama_produk} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nama_produk}</span>
@@ -408,15 +503,28 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
                   {/* Menampilkan progress bar di product item jika showBar true */}
                   {showBar && <div className="stock-progress">{barFill(p.qty, p.qty_qi, p.qty_bad, p.kapasitas)}</div>}
                   <div className="stock-product-meta">
-                    <span>Stok: {num(p.qty)} {p.satuan}{p.qty_bad > 0 && <span style={{ color: "#B91C1C" }}> · Bad {num(p.qty_bad)}</span>}</span>
+                    <span>Stok: {num(disp)} {p.satuan}{p.qty_bad > 0 && <span style={{ color: "#B91C1C" }}> · Bad {num(p.qty_bad)}</span>}</span>
                     {/* Menampilkan kapasitas dan persentase di product item jika showBar true */}
-                    {showBar && <span className="stock-product-muted">{num(p.qty)} / {num(p.kapasitas)} &nbsp; {p.persen}%</span>}
+                    {showBar && <span className="stock-product-muted">{num(disp)} / {num(p.kapasitas)} &nbsp; {persenD}%</span>}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
-        ))
+        ))}
+        {katKosong.map((c) => (
+          <div key={`empty-${c}`} className="stock-card stock-category-section" style={{ padding: 10 }}>
+            <div className="stock-category-title">{c}</div>
+            <div className="stock-empty">Belum ada stok di {c}.</div>
+          </div>
+        ))}
+        {totalPagesOf(filtered.length, PAGE_SIZE) > 1 && (
+        <div className="stock-card" style={{ overflow: "hidden" }}>
+          <Pagination page={page} totalPages={totalPagesOf(filtered.length, PAGE_SIZE)} totalItems={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
+        </div>
+        )}
+        </>
       )}
 
       <div className={`stock-modal-overlay${modal ? " active" : ""}`}>

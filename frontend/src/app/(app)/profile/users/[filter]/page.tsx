@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { aktifLokasiId, useSession } from "@/lib/auth";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 type Pengguna = { id_pengguna: number; id_pengguna_lokasi: string; nama_pengguna_lokasi: string | null; username: string; role: string; status: string };
 
@@ -64,6 +65,7 @@ export default function UserListPage() {
   const [pengguna, setPengguna] = useState<Pengguna[]>([]);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
 
   const filter = (params?.filter || "all") as string;
   const def = FILTERS[filter] || FILTERS.all;
@@ -88,6 +90,8 @@ export default function UserListPage() {
     }
     return list;
   }, [pengguna, def, q]);
+
+  useEffect(() => { setPage(1); }, [q, filter, pengguna.length]);
 
   if (!session) return null;
 
@@ -117,7 +121,8 @@ export default function UserListPage() {
         ) : filtered.length === 0 ? (
           <div className="user-empty">Tidak ada data pengguna</div>
         ) : (
-          filtered.map((u) => (
+          <>
+          {paginate(filtered, page, PAGE_SIZE).map((u) => (
             <div
               key={u.id_pengguna}
               className="user-row-card"
@@ -137,7 +142,9 @@ export default function UserListPage() {
                 <i className="bi bi-pencil-fill"></i>
               </Link>
             </div>
-          ))
+          ))}
+          <Pagination page={page} totalPages={totalPagesOf(filtered.length, PAGE_SIZE)} totalItems={filtered.length} pageSize={PAGE_SIZE} onChange={setPage} />
+          </>
         )}
       </div>
     </div>

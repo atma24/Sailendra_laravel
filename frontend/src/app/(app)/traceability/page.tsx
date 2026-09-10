@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
+import Pagination, { PAGE_SIZE } from "@/components/Pagination";
 import { useToast } from "@/components/ToastProvider";
 
 type TraceRow = {
@@ -13,7 +14,9 @@ type TraceRow = {
   nama_depo: string;
   nama_driver: string;
   driver_gudang: string;
+  no_mobil: string;
   sales_group: string;
+  id_customer: string;
   nama_customer: string;
   so_number: string;
   gin_no: string;
@@ -138,7 +141,7 @@ export default function TraceabilityPage() {
     try {
       const sp = new URLSearchParams();
       sp.set("page", String(p));
-      sp.set("limit", "100");
+      sp.set("limit", String(PAGE_SIZE));
       if (!multi && session!.user.id_pengguna_lokasi) {
         sp.set("id_pengguna_lokasi", String(session!.user.id_pengguna_lokasi));
       }
@@ -191,9 +194,9 @@ export default function TraceabilityPage() {
   const exportExcel = async () => {
     const data = await fetchAll();
     const tanggal = new Date().toISOString().slice(0, 10);
-    const heads = ["Nama Depo", "Nama Driver", "Sales Group", "Nama Customer", "No SO", "No Gin", "Produk", "Qty", "Best Before", "Batch", "Plant"];
+    const heads = ["Nama Depo", "Nama Driver", "No Mobil", "Sales Group", "Cust ID", "Nama Customer", "No SO", "No Gin", "Produk", "Qty", "Best Before", "Batch", "Plant"];
     const body = data.map((x) =>
-      `<tr>${cell(x.nama_depo)}${cell(x.nama_driver || x.driver_gudang)}${cell(x.sales_group)}${cell(x.nama_customer)}`
+      `<tr>${cell(x.nama_depo)}${cell(x.nama_driver || x.driver_gudang)}${cell(x.no_mobil)}${cell(x.sales_group)}${cell(x.id_customer)}${cell(x.nama_customer)}`
       + `${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}</tr>`
     ).join("");
     const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>
@@ -214,8 +217,8 @@ export default function TraceabilityPage() {
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = data.map((x, i) =>
-      `<tr><td>${i + 1}</td>${cell(x.nama_depo)}${cell(x.nama_driver || x.driver_gudang)}${cell(x.sales_group)}`
-      + `${cell(x.nama_customer)}${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}</tr>`
+      `<tr><td>${i + 1}</td>${cell(x.nama_depo)}${cell(x.nama_driver || x.driver_gudang)}${cell(x.no_mobil)}${cell(x.sales_group)}`
+      + `${cell(x.id_customer)}${cell(x.nama_customer)}${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}</tr>`
     ).join("");
     w.document.write(`<!doctype html><html><head><title>Laporan Traceability</title>
       <style>
@@ -235,7 +238,7 @@ export default function TraceabilityPage() {
       <div class="toolbar"><span>Template Laporan Traceability</span><button onclick="window.print()">Download PDF</button></div>
       <h1>Laporan Traceability</h1>
       <div class="sub">Periode Tanggal: <b>${tanggal}</b> &mdash; Total: ${data.length} data</div>
-      <table><thead><tr><th>No</th>${["Nama Depo","Nama Driver","Sales Group","Nama Customer","No SO","No Gin","Produk","Qty","Best Before","Batch","Plant"].map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+      <table><thead><tr><th>No</th>${["Nama Depo","Nama Driver","No Mobil","Sales Group","Cust ID","Nama Customer","No SO","No Gin","Produk","Qty","Best Before","Batch","Plant"].map((h) => `<th>${h}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table></body></html>`);
     w.document.close();
   };
@@ -322,7 +325,7 @@ export default function TraceabilityPage() {
         <div className="trace-toolbar">
           <div className="trace-search-wrap">
             <i className="bi bi-search trace-search-icon"></i>
-            <input type="text" className="trace-search-input" placeholder="Cari SO, produk, batch, customer..."
+            <input type="text" className="trace-search-input" placeholder="Cari SO, produk, batch, customer, cust ID, no mobil..."
               value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
 
@@ -394,7 +397,7 @@ export default function TraceabilityPage() {
             <table className="trace-table">
               <thead>
                 <tr>
-                  <th>Nama Depo</th><th>Nama Driver</th><th>Sales Group</th><th>Nama Customer</th>
+                  <th>Nama Depo</th><th>Nama Driver</th><th>No Mobil</th><th>Sales Group</th><th>Cust ID</th><th>Nama Customer</th>
                   <th>No SO</th><th>No Gin</th><th>Produk</th><th>Qty</th><th>Best Before</th><th>Batch</th><th>Plant</th>
                 </tr>
               </thead>
@@ -403,7 +406,9 @@ export default function TraceabilityPage() {
                   <tr key={r.id_traceability} onClick={() => router.push(`/traceability/detail/${r.id_traceability}`)}>
                     <td>{norm(r.nama_depo)}</td>
                     <td>{norm(r.nama_driver || r.driver_gudang)}</td>
+                    <td>{norm(r.no_mobil)}</td>
                     <td>{norm(r.sales_group)}</td>
+                    <td>{norm(r.id_customer)}</td>
                     <td>{norm(r.nama_customer)}</td>
                     <td><strong>{norm(r.so_number)}</strong></td>
                     <td>{norm(r.gin_no)}</td>
@@ -416,14 +421,7 @@ export default function TraceabilityPage() {
                 ))}
               </tbody>
             </table>
-            <div className="trace-pagination">
-              <span>Total: {total} data</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <button type="button" className="trace-add-btn trace-page-btn" disabled={page <= 1} onClick={() => load(page - 1)}>« Prev</button>
-                <span>Page {page} of {pages}</span>
-                <button type="button" className="trace-add-btn trace-page-btn" disabled={page >= pages} onClick={() => load(page + 1)}>Next »</button>
-              </div>
-            </div>
+            <Pagination page={page} totalPages={pages} totalItems={total} pageSize={PAGE_SIZE} onChange={(p) => load(p)} />
           </div>
         )}
       </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import { useToast } from "@/components/ToastProvider";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 type SettingRow = {
   id_produk: number;
@@ -96,6 +97,8 @@ export default function PengaturanProdukPage() {
   const [asal, setAsal] = useState<SettingRow[]>([]);
   const [drag, setDrag] = useState<{ prod: number; from: number } | null>(null);
   const [over, setOver] = useState<{ prod: number; idx: number } | null>(null);
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [search, lokAktif, rows.length]);
 
   const lok = lokAktif || (session ? aktifLokasiId(session) : "");
 
@@ -249,7 +252,7 @@ export default function PengaturanProdukPage() {
               </tr>
             </thead>
             <tbody>
-              {tampil.map((row) => (
+              {paginate(tampil, page, PAGE_SIZE).map((row) => (
                 <tr key={row.id_produk}>
                   <td>
                     <div style={{ fontWeight: 800 }}>{sekel(row.nama_produk)}</div>
@@ -350,6 +353,7 @@ export default function PengaturanProdukPage() {
             </tbody>
           </table>
         )}
+        <Pagination page={page} totalPages={totalPagesOf(tampil.length, PAGE_SIZE)} totalItems={tampil.length} pageSize={PAGE_SIZE} onChange={setPage} />
       </div>
 
       <div className="ppeng-card ppeng-savebar">

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession, aktifLokasiId } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 import { useToast } from "@/components/ToastProvider";
 
 type BmRow = {
@@ -81,7 +82,6 @@ export default function InboundTanggalPage() {
   const [loaded, setLoaded] = useState(false);
   const [normalPage, setNormalPage] = useState(1);
   const [outboundPage, setOutboundPage] = useState(1);
-  const PAGE_SIZE = 10;
   
   // State untuk Upload Excel OTM
   const [uploading, setUploading] = useState(false);
@@ -106,6 +106,11 @@ export default function InboundTanggalPage() {
     fetchData(controller.signal);
     return () => controller.abort();
   }, [session, keyword]);
+
+  useEffect(() => {
+    setNormalPage(1);
+    setOutboundPage(1);
+  }, [search, keyword, rows]);
 
   const handleFileUploadSubmit = async (file: File) => {
     if (!file || !session) return;
@@ -169,10 +174,10 @@ export default function InboundTanggalPage() {
   const normalList = Object.values(normalMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const outboundList = Object.values(outboundMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
 
-  const normalTotalPages = Math.max(1, Math.ceil(normalList.length / PAGE_SIZE));
-  const outboundTotalPages = Math.max(1, Math.ceil(outboundList.length / PAGE_SIZE));
-  const normalPaged = normalList.slice((normalPage - 1) * PAGE_SIZE, normalPage * PAGE_SIZE);
-  const outboundPaged = outboundList.slice((outboundPage - 1) * PAGE_SIZE, outboundPage * PAGE_SIZE);
+  const normalTotalPages = totalPagesOf(normalList.length, PAGE_SIZE);
+  const outboundTotalPages = totalPagesOf(outboundList.length, PAGE_SIZE);
+  const normalPaged = paginate(normalList, normalPage, PAGE_SIZE);
+  const outboundPaged = paginate(outboundList, outboundPage, PAGE_SIZE);
 
   const renderTanggal = (list: TanggalItem[]) =>
     list.length === 0 ? (
@@ -194,21 +199,6 @@ export default function InboundTanggalPage() {
         ))}
       </div>
     );
-
-  const Pagination = ({ page, total, onChange }: { page: number; total: number; onChange: (p: number) => void }) => {
-    if (total <= 1) return null;
-    return (
-      <div className="inbound-pagination">
-        <button className="inbound-page-btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>
-          <i className="bi bi-chevron-left"></i>
-        </button>
-        <span className="inbound-page-info">{page} / {total}</span>
-        <button className="inbound-page-btn" disabled={page >= total} onClick={() => onChange(page + 1)}>
-          <i className="bi bi-chevron-right"></i>
-        </button>
-      </div>
-    );
-  };
 
   return (
     <div className="inbound-page">
@@ -261,7 +251,7 @@ export default function InboundTanggalPage() {
           <span className="inbound-section-count">{normalList.length}</span>
         </div>
         {renderTanggal(normalPaged)}
-        <Pagination page={normalPage} total={normalTotalPages} onChange={setNormalPage} />
+        <Pagination page={normalPage} totalPages={normalTotalPages} totalItems={normalList.length} pageSize={PAGE_SIZE} onChange={setNormalPage} />
       </div>
 
       {/* === SECTION: Dari Outbound === */}
@@ -274,7 +264,7 @@ export default function InboundTanggalPage() {
             <div className="inbound-section-divider-line"></div>
           </div>
           {renderTanggal(outboundPaged)}
-          <Pagination page={outboundPage} total={outboundTotalPages} onChange={setOutboundPage} />
+          <Pagination page={outboundPage} totalPages={outboundTotalPages} totalItems={outboundList.length} pageSize={PAGE_SIZE} onChange={setOutboundPage} />
         </div>
       )}
     </div>

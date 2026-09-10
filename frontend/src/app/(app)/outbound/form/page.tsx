@@ -29,6 +29,10 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const norm = (v: unknown) => String(v ?? "").trim();
+// No Mobil: tanpa spasi, wajib ada huruf + angka, minimal 5 char, maks 30.
+const isValidNoMobil = (v: unknown) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/.test(norm(v).toUpperCase());
+const butuhMobilDriver = (tipe: string) => tipe !== "Pemusnahan" && tipe !== "FOC";
+const isFoc = (tipe: string) => tipe === "FOC";
 
 const css = `
 .outbound-form-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 32px; max-width: 1100px; margin: 0 auto; }
@@ -41,6 +45,10 @@ const css = `
 .outbound-card-title { font-size: 15px; font-weight: 800; color: var(--primary-navy, #191970); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; letter-spacing: -0.2px; }
 .outbound-stack { display: flex; flex-direction: column; gap: 14px; }
 .outbound-label { display: block; font-size: 12px; font-weight: 800; color: #334155; margin-bottom: 6px; }
+.outbound-req { color: #DC2626; font-weight: 900; margin-left: 2px; }
+.outbound-input.input-error { border-color: #DC2626; background: #FEF2F2; }
+.outbound-field-err { margin-top: 4px; font-size: 11px; font-weight: 700; color: #DC2626; line-height: 1.35; }
+.outbound-field-hint { margin-top: 4px; font-size: 11px; font-weight: 600; color: #64748B; line-height: 1.35; }
 .outbound-input, .outbound-select, .outbound-textarea { width: 100%; border-radius: 10px; border: 1px solid #CBD5E1; background: #F8FAFC; color: #0F172A; font-size: 13px; font-weight: 600; outline: none; transition: all 0.2s ease; box-sizing: border-box; }
 .outbound-input, .outbound-select { height: 38px; padding: 0 12px; }
 .outbound-textarea { min-height: 72px; padding: 10px 12px; resize: vertical; }
@@ -131,6 +139,7 @@ export default function OutboundFormPage() {
   const [catatan, setCatatan] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [busy, setBusy] = useState(false);
+  const [errMobil, setErrMobil] = useState("");
   const [toasts, setToasts] = useState<{ id: number; type: string; msg: string }[]>([]);
   const toastSeq = useRef(0);
 
@@ -187,9 +196,11 @@ export default function OutboundFormPage() {
 
   const simpan = async () => {
     if (!items.length || !items.some((it) => it.id_produk > 0)) { notify("error", "Belum ada item yang diisi."); return; }
-    if (norm(noMobil) === "") { notify("error", "No Mobil wajib diisi."); return; }
-    if (norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
-    if (norm(ginNo) === "") { notify("error", "No GIN wajib diisi."); return; }
+    if (butuhMobilDriver(tipe) && norm(noMobil) === "") { setErrMobil("No Mobil wajib diisi."); notify("error", "No Mobil wajib diisi."); return; }
+    if (norm(noMobil) !== "" && !isValidNoMobil(noMobil)) { setErrMobil("No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); notify("error", "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); return; }
+    setErrMobil("");
+    if (butuhMobilDriver(tipe) && norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
+    if (!isFoc(tipe) && norm(ginNo) === "") { notify("error", "No GIN wajib diisi."); return; }
     if (tipe === "Primary" && norm(tujuan) === "") { notify("error", "Tujuan wajib diisi untuk Primary."); return; }
     const payloadItems = items
       .filter((it) => it.id_produk > 0 && angka(it.jumlah) > 0)
@@ -214,13 +225,13 @@ export default function OutboundFormPage() {
         id_pengguna_lokasi: idPenggunaLokasi,
         tipe_pengeluaran: tipe,
         tujuan: tipe === "Primary" ? tujuan : "",
-        no_mobil: noMobil,
-        nama_driver: namaDriver,
-        gin_no: ginNo,
+        no_mobil: isFoc(tipe) ? "-" : (norm(noMobil) === "" ? "" : norm(noMobil).toUpperCase()),
+        nama_driver: isFoc(tipe) ? "-" : namaDriver,
+        gin_no: isFoc(tipe) ? "" : ginNo,
         catatan: catatan,
         tanggal_keluar: tanggalKeluar,
-        tanggal_pengiriman: tanggalPengiriman,
-        ritase,
+        tanggal_pengiriman: isFoc(tipe) ? tanggalKeluar : tanggalPengiriman,
+        ritase: isFoc(tipe) ? 1 : ritase,
         status: "Pending",
         items: payloadItems,
         waktu_mulai_input: `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`,
@@ -290,31 +301,56 @@ export default function OutboundFormPage() {
       <div className="outbound-form-card">
         <div className="outbound-stack">
           <div>
-            <label className="outbound-label">Tanggal Keluar</label>
+            <label className="outbound-label">Tanggal Keluar<span className="outbound-req">*</span></label>
             <input type="date" className="outbound-input" value={tanggalKeluar} onChange={(e) => setTanggalKeluar(e.target.value)} />
           </div>
           <div>
-            <label className="outbound-label">Tipe Pengeluaran</label>
+            <label className="outbound-label">Tipe Pengeluaran<span className="outbound-req">*</span></label>
             <div className="outbound-select-wrap">
-              <select className="outbound-select" value={tipe} onChange={(e) => { setTipe(e.target.value); if (e.target.value !== "Primary") setTujuan(""); }}>
+              <select className="outbound-select" value={tipe} onChange={(e) => { setTipe(e.target.value); setErrMobil(""); if (e.target.value !== "Primary") setTujuan(""); }}>
                 <option value="Primary">Pengeluaran Primary</option>
                 <option value="Secondary">Pengeluaran Secondary</option>
                 <option value="Pemusnahan">Pemusnahan</option>
+                <option value="FOC">FOC (Free of Charge)</option>
               </select>
               <i className="bi bi-chevron-down outbound-select-icon"></i>
             </div>
           </div>
-          <PlantPicker plantList={plantList} value={tujuan} disabled={tipe !== "Primary"}
-            onChange={setTujuan} />
+          {tipe !== "FOC" && (
           <div>
-            <label className="outbound-label">Tanggal Pengiriman</label>
+            <label className="outbound-label">Tujuan{tipe === "Primary" && <span className="outbound-req">*</span>}</label>
+            <PlantPicker plantList={plantList} value={tujuan} disabled={tipe !== "Primary"}
+              onChange={setTujuan} />
+          </div>
+          )}
+          {tipe !== "FOC" && (
+          <div>
+            <label className="outbound-label">Tanggal Pengiriman<span className="outbound-req">*</span></label>
             <input type="date" className="outbound-input" value={tanggalPengiriman} onChange={(e) => setTanggalPengiriman(e.target.value)} />
           </div>
-          <input type="text" className="outbound-input" value={noMobil} onChange={(e) => setNoMobil(e.target.value)} placeholder="No Mobil" maxLength={30} />
-          <input type="text" className="outbound-input" value={namaDriver} onChange={(e) => setNamaDriver(e.target.value)} placeholder="Nama Driver" maxLength={30} />
-          <input type="text" className="outbound-input" value={ginNo} onChange={(e) => setGinNo(e.target.value)} placeholder="No GIN" maxLength={30} />
+          )}
+          {tipe !== "FOC" && (
           <div>
-            <label className="outbound-label">Ritase</label>
+            <label className="outbound-label">No Mobil{butuhMobilDriver(tipe) && <span className="outbound-req">*</span>}</label>
+            <input type="text" className={`outbound-input ${errMobil ? "input-error" : ""}`} value={noMobil} onChange={(e) => { setNoMobil(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 30)); if (errMobil) setErrMobil(""); }} placeholder={butuhMobilDriver(tipe) ? "No Mobil (huruf+angka, tanpa spasi, min 5)" : "No Mobil (opsional untuk Pemusnahan)"} maxLength={30} />
+            {errMobil ? <div className="outbound-field-err">{errMobil}</div> : <div className="outbound-field-hint">Huruf+angka, tanpa spasi, minimal 5 karakter.</div>}
+          </div>
+          )}
+          {tipe !== "FOC" && (
+          <div>
+            <label className="outbound-label">Nama Driver{butuhMobilDriver(tipe) && <span className="outbound-req">*</span>}</label>
+            <input type="text" className="outbound-input" value={namaDriver} onChange={(e) => setNamaDriver(e.target.value)} placeholder={butuhMobilDriver(tipe) ? "Nama Driver" : "Nama Driver (opsional untuk Pemusnahan)"} maxLength={30} />
+          </div>
+          )}
+          {tipe !== "FOC" && (
+          <div>
+            <label className="outbound-label">No GIN<span className="outbound-req">*</span></label>
+            <input type="text" className="outbound-input" value={ginNo} onChange={(e) => setGinNo(e.target.value)} placeholder="No GIN" maxLength={30} />
+          </div>
+          )}
+          {tipe !== "FOC" && (
+          <div>
+            <label className="outbound-label">Ritase<span className="outbound-req">*</span></label>
             <div className="outbound-select-wrap">
               <select className="outbound-select" value={ritase} onChange={(e) => setRitase(angka(e.target.value))}>
                 {[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} Rit</option>)}
@@ -322,6 +358,7 @@ export default function OutboundFormPage() {
               <i className="bi bi-chevron-down outbound-select-icon"></i>
             </div>
           </div>
+          )}
           <textarea className="outbound-textarea" value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Catatan (opsional)" maxLength={250} />
         </div>
       </div>
@@ -338,11 +375,17 @@ export default function OutboundFormPage() {
                 </button>
               </div>
 
-              <ProdukPicker produkList={produkList} value={it.nama_produk}
-                onChange={(p) => pickProduk(idx, p)} />
+              <div>
+                <label className="outbound-label">Produk<span className="outbound-req">*</span></label>
+                <ProdukPicker produkList={produkList} value={it.nama_produk}
+                  onChange={(p) => pickProduk(idx, p)} />
+              </div>
 
-              <input type="number" min={1} className="outbound-input" placeholder="Jumlah" value={it.jumlah}
-                onChange={(e) => updateItem(idx, { jumlah: e.target.value })} />
+              <div>
+                <label className="outbound-label">Jumlah<span className="outbound-req">*</span></label>
+                <input type="number" min={1} className="outbound-input" placeholder="Jumlah" value={it.jumlah}
+                  onChange={(e) => updateItem(idx, { jumlah: e.target.value })} />
+              </div>
 
               {submittedId <= 0 && <ManualPicker item={it} onPick={(idLine, batch, bestBefore) =>
                 updateItem(idx, { id_line: idLine, batch, best_before: bestBefore })} />}

@@ -846,7 +846,7 @@ public function store(Request $request)
     {
         $idPenggunaLokasi = trim($in['id_pengguna_lokasi'] ?? '');
         $idPengguna = (int) ($in['id_pengguna'] ?? 0);
-        $tipePengeluaran = in_array(trim($in['tipe_pengeluaran'] ?? ''), ['Primary', 'Secondary', 'Pemusnahan']) ? trim($in['tipe_pengeluaran']) : 'Primary';
+        $tipePengeluaran = in_array(trim($in['tipe_pengeluaran'] ?? ''), ['Primary', 'Secondary', 'Pemusnahan', 'FOC']) ? trim($in['tipe_pengeluaran']) : 'Primary';
         $tujuan = trim($in['tujuan'] ?? '');
         $namaDriver = trim($in['nama_driver'] ?? '');
         $noMobil = trim($in['no_mobil'] ?? '');
@@ -877,8 +877,26 @@ public function store(Request $request)
         if ($idPengguna <= 0) {
             throw new Exception('id_pengguna wajib');
         }
-        if ($namaDriver === '' || $noMobil === '') {
-            throw new Exception('nama_driver dan no_mobil wajib');
+        // FOC: tanpa driver/mobil (disimpan '-'), tanpa GIN wajib (auto-generate bila kosong).
+        if ($tipePengeluaran === 'FOC') {
+            if ($namaDriver === '') $namaDriver = '-';
+            if ($noMobil === '') $noMobil = '-';
+            if ($ginNo === '') {
+                do {
+                    $ginNo = 'FOC-'.date('Ymd').'-'.strtoupper(substr(uniqid(), -4));
+                    $ginAda = DB::table('barang_keluar')->where('gin_no', $ginNo)->exists();
+                } while ($ginAda);
+            }
+        }
+        $butuhMobilDriver = ! in_array($tipePengeluaran, ['Pemusnahan', 'FOC'], true);
+        if ($butuhMobilDriver && ($namaDriver === '' || $noMobil === '')) {
+            throw new Exception('nama_driver dan no_mobil wajib untuk Primary / Secondary');
+        }
+        if ($noMobil !== '' && $noMobil !== '-') {
+            $noMobil = strtoupper($noMobil);
+            if (! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) {
+                throw new Exception('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
+            }
         }
         if ($tipePengeluaran === 'Primary' && $tujuan === '') {
             throw new Exception('Tujuan wajib diisi untuk Primary');
@@ -1276,7 +1294,11 @@ $in = $request->all();
             $updateData['nama_driver'] = trim($in['nama_driver']);
         }
         if (array_key_exists('no_mobil', $in)) {
-            $updateData['no_mobil'] = trim($in['no_mobil']);
+            $noMobilBaru = strtoupper(trim($in['no_mobil']));
+            if ($noMobilBaru !== '' && ! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobilBaru)) {
+                return $this->fail('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
+            }
+            $updateData['no_mobil'] = $noMobilBaru;
         }
         if (array_key_exists('catatan', $in)) {
             $updateData['catatan'] = trim($in['catatan']) ?: null;

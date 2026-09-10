@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
+import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
 
 type MutasiRow = {
   id_mutasi: number;
@@ -23,6 +24,39 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const dateOnly = (v: unknown) => String(v ?? "").slice(0, 10);
+
+function PagedTanggal({ items, lokasiName, resetKey }: { items: TanggalItem[]; lokasiName?: string; resetKey: string }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [resetKey]);
+  if (items.length === 0) {
+    return (
+      <div className="inbound-card inbound-empty">
+        {lokasiName ? "Tidak ada riwayat mutasi untuk lokasi ini." : "Tidak ada riwayat mutasi."}
+      </div>
+    );
+  }
+  const total = totalPagesOf(items.length, PAGE_SIZE);
+  return (
+    <>
+      <div className="inbound-grid">
+        {paginate(items, page, PAGE_SIZE).map((item) => (
+          <Link key={item.tanggal} className="inbound-card inbound-date-card"
+            href={`/mutasi/user/${encodeURIComponent(item.tanggal)}`}>
+            <div className="inbound-card-top">
+              <div className="inbound-icon-box"><i className="bi bi-calendar3"></i></div>
+              <div>
+                <div className="inbound-date-title">{item.tanggal}</div>
+                <div className="inbound-meta">{item.total_item} mutasi · {item.total_user} pembuat</div>
+              </div>
+              <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
+            </div>
+          </Link>
+        ))}
+      </div>
+      <Pagination page={page} totalPages={total} totalItems={items.length} pageSize={PAGE_SIZE} onChange={setPage} />
+    </>
+  );
+}
 
 const css = `
 .inbound-page { display: flex; flex-direction: column; gap: 7px; }
@@ -101,28 +135,9 @@ export default function MutasiTanggalPage() {
   const singleList = finish(Object.values(singleMap)).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const canAdd = !!session && session.user.role !== "Support";
 
-  const renderTanggal = (list: TanggalItem[], lokasiName?: string) =>
-    list.length === 0 ? (
-      <div className="inbound-card inbound-empty">
-        {lokasiName ? "Tidak ada riwayat mutasi untuk lokasi ini." : "Tidak ada riwayat mutasi."}
-      </div>
-    ) : (
-      <div className="inbound-grid">
-        {list.map((item) => (
-          <Link key={item.tanggal} className="inbound-card inbound-date-card"
-            href={`/mutasi/user/${encodeURIComponent(item.tanggal)}`}>
-            <div className="inbound-card-top">
-              <div className="inbound-icon-box"><i className="bi bi-calendar3"></i></div>
-              <div>
-                <div className="inbound-date-title">{item.tanggal}</div>
-                <div className="inbound-meta">{item.total_item} mutasi · {item.total_user} pembuat</div>
-              </div>
-              <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
-            </div>
-          </Link>
-        ))}
-      </div>
-    );
+  const renderTanggal = (list: TanggalItem[], lokasiName?: string) => (
+    <PagedTanggal items={list} lokasiName={lokasiName} resetKey={`${keyword}|${search}|${rows.length}`} />
+  );
 
   return (
     <div className="inbound-page">

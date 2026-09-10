@@ -187,6 +187,7 @@ class DashboardController extends Controller
             ->orderByDesc('stok');
 
         $query = $this->withLokasiFilter($query, 'sg.id_pengguna_lokasi', $filter);
+        $query = $this->withLokasiFilter($query, 'sd.id_pengguna_lokasi', $filter);
 
         $list = [];
         foreach ($query->get() as $row) {
@@ -234,6 +235,7 @@ class DashboardController extends Controller
             END AS zona, SUM(sd.jumlah) AS qty");
 
         $zonaQuery = $this->withLokasiFilter($zonaQuery, 'sg.id_pengguna_lokasi', $filter);
+        $zonaQuery = $this->withLokasiFilter($zonaQuery, 'sd.id_pengguna_lokasi', $filter);
         $zonaRows = $zonaQuery->groupBy(DB::raw('zona'))->get();
 
         $zones = ['normal' => 0, 'bad' => 0, 'reject' => 0, 'receh' => 0, 'festive' => 0, 'transit' => 0, 'hold' => 0, 'qi' => 0];
@@ -256,6 +258,7 @@ class DashboardController extends Controller
         $skuQuery->selectRaw('COUNT(DISTINCT sg.id_produk) AS sku, SUM(sd.jumlah) AS qty');
 
         $skuQuery = $this->withLokasiFilter($skuQuery, 'sg.id_pengguna_lokasi', $filter);
+        $skuQuery = $this->withLokasiFilter($skuQuery, 'sd.id_pengguna_lokasi', $filter);
         $sku = (array) $skuQuery->first();
 
         return [

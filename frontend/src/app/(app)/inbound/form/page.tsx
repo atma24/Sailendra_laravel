@@ -32,6 +32,10 @@ const angka = (v: unknown) => {
   return isNaN(n) ? 0 : n;
 };
 const norm = (v: unknown) => String(v ?? "").trim();
+// No Mobil: tanpa spasi, wajib ada huruf + angka, minimal 5 char, maks 30.
+const isValidNoMobil = (v: unknown) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/.test(norm(v).toUpperCase());
+// Shipment ID + No DN wajib untuk Primary / Primary XWH.
+const butuhShipmentDn = (tipe: string) => tipe === "Primary" || tipe === "Primary XWH";
 // Flag tanpa_batch dari Master Data Produk (BB otomatis 9999, batch "-").
 const isTanpaBatch = (p: { tanpa_batch?: unknown }) =>
   p.tanpa_batch === true || p.tanpa_batch === 1 || p.tanpa_batch === "1";
@@ -47,6 +51,9 @@ const css = `
 .inbound-card-title { font-size: 15px; font-weight: 800; color: var(--primary-navy, #191970); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; letter-spacing: -0.2px; }
 .inbound-stack { display: flex; flex-direction: column; gap: 14px; }
 .inbound-label { display: block; font-size: 12px; font-weight: 800; color: #334155; margin-bottom: 6px; }
+.inbound-req { color: #DC2626; font-weight: 900; margin-left: 2px; }
+.inbound-input.input-error { border-color: #DC2626; background: #FEF2F2; }
+.inbound-field-err { margin-top: 4px; font-size: 11px; font-weight: 700; color: #DC2626; line-height: 1.35; }
 .inbound-input, .inbound-select, .inbound-textarea { width: 100%; border-radius: 10px; border: 1px solid #CBD5E1; background: #F8FAFC; color: #0F172A; font-size: 13px; font-weight: 600; outline: none; transition: all 0.2s ease; box-sizing: border-box; }
 .inbound-input, .inbound-select { height: 38px; padding: 0 12px; }
 .inbound-select { appearance: none; -webkit-appearance: none; -moz-appearance: none; }
@@ -131,6 +138,8 @@ export default function InboundFormPage() {
   const [catatan, setCatatan] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [busy, setBusy] = useState(false);
+  const [errMobil, setErrMobil] = useState("");
+  const [errShipment, setErrShipment] = useState("");
   const [results, setResults] = useState<{ success: ResultItem[]; failed: ResultItem[] } | null>(null);
   const [toasts, setToasts] = useState<{ id: number; type: string; msg: string }[]>([]);
   const toastSeq = useRef(0);
@@ -260,8 +269,12 @@ export default function InboundFormPage() {
   // --- Gagal di 1 item = tidak ada yang tersimpan, isian form tetap utuh.
   const simpan = async () => {
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
-    if (tipe !== "Secondary" && tipe !== "REJECT" && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
-    if (norm(noMobil) === "") { notify("error", "No Mobil wajib diisi."); return; }
+    if (butuhShipmentDn(tipe) && norm(shipmentId) === "") { setErrShipment("Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); notify("error", "Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
+    setErrShipment("");
+    if (butuhShipmentDn(tipe) && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
+    if (norm(noMobil) === "") { setErrMobil("No Mobil wajib diisi."); notify("error", "No Mobil wajib diisi."); return; }
+    if (!isValidNoMobil(noMobil)) { setErrMobil("No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); notify("error", "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); return; }
+    setErrMobil("");
     if (norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
 
     setBusy(true);
@@ -331,8 +344,8 @@ export default function InboundFormPage() {
           best_before: bb,
           batch,
           asal_pabrik: asal,
-          no_dn: (tipe === "Secondary" || tipe === "REJECT") ? "" : noDn,
-          no_mobil: noMobil,
+          no_dn: butuhShipmentDn(tipe) ? noDn : "",
+          no_mobil: norm(noMobil).toUpperCase(),
           nama_driver: namaDriver || "Tanpa nama driver",
           catatan: catatan,
           lokasi_line: freshLokasiLine,
@@ -419,7 +432,7 @@ export default function InboundFormPage() {
       <div className="inbound-form-card">
         <div className="inbound-stack">
           <div>
-            <label className="inbound-label">Tanggal Masuk</label>
+            <label className="inbound-label">Tanggal Masuk<span className="inbound-req">*</span></label>
             <input 
               type="date" 
               className="inbound-input" 
@@ -429,9 +442,9 @@ export default function InboundFormPage() {
             />
           </div>
           <div>
-            <label className="inbound-label">Tipe Penerimaan</label>
+            <label className="inbound-label">Tipe Penerimaan<span className="inbound-req">*</span></label>
             <div className="inbound-select-wrap">
-              <select className="inbound-select" value={tipe} onChange={(e) => { setTipe(e.target.value); if (e.target.value === "Secondary" || e.target.value === "REJECT") setNoDn(""); }}>
+              <select className="inbound-select" value={tipe} onChange={(e) => { setTipe(e.target.value); setErrShipment(""); setErrMobil(""); if (!butuhShipmentDn(e.target.value)) setNoDn(""); }}>
                 <option value="Primary">Penerimaan Primary</option>
                 <option value="Primary XWH">Penerimaan Primary XWH</option>
                 <option value="Secondary">Penerimaan Secondary</option>
@@ -440,12 +453,29 @@ export default function InboundFormPage() {
               <i className="bi bi-chevron-down inbound-select-icon"></i>
             </div>
           </div>
-          <input type="text" className="inbound-input" value={shipmentId} onChange={(e) => setShipmentId(e.target.value)} placeholder="Shipment ID (Opsional, otomatis jika kosong)" maxLength={30} />
-          <input type="text" className="inbound-input" value={noDn} onChange={(e) => setNoDn(e.target.value)}
-            placeholder="No DN" disabled={tipe === "Secondary" || tipe === "REJECT"} maxLength={30} />
-          <input type="text" className="inbound-input" value={noMobil} onChange={(e) => setNoMobil(e.target.value)} placeholder="No Mobil" maxLength={30} />
-          <input type="text" className="inbound-input" value={namaDriver} onChange={(e) => setNamaDriver(e.target.value)} placeholder="Nama Driver" maxLength={30} />
-          <textarea className="inbound-textarea" value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Catatan (opsional)" maxLength={250} />
+          <div>
+            <label className="inbound-label">Shipment ID{butuhShipmentDn(tipe) && <span className="inbound-req">*</span>}</label>
+            <input type="text" className={`inbound-input ${errShipment ? "input-error" : ""}`} value={shipmentId} onChange={(e) => { setShipmentId(e.target.value); if (errShipment) setErrShipment(""); }} placeholder={butuhShipmentDn(tipe) ? "Shipment ID" : "Shipment ID (opsional)"} maxLength={30} />
+            {errShipment && <div className="inbound-field-err">{errShipment}</div>}
+          </div>
+          <div>
+            <label className="inbound-label">No DN{butuhShipmentDn(tipe) && <span className="inbound-req">*</span>}</label>
+            <input type="text" className="inbound-input" value={noDn} onChange={(e) => setNoDn(e.target.value)}
+              placeholder={butuhShipmentDn(tipe) ? "No DN" : "No DN (opsional)"} disabled={!butuhShipmentDn(tipe)} maxLength={30} />
+          </div>
+          <div>
+            <label className="inbound-label">No Mobil<span className="inbound-req">*</span></label>
+            <input type="text" className={`inbound-input ${errMobil ? "input-error" : ""}`} value={noMobil} onChange={(e) => { setNoMobil(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 30)); if (errMobil) setErrMobil(""); }} placeholder="No Mobil (huruf+angka, tanpa spasi, min 5)" maxLength={30} />
+            {errMobil ? <div className="inbound-field-err">{errMobil}</div> : <div className="inbound-field-err" style={{ color: "#64748B", fontWeight: 600 }}>Huruf+angka, tanpa spasi, minimal 5 karakter.</div>}
+          </div>
+          <div>
+            <label className="inbound-label">Nama Driver<span className="inbound-req">*</span></label>
+            <input type="text" className="inbound-input" value={namaDriver} onChange={(e) => setNamaDriver(e.target.value)} placeholder="Nama Driver" maxLength={30} />
+          </div>
+          <div>
+            <label className="inbound-label">Catatan</label>
+            <textarea className="inbound-textarea" value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Catatan (opsional)" maxLength={250} />
+          </div>
         </div>
       </div>
 
@@ -459,12 +489,20 @@ export default function InboundFormPage() {
               </button>
             </div>
 
-            <ProdukPicker produkList={produkList} value={it.nama_produk}
-              onChange={(p) => pickProduk(idx, p)} />
+            <div>
+              <label className="inbound-label">Produk<span className="inbound-req">*</span></label>
+              <ProdukPicker produkList={produkList} value={it.nama_produk}
+                onChange={(p) => pickProduk(idx, p)} />
+            </div>
 
-            <input type="number" min={1} className="inbound-input" placeholder="Jumlah" value={it.jumlah}
-              onChange={(e) => updateItem(idx, { jumlah: e.target.value })} onBlur={() => autoBlock(idx)} />
+            <div>
+              <label className="inbound-label">Jumlah<span className="inbound-req">*</span></label>
+              <input type="number" min={1} className="inbound-input" placeholder="Jumlah" value={it.jumlah}
+                onChange={(e) => updateItem(idx, { jumlah: e.target.value })} onBlur={() => autoBlock(idx)} />
+            </div>
 
+            <div>
+              <label className="inbound-label">Best Before{(!isReject && !it.no_batch) && <span className="inbound-req">*</span>}</label>
             <input 
               type={isReject || it.no_batch ? "text" : "date"} 
               className="inbound-input"
@@ -484,10 +522,14 @@ export default function InboundFormPage() {
               }}
               placeholder={it.no_batch ? "Best Before (-)" : "Best Before"} 
             />
+            </div>
 
+            <div>
+              <label className="inbound-label">Asal Pabrik{(!it.no_batch) && <span className="inbound-req">*</span>}</label>
             <PlantPicker plantList={plantList} value={it.asal_pabrik}
               disabled={it.no_batch}
               onChange={(v) => updateItem(idx, { asal_pabrik: v })} />
+            </div>
 
             <input type="text" className="inbound-input" value={batchPreview(it)} placeholder="Batch" readOnly />
 
