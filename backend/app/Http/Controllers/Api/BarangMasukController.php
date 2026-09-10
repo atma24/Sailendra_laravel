@@ -97,6 +97,10 @@ class BarangMasukController extends Controller
         $qty = (float) $request->input('qty', 0);
         $bestBefore = trim((string) $request->input('best_before', ''));
         $tipePenerimaan = trim((string) $request->input('tipe_penerimaan', 'Primary'));
+        // Reservasi batch: alokasi item lain dalam 1 form yang sama agar preview
+        // kumulatif tidak menumpuk ke deep/line yang sama.
+        // Format: [{id_deep, jumlah, best_before?, id_produk?}, ...]
+        $reservasiBatch = $this->normalisasiReservasiBatch($request->input('reservasi_batch', []), $idProduk);
 
         if ($idPenggunaLokasi === '') {
             return $this->fail('Field wajib: id_pengguna_lokasi');
@@ -110,7 +114,9 @@ class BarangMasukController extends Controller
             $idProduk,
             $qty,
             $bestBefore !== '' ? $bestBefore : null,
-            $tipePenerimaan
+            $tipePenerimaan,
+            true,
+            $reservasiBatch
         );
 
         if (isset($result['error'])) {
@@ -255,7 +261,8 @@ class BarangMasukController extends Controller
             }
             $alokasi = $hasil['alokasi'];
         } else {
-            $auto = $this->rekomendasiAuto($idPenggunaLokasi, $idProduk, $jumlah, $bestBefore, $tipePenerimaan, false);
+            $reservasiAuto = $this->normalisasiReservasiBatch($in['reservasi_batch'] ?? [], $idProduk);
+            $auto = $this->rekomendasiAuto($idPenggunaLokasi, $idProduk, $jumlah, $bestBefore, $tipePenerimaan, false, $reservasiAuto);
             if (isset($auto['error'])) {
                 return $this->fail($auto['error'], $auto['code'] ?? 422);
             }
@@ -578,22 +585,102 @@ class BarangMasukController extends Controller
         $hasil = [];
         try {
             DB::transaction(function () use ($header, $items, &$hasil) {
+                // Fase planning kumulatif: hitung alokasi non-overlapping untuk
+                // semua item se-form sebelum menulis stok apa pun.
+                // Tanpa ini, preview stateless memberi deep/line yang sama ke
+                // semua item (first-fit), lalu item ke-2 gagal
+                // "sudah berisi dengan batch yang berbeda" dan seluruh batch
+                // rollback. Contoh: line-1 kapasitas 460 diambil item-1 qty 460,
+                // maka item-2 wajib jatuh ke line selanjutnya walau BB sama/tua/muda.
+                $reservasi = [];
+                $rencana = [];
                 foreach ($items as $idx => $it) {
                     $no = $idx + 1;
                     if (! is_array($it)) {
                         throw new Exception("Item ke-{$no} tidak valid.");
                     }
-                    $nama = trim((string) ($it['nama_produk'] ?? ''));
+                    $itFull = array_merge($header, $it);
+                    $nama = trim((string) ($itFull['nama_produk'] ?? ''));
                     if ($nama === '') {
                         $nama = "Item ke-{$no}";
                     }
-                    $resp = $this->store(Request::create('/barang-masuk', 'POST', array_merge($header, $it)));
+                    $idProdukPlan = (int) ($itFull['id_produk'] ?? 0);
+                    $qtyPlan = (float) ($itFull['jumlah'] ?? 0);
+                    $tipePlan = trim((string) ($itFull['tipe_penerimaan'] ?? $header['tipe_penerimaan'] ?? 'Primary'));
+                    $idLokPlan = trim((string) ($itFull['id_pengguna_lokasi'] ?? $header['id_pengguna_lokasi'] ?? ''));
+                    $bbPlan = isset($itFull['best_before']) ? trim((string) $itFull['best_before']) : null;
+                    if ($bbPlan === '') {
+                        $bbPlan = null;
+                    }
+                    if ($idProdukPlan > 0 && PengaturanProduk::isTanpaBatch($idProdukPlan)) {
+                        $bbPlan = '9999-12-31';
+                    }
+                    if ($tipePlan === 'REJECT') {
+                        $bbPlan = '9999-12-31';
+                    }
+                    if ($idLokPlan === '' || $idProdukPlan <= 0 || $qtyPlan <= 0) {
+                        throw new Exception("{$nama}: id_pengguna_lokasi/id_produk/jumlah tidak valid.");
+                    }
+
+                    // Eksekusi konversi terkonfirmasi frontend lebih dulu agar
+                    // kapasitas hasil konversi ikut terlihat saat planning.
+                    if ($tipePlan !== 'REJECT' && ! empty($itFull['konversi'])) {
+                        $rawKonv = is_array($itFull['konversi']) ? $itFull['konversi'] : explode(',', (string) $itFull['konversi']);
+                        foreach ($rawKonv as $kv) {
+                            $idLineK = (int) (is_array($kv) ? ($kv['id_line'] ?? 0) : $kv);
+                            if ($idLineK <= 0) {
+                                continue;
+                            }
+                            $resKonv = $this->konversiLine($idLokPlan, $idLineK, $idProdukPlan);
+                            if (isset($resKonv['error'])) {
+                                throw new Exception("{$nama}: Konversi line gagal: ".$resKonv['error']);
+                            }
+                        }
+                    }
+
+                    $auto = $this->rekomendasiAuto($idLokPlan, $idProdukPlan, $qtyPlan, $bbPlan, $tipePlan, false, $reservasi);
+                    if (isset($auto['error'])) {
+                        throw new Exception("{$nama}: ".$auto['error']);
+                    }
+                    $freshAlokasi = array_map(
+                        fn ($r) => ['id_deep' => (int) $r['id_deep'], 'jumlah' => (int) $r['alokasi']],
+                        $auto['rekomendasi'] ?? []
+                    );
+                    if (empty($freshAlokasi)) {
+                        throw new Exception("{$nama}: Line produk tidak tersedia atau kapasitas penuh.");
+                    }
+                    $rencana[$idx] = [
+                        'itFull' => $itFull,
+                        'nama' => $nama,
+                        'alokasi' => $freshAlokasi,
+                        'lokasi_line' => (string) ($auto['lokasi_line'] ?? ''),
+                    ];
+                    foreach ($freshAlokasi as $fa) {
+                        $reservasi[] = [
+                            'id_deep' => (int) $fa['id_deep'],
+                            'jumlah' => (float) $fa['jumlah'],
+                            'best_before' => $bbPlan,
+                            'id_produk' => $idProdukPlan,
+                        ];
+                    }
+                }
+
+                // Fase eksekusi: tulis memakai alokasi hasil planning
+                // (abaikan alokasi estimasi frontend yang stateless).
+                // Konversi sudah dikerjakan di fase planning, jangan diulang
+                // agar tidak kena "Line tidak lagi kosong".
+                foreach ($rencana as $rc) {
+                    $itExec = $rc['itFull'];
+                    $itExec['alokasi'] = $rc['alokasi'];
+                    $itExec['lokasi_line'] = $rc['lokasi_line'];
+                    unset($itExec['lokasi_block'], $itExec['konversi'], $itExec['reservasi_batch']);
+                    $resp = $this->store(Request::create('/barang-masuk', 'POST', $itExec));
                     $body = $resp->getData(true);
                     if (! is_array($body) || empty($body['success'])) {
                         $pesan = is_array($body) && isset($body['message']) && $body['message'] !== ''
                             ? (string) $body['message']
                             : 'gagal menyimpan';
-                        throw new Exception("{$nama}: {$pesan}");
+                        throw new Exception("{$rc['nama']}: {$pesan}");
                     }
                     $hasil[] = [
                         'id_barang_masuk' => $body['data']['id_barang_masuk'] ?? null,
@@ -2090,10 +2177,48 @@ class BarangMasukController extends Controller
     // =========================================================================
     // 7. REKOMENDASI AUTO (CORE ALGORITMA ALOKASI & KONVERSI)
     // =========================================================================
-    private function rekomendasiAuto(string $idPenggunaLokasi, int $idProduk, float $qty, ?string $bestBefore, string $tipePenerimaan, bool $libatkanKonversi = true): array
+    private function rekomendasiAuto(string $idPenggunaLokasi, int $idProduk, float $qty, ?string $bestBefore, string $tipePenerimaan, bool $libatkanKonversi = true, array $reservasiBatch = []): array
     {
         $isSecondary = $tipePenerimaan === 'Secondary';
         $previewMode = $qty <= 0;
+
+        // Peta deep -> line untuk reservasi batch (item lain se-form).
+        // Dipakai agar item ke-2 dst tidak dialokasikan ke deep yang sama
+        // dengan item sebelumnya bila BB/produk beda atau kapasitas habis.
+        // Contoh: line-1 kapasitas 460 sudah diambil item-1 qty 460,
+        // maka item-2 (BB tua/sama/muda) wajib jatuh ke line selanjutnya.
+        $mapDeepLineRes = [];
+        if (! empty($reservasiBatch)) {
+            $deepIdsRes = array_values(array_unique(array_filter(array_map(
+                fn ($r) => (int) ($r['id_deep'] ?? 0),
+                $reservasiBatch
+            ), fn ($id) => $id > 0)));
+            if (! empty($deepIdsRes)) {
+                $rowsRes = DB::table('deep as d')
+                    ->join('level as lv', function ($j) {
+                        $j->on('lv.id_level', '=', 'd.id_level')
+                            ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi');
+                    })
+                    ->join('line as ln', function ($j) {
+                        $j->on('ln.id_line', '=', 'lv.id_line')
+                            ->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi');
+                    })
+                    ->join('block as b', function ($j) {
+                        $j->on('b.id_block', '=', 'ln.id_block')
+                            ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi');
+                    })
+                    ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('d.id_deep', $deepIdsRes)
+                    ->selectRaw("d.id_deep, ln.id_line, CONCAT(UPPER(TRIM(b.kode_block)), '-', ln.nomor_line) AS label_line")
+                    ->get();
+                foreach ($rowsRes as $rr) {
+                    $mapDeepLineRes[(int) $rr->id_deep] = [
+                        'id_line' => (int) $rr->id_line,
+                        'label' => (string) $rr->label_line,
+                    ];
+                }
+            }
+        }
 
         $lineProduk = DB::table('prioritas_lokasi_produk')
             ->where('id_produk', $idProduk)
@@ -2310,6 +2435,39 @@ class BarangMasukController extends Controller
             }
         }
 
+        // Reservasi batch se-form: anggap line sudah dihuni item sebelumnya
+        // dalam form yang sama, agar saring campur-produk + filter BB
+        // tidak mengembalikan line/deep yang sama.
+        foreach ($reservasiBatch as $res) {
+            $idDRes = (int) ($res['id_deep'] ?? 0);
+            if ($idDRes <= 0 || ! isset($mapDeepLineRes[$idDRes])) {
+                continue;
+            }
+            $idLineRes = (int) $mapDeepLineRes[$idDRes]['id_line'];
+            $labelRes = (string) $mapDeepLineRes[$idDRes]['label'];
+            $prodRes = (int) ($res['id_produk'] ?? $idProduk);
+            if ($prodRes <= 0) {
+                $prodRes = $idProduk;
+            }
+            $jmlRes = (float) ($res['jumlah'] ?? 0);
+            if ($jmlRes <= 0) {
+                continue;
+            }
+            if (! isset($lineProductMap[$idLineRes])) {
+                $lineProductMap[$idLineRes] = [];
+            }
+            if (! isset($lineProductMap[$idLineRes][$prodRes])) {
+                $lineProductMap[$idLineRes][$prodRes] = 0;
+            }
+            $lineProductMap[$idLineRes][$prodRes] += $jmlRes;
+            $bbRes = $res['best_before'] ?? null;
+            if ($prodRes === $idProduk && $bbRes !== null && $bbRes !== '' && $labelRes !== '') {
+                if (! isset($pendingBbMap[$labelRes]) || $bbRes < $pendingBbMap[$labelRes]) {
+                    $pendingBbMap[$labelRes] = $bbRes;
+                }
+            }
+        }
+
         $prior = $this->saringCampurProduk($prior, $lineProductMap, $idProduk);
         $stagingCandidates = $this->saringCampurProduk($stagingCandidates, $lineProductMap, $idProduk);
 
@@ -2435,6 +2593,30 @@ class BarangMasukController extends Controller
             }
             if (!isset($bbMaxDeepMap[$idD]) || ($row->bb_max !== null && $row->bb_max > $bbMaxDeepMap[$idD])) {
                 $bbMaxDeepMap[$idD] = $row->bb_max;
+            }
+        }
+
+        // Reservasi batch se-form ikut mengurangi sisa kapasitas deep
+        // + menandai BB penghuni, agar alokasi deep-level (skip BB beda)
+        // tidak memilih deep yang sama dengan item sebelumnya.
+        foreach ($reservasiBatch as $res) {
+            $idDRes = (int) ($res['id_deep'] ?? 0);
+            $jmlRes = (float) ($res['jumlah'] ?? 0);
+            if ($idDRes <= 0 || $jmlRes <= 0) {
+                continue;
+            }
+            if (! isset($terisiMap[$idDRes])) {
+                $terisiMap[$idDRes] = 0.0;
+            }
+            $terisiMap[$idDRes] += $jmlRes;
+            $bbRes = $res['best_before'] ?? null;
+            if ($bbRes !== null && $bbRes !== '') {
+                if (! isset($bbMinDeepMap[$idDRes]) || $bbMinDeepMap[$idDRes] === null || $bbRes < $bbMinDeepMap[$idDRes]) {
+                    $bbMinDeepMap[$idDRes] = $bbRes;
+                }
+                if (! isset($bbMaxDeepMap[$idDRes]) || $bbMaxDeepMap[$idDRes] === null || $bbRes > $bbMaxDeepMap[$idDRes]) {
+                    $bbMaxDeepMap[$idDRes] = $bbRes;
+                }
             }
         }
 
@@ -2834,6 +3016,45 @@ class BarangMasukController extends Controller
     // =========================================================================
     // 9. HELPERS
     // =========================================================================
+    /**
+     * Normalisasi reservasi batch se-form untuk preview kumulatif.
+     * Masukan: array|string JSON [{id_deep, jumlah, best_before?, id_produk?}].
+     * Keluaran: list bersih [{id_deep:int, jumlah:float, best_before:?string, id_produk:int}].
+     */
+    private function normalisasiReservasiBatch(mixed $raw, int $idProdukDefault): array
+    {
+        if (is_string($raw)) {
+            $dec = json_decode($raw, true);
+            $raw = is_array($dec) ? $dec : [];
+        }
+        if (! is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $r) {
+            if (! is_array($r)) {
+                continue;
+            }
+            $idD = (int) ($r['id_deep'] ?? 0);
+            $jml = (float) ($r['jumlah'] ?? $r['alokasi'] ?? 0);
+            if ($idD <= 0 || $jml <= 0) {
+                continue;
+            }
+            $bb = $r['best_before'] ?? null;
+            $bb = $bb !== null ? trim((string) $bb) : null;
+            if ($bb === '') {
+                $bb = null;
+            }
+            $prod = (int) ($r['id_produk'] ?? $idProdukDefault);
+            if ($prod <= 0) {
+                $prod = $idProdukDefault;
+            }
+            $out[] = ['id_deep' => $idD, 'jumlah' => $jml, 'best_before' => $bb, 'id_produk' => $prod];
+        }
+
+        return $out;
+    }
+
     private function mapDeepIds(array $alokasi): array
     {
         return array_filter(array_map(fn ($a) => (int) ($a['id_deep'] ?? 0), $alokasi), fn ($id) => $id > 0);

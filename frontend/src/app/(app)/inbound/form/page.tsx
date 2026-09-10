@@ -204,7 +204,28 @@ export default function InboundFormPage() {
     });
   };
 
-  // --- PERBAIKAN: AUTO BLOCK DENGAN VALIDASI TANGGAL KOSONG ---
+  // Reservasi item lain se-form agar preview kumulatif tidak menumpuk
+  // ke deep/line yang sama (misal line-1 kapasitas 460 sudah diambil item-1,
+  // maka item-2 wajib preview ke line selanjutnya).
+  const bangunReservasi = (kecualiIdx?: number) => {
+    const out: { id_deep: number; jumlah: number; best_before: string; id_produk: number }[] = [];
+    items.forEach((other, oi) => {
+      if (kecualiIdx !== undefined && oi === kecualiIdx) return;
+      if (!other || other.id_produk <= 0 || !other.alokasi?.length) return;
+      const bbOther = other.no_batch || tipe === "REJECT"
+        ? "9999-12-31"
+        : (norm(other.best_before) && norm(other.best_before) !== "-" ? norm(other.best_before) : "");
+      if (!bbOther) return;
+      other.alokasi.forEach((a) => {
+        if (angka(a.id_deep) > 0 && angka(a.jumlah) > 0) {
+          out.push({ id_deep: angka(a.id_deep), jumlah: angka(a.jumlah), best_before: bbOther, id_produk: other.id_produk });
+        }
+      });
+    });
+    return out;
+  };
+
+  // --- PERBAIKAN: AUTO BLOCK DENGAN VALIDASI TANGGAL KOSONG + RESERVASI KUMULATIF ---
   const autoBlock = async (idx: number, overrideBB?: string) => {
     const it = items[idx];
     if (!it || it.id_produk <= 0 || angka(it.jumlah) <= 0) return;
@@ -221,6 +242,7 @@ export default function InboundFormPage() {
           qty: angka(it.jumlah),
           best_before: bb, // Kirim null jika belum diisi, BUKAN 9999-12-31
           tipe_penerimaan: tipe,
+          reservasi_batch: bangunReservasi(idx),
         }
       );
       const recs = r.data?.rekomendasi || [];
@@ -283,7 +305,11 @@ export default function InboundFormPage() {
     const names: string[] = [];
     const waktuMulai = `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`;
 
-    // Fase 1: validasi + preview per item (read-only, belum menyimpan apa pun).
+    // Fase 1: validasi + preview kumulatif per item (read-only, belum menyimpan).
+    // Preview item ke-n membawa reservasi item 1..n-1 se-form agar tidak
+    // menumpuk ke deep/line yang sama. Backend /batch juga alokasi ulang
+    // sekuensial, jadi preview di sini sudah mencerminkan lokasi akhir.
+    const reservasiKumulatif: { id_deep: number; jumlah: number; best_before: string; id_produk: number }[] = [];
     for (let idx = 0; idx < items.length; idx++) {
       const it = items[idx];
       const no = idx + 1;
@@ -305,6 +331,7 @@ export default function InboundFormPage() {
             qty: angka(it.jumlah),
             best_before: bb,
             tipe_penerimaan: tipe,
+            reservasi_batch: reservasiKumulatif,
           }
         );
 
@@ -329,6 +356,13 @@ export default function InboundFormPage() {
           failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: "Line produk tidak tersedia atau kapasitas penuh. Silakan buat layout baru." });
           continue;
         }
+
+        // Kunci: reservasi hasil item ini untuk preview item berikutnya.
+        freshAlokasi.forEach((a) => {
+          reservasiKumulatif.push({ id_deep: a.id_deep, jumlah: a.jumlah, best_before: bb, id_produk: it.id_produk });
+        });
+        // Segarkan tampilan block per item agar sudah beda line sebelum Simpan.
+        updateItem(idx, { alokasi: freshAlokasi, lokasi_line: freshLokasiLine, block_preview: freshLokasiLine || "-" });
 
         names.push(it.nama_produk || `Produk ID ${it.id_produk}`);
         payloads.push({
