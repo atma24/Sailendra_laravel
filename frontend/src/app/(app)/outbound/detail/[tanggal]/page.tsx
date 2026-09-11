@@ -143,6 +143,7 @@ export default function OutboundDetailPage() {
   const tanggal = decodeURIComponent(params.tanggal || "");
   const driver = searchParams.get("driver") || "";
   const lok = searchParams.get("lok") || "";
+  const tipeFilter = searchParams.get("tipe") || "";
 
   const [items, setItems] = useState<BkDetail[]>([]);
   const [header, setHeader] = useState<BkDetail | null>(null);
@@ -213,7 +214,9 @@ export default function OutboundDetailPage() {
         const r = await apiGet<BkDetail[]>(`/barang-keluar?${sp.toString()}`);
         if (cancelled) return;
         const rows = r.data || [];
-        const myRows = rows.filter((x) => (norm(x.nama_driver) || "Tanpa nama driver") === driver);
+        const isFoc = (x: BkDetail) => (x.tipe_pengeluaran || "").toUpperCase() === "FOC";
+        const tipeRows = tipeFilter === "foc" ? rows.filter(isFoc) : tipeFilter === "normal" ? rows.filter((x) => !isFoc(x)) : rows;
+        const myRows = tipeRows.filter((x) => (norm(x.nama_driver) || "Tanpa nama driver") === driver);
         const firstId = angka(myRows[0]?.id_barang_keluar);
 
         const [pr] = await Promise.all([
@@ -266,7 +269,7 @@ export default function OutboundDetailPage() {
   const canDelete = (isDraft || isPending) && canCrud;
   const firstId = angka(header?.id_barang_keluar || items[0]?.id_barang_keluar || 0);
   const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
-  const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
+  const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `${lok ? "&" : "?"}tipe=${tipeFilter}` : ""}`;
 
   const openHeader = () => {
     setHMobil(norm(header?.no_mobil));

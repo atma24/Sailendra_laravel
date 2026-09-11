@@ -166,6 +166,7 @@ export default function InboundDetailPage() {
   const driver = searchParams.get("driver") || "";
   const shipment = searchParams.get("shipment") || "";
   const lok = searchParams.get("lok") || "";
+  const sumberFilter = searchParams.get("sumber") || "";
 
   const [rows, setRows] = useState<BmRow[]>([]);
   const [produkList, setProdukList] = useState<Produk[]>([]); // Untuk Tambah Item
@@ -258,7 +259,9 @@ export default function InboundDetailPage() {
           const rowShip = (x.shipment_id || "").trim();
           const sameDriver = reqDriver === "" ? (rowDriver === "" || rowDriver === "Tanpa nama driver") : rowDriver === reqDriver;
           const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
-          return sameDriver && sameShip;
+          const isAutoOut = (x.catatan || "").includes("Auto dari Outbound");
+          const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
+          return sameDriver && sameShip && sameSumber;
         });
 
         const firstRow = filtered[0];
@@ -290,12 +293,14 @@ export default function InboundDetailPage() {
     const rowShip = (r.shipment_id || "").trim();
     const sameDriver = reqDriver === "" ? (rowDriver === "" || rowDriver === "Tanpa nama driver") : rowDriver === reqDriver;
     const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
-    return sameDriver && sameShip;
+    const isAutoOut = (r.catatan || "").includes("Auto dari Outbound");
+    const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
+    return sameDriver && sameShip && sameSumber;
   }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
   const first = items[0];
   const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
-  const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
+  const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `${lok ? "&" : "?"}sumber=${sumberFilter}` : ""}`;
 
   const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
   const hasPending = items.some(i => (i.status || "").toLowerCase() === "pending");

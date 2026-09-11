@@ -179,14 +179,14 @@ export default function InboundTanggalPage() {
   const normalPaged = paginate(normalList, normalPage, PAGE_SIZE);
   const outboundPaged = paginate(outboundList, outboundPage, PAGE_SIZE);
 
-  const renderTanggal = (list: TanggalItem[]) =>
+  const renderTanggal = (list: TanggalItem[], sumber?: string) =>
     list.length === 0 ? (
       <div className="inbound-card inbound-empty">Tidak ada data tanggal inbound.</div>
     ) : (
       <div className="inbound-grid">
         {list.map((item) => (
           <Link key={item.tanggal} className="inbound-card inbound-date-card"
-            href={`/inbound/driver/${encodeURIComponent(item.tanggal)}`}>
+            href={`/inbound/driver/${encodeURIComponent(item.tanggal)}${sumber ? `?sumber=${sumber}` : ""}`}>
             <div className="inbound-card-top">
               <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
               <div>
@@ -250,7 +250,7 @@ export default function InboundTanggalPage() {
           Penerimaan Normal
           <span className="inbound-section-count">{normalList.length}</span>
         </div>
-        {renderTanggal(normalPaged)}
+        {renderTanggal(normalPaged, "normal")}
         <Pagination page={normalPage} totalPages={normalTotalPages} totalItems={normalList.length} pageSize={PAGE_SIZE} onChange={setNormalPage} />
       </div>
 
@@ -263,7 +263,7 @@ export default function InboundTanggalPage() {
             <span className="inbound-section-count">{outboundList.length}</span>
             <div className="inbound-section-divider-line"></div>
           </div>
-          {renderTanggal(outboundPaged)}
+          {renderTanggal(outboundPaged, "outbound")}
           <Pagination page={outboundPage} totalPages={outboundTotalPages} totalItems={outboundList.length} pageSize={PAGE_SIZE} onChange={setOutboundPage} />
         </div>
       )}

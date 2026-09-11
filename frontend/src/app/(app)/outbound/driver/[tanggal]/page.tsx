@@ -15,6 +15,7 @@ type BkRow = {
   nama_driver: string;
   no_mobil: string;
   status: string;
+  tipe_pengeluaran: string;
 };
 
 type DriverItem = {
@@ -79,6 +80,7 @@ export default function OutboundDriverPage() {
   const tanggal = decodeURIComponent(params.tanggal || "");
   const lok = searchParams.get("lok") || "";
   const statusFilter = searchParams.get("status") || "";
+  const tipeFilter = searchParams.get("tipe") || "";
   const [rows, setRows] = useState<BkRow[]>([]);
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -113,8 +115,11 @@ export default function OutboundDriverPage() {
   if (!session || !loaded) return null;
 
   const kw = q.trim().toLowerCase();
+  const isFoc = (r: BkRow) => (r.tipe_pengeluaran || "").toUpperCase() === "FOC";
+  const filteredRows = tipeFilter === "foc" ? rows.filter(isFoc) : tipeFilter === "normal" ? rows.filter((r) => !isFoc(r)) : rows;
+  const sectionLabel = tipeFilter === "foc" ? "FOC" : tipeFilter === "normal" ? "Normal" : "";
   const driverMap: Record<string, DriverItem> = {};
-  rows.forEach((row) => {
+  filteredRows.forEach((row) => {
     const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";
     if (kw !== "" && !nama.toLowerCase().includes(kw)) return;
     if (!driverMap[nama]) {
@@ -151,11 +156,12 @@ export default function OutboundDriverPage() {
     if (q.trim()) p.set("q", q.trim());
     if (lok) p.set("lok", lok);
     if (sv) p.set("status", sv);
+    if (tipeFilter) p.set("tipe", tipeFilter);
     const qs = p.toString();
     return `/outbound/driver/${encodeURIComponent(tanggal)}${qs ? `?${qs}` : ""}`;
   };
 
-  const backHref = `/outbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
+  const backHref = `/outbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `${lok ? "&" : "?"}tipe=${tipeFilter}` : ""}`;
 
   return (
     <div className="outbound-page">
@@ -165,7 +171,10 @@ export default function OutboundDriverPage() {
           <i className="bi bi-arrow-left"></i>
           <span>Kembali ke tanggal</span>
         </Link>
-        <div className="outbound-date-chip">{tanggal}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {sectionLabel && <span style={{ borderRadius: 999, background: sectionLabel === "FOC" ? "#F0FDF4" : "var(--primary-soft, #EEF2FF)", color: sectionLabel === "FOC" ? "#166534" : "var(--primary, #191970)", padding: "4px 9px", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>{sectionLabel}</span>}
+          <div className="outbound-date-chip">{tanggal}</div>
+        </div>
       </div>
 
       <div className="outbound-card">
@@ -201,7 +210,7 @@ export default function OutboundDriverPage() {
             const ss = statusStyle(d.status);
             return (
               <Link key={d.nama_driver} className="outbound-card outbound-driver-card"
-                href={`/outbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}`}>
+                href={`/outbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `&tipe=${tipeFilter}` : ""}`}>
                 <div className="driver-top">
                   <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
                   <div style={{ flex: 1, minWidth: 0 }}>

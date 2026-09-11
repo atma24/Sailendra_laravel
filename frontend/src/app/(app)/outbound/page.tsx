@@ -28,7 +28,7 @@ const angka = (v: unknown) => {
 };
 const dateOnly = (v: unknown) => String(v ?? "").slice(0, 10);
 
-function PagedTanggal({ items, emptyMsg, resetKey }: { items: TanggalItem[]; emptyMsg: string; resetKey: string }) {
+function PagedTanggal({ items, emptyMsg, resetKey, section }: { items: TanggalItem[]; emptyMsg: string; resetKey: string; section?: string }) {
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [resetKey]);
   if (items.length === 0) {
@@ -36,12 +36,13 @@ function PagedTanggal({ items, emptyMsg, resetKey }: { items: TanggalItem[]; emp
   }
   const total = totalPagesOf(items.length, PAGE_SIZE);
   const paged = paginate(items, page, PAGE_SIZE);
+  const tipeParam = section ? `?tipe=${section}` : "";
   return (
     <>
       <div className="outbound-grid">
         {paged.map((item) => (
           <Link key={item.tanggal} className="outbound-card outbound-date-card"
-            href={`/outbound/driver/${encodeURIComponent(item.tanggal)}`}>
+            href={`/outbound/driver/${encodeURIComponent(item.tanggal)}${tipeParam}`}>
             <div className="outbound-card-top">
               <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
               <div>
@@ -271,7 +272,7 @@ export default function OutboundTanggalPage() {
           Pengeluaran Normal
           <span className="outbound-section-count">{normalList.length}</span>
         </div>
-        <PagedTanggal items={normalList} emptyMsg="Tidak ada data outbound normal." resetKey={`${search}|${keyword}|${normalRows.length}`} />
+        <PagedTanggal items={normalList} emptyMsg="Tidak ada data outbound normal." resetKey={`${search}|${keyword}|${normalRows.length}`} section="normal" />
       </div>
 
       {/* === SECTION: FOC === */}
@@ -283,7 +284,7 @@ export default function OutboundTanggalPage() {
             <span className="outbound-section-count">{focList.length}</span>
             <div className="outbound-section-divider-line"></div>
           </div>
-          <PagedTanggal items={focList} emptyMsg="Tidak ada data outbound FOC." resetKey={`${search}|${keyword}|${focRows.length}`} />
+          <PagedTanggal items={focList} emptyMsg="Tidak ada data outbound FOC." resetKey={`${search}|${keyword}|${focRows.length}`} section="foc" />
         </div>
       )}
 

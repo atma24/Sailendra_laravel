@@ -14,8 +14,9 @@ type BmRow = {
   nama_driver: string;
   no_mobil: string;
   no_dn: string;
-  shipment_id: string; // --- TAMBAHAN BARU ---
-  status: string;      // --- TAMBAHAN BARU ---
+  shipment_id: string;
+  catatan: string;
+  status: string;
 };
 
 type ShipmentItem = {
@@ -85,6 +86,7 @@ export default function InboundDriverPage() {
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "");
+  const sumberFilter = searchParams.get("sumber") || "";
 
   useEffect(() => {
     if (!session || !tanggal) return;
@@ -116,9 +118,12 @@ export default function InboundDriverPage() {
   if (!session || !loaded) return null;
 
   const kw = q.trim().toLowerCase();
+  const isAutoOutbound = (r: BmRow) => (r.catatan || "").includes("Auto dari Outbound");
+  const filteredRows = sumberFilter === "outbound" ? rows.filter(isAutoOutbound) : sumberFilter === "normal" ? rows.filter((r) => !isAutoOutbound(r)) : rows;
+  const sectionLabel = sumberFilter === "outbound" ? "Dari Outbound" : sumberFilter === "normal" ? "Normal" : "";
   // Satu kartu per (driver + shipment_id), mirip GIN di outbound
   const shipMap: Record<string, ShipmentItem> = {};
-  rows.forEach((row) => {
+  filteredRows.forEach((row) => {
     const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";
     const ship = (row.shipment_id || "").trim() || "Tanpa Shipment";
     if (kw !== "" && !nama.toLowerCase().includes(kw)) return;
@@ -155,11 +160,12 @@ export default function InboundDriverPage() {
     if (q.trim()) p.set("q", q.trim());
     if (lok) p.set("lok", lok);
     if (sv) p.set("status", sv);
+    if (sumberFilter) p.set("sumber", sumberFilter);
     const qs = p.toString();
     return `/inbound/driver/${encodeURIComponent(tanggal)}${qs ? `?${qs}` : ""}`;
   };
 
-  const backHref = `/inbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
+  const backHref = `/inbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `${lok ? "&" : "?"}sumber=${sumberFilter}` : ""}`;
 
   return (
     <div className="inbound-page">
@@ -169,7 +175,10 @@ export default function InboundDriverPage() {
           <i className="bi bi-arrow-left"></i>
           <span>Kembali ke tanggal</span>
         </Link>
-        <div className="inbound-date-chip">{tanggal}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {sectionLabel && <span style={{ borderRadius: 999, background: sectionLabel === "Dari Outbound" ? "#FEF3C7" : "var(--primary-soft, #EEF2FF)", color: sectionLabel === "Dari Outbound" ? "#92400E" : "var(--primary, #191970)", padding: "4px 9px", fontSize: 10, fontWeight: 900, whiteSpace: "nowrap" }}>{sectionLabel}</span>}
+          <div className="inbound-date-chip">{tanggal}</div>
+        </div>
       </div>
 
       <div className="inbound-card">
@@ -205,7 +214,7 @@ export default function InboundDriverPage() {
             const ss = statusStyle(d.status);
             return (
             <Link key={`${d.nama_driver}::${d.shipment_id}`} className="inbound-card inbound-driver-card"
-              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}`}>
+              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `&sumber=${sumberFilter}` : ""}`}>
               <div className="driver-top">
                 <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
                 <div style={{ flex: 1, minWidth: 0 }}>
