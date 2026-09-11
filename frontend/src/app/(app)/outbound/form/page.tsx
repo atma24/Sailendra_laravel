@@ -32,7 +32,8 @@ const norm = (v: unknown) => String(v ?? "").trim();
 // No Mobil: tanpa spasi, wajib ada huruf + angka, minimal 5 char, maks 30.
 const isValidNoMobil = (v: unknown) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/.test(norm(v).toUpperCase());
 const butuhMobilDriver = (tipe: string) => tipe !== "Pemusnahan" && tipe !== "FOC";
-const isFoc = (tipe: string) => tipe === "FOC";
+// FOC: kolom sama seperti Secondary, tapi yang wajib hanya driver (+ tanggal).
+const butuhDriver = (tipe: string) => tipe === "Primary" || tipe === "Secondary" || tipe === "FOC";
 
 const css = `
 .outbound-form-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 32px; max-width: 1100px; margin: 0 auto; }
@@ -199,7 +200,7 @@ export default function OutboundFormPage() {
     if (butuhMobilDriver(tipe) && norm(noMobil) === "") { setErrMobil("No Mobil wajib diisi."); notify("error", "No Mobil wajib diisi."); return; }
     if (norm(noMobil) !== "" && !isValidNoMobil(noMobil)) { setErrMobil("No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); notify("error", "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); return; }
     setErrMobil("");
-    if (butuhMobilDriver(tipe) && norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
+    if (butuhDriver(tipe) && norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
     if (tipe === "Secondary" && norm(ginNo) === "") { notify("error", "No GIN wajib diisi untuk Secondary."); return; }
     if (tipe === "Primary" && norm(tujuan) === "") { notify("error", "Tujuan wajib diisi untuk Primary."); return; }
     const payloadItems = items
@@ -225,13 +226,13 @@ export default function OutboundFormPage() {
         id_pengguna_lokasi: idPenggunaLokasi,
         tipe_pengeluaran: tipe,
         tujuan: tipe === "Primary" ? tujuan : "",
-        no_mobil: isFoc(tipe) ? "-" : (norm(noMobil) === "" ? "" : norm(noMobil).toUpperCase()),
-        nama_driver: isFoc(tipe) ? "-" : namaDriver,
-        gin_no: isFoc(tipe) ? "" : ginNo,
+        no_mobil: norm(noMobil) === "" ? "" : norm(noMobil).toUpperCase(),
+        nama_driver: namaDriver,
+        gin_no: ginNo,
         catatan: catatan,
         tanggal_keluar: tanggalKeluar,
-        tanggal_pengiriman: isFoc(tipe) ? tanggalKeluar : tanggalPengiriman,
-        ritase: isFoc(tipe) ? 1 : ritase,
+        tanggal_pengiriman: tanggalPengiriman,
+        ritase: ritase,
         status: "Pending",
         items: payloadItems,
         waktu_mulai_input: `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`,
@@ -316,39 +317,28 @@ export default function OutboundFormPage() {
               <i className="bi bi-chevron-down outbound-select-icon"></i>
             </div>
           </div>
-          {tipe !== "FOC" && (
           <div>
             <label className="outbound-label">Tujuan{tipe === "Primary" && <span className="outbound-req">*</span>}</label>
             <PlantPicker plantList={plantList} value={tujuan} disabled={tipe !== "Primary"}
               onChange={setTujuan} />
           </div>
-          )}
-          {tipe !== "FOC" && (
           <div>
             <label className="outbound-label">Tanggal Pengiriman<span className="outbound-req">*</span></label>
             <input type="date" className="outbound-input" value={tanggalPengiriman} onChange={(e) => setTanggalPengiriman(e.target.value)} />
           </div>
-          )}
-          {tipe !== "FOC" && (
           <div>
             <label className="outbound-label">No Mobil{butuhMobilDriver(tipe) && <span className="outbound-req">*</span>}</label>
-            <input type="text" className={`outbound-input ${errMobil ? "input-error" : ""}`} value={noMobil} onChange={(e) => { setNoMobil(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 30)); if (errMobil) setErrMobil(""); }} placeholder={butuhMobilDriver(tipe) ? "No Mobil (huruf+angka, tanpa spasi, min 5)" : "No Mobil (opsional untuk Pemusnahan)"} maxLength={30} />
+            <input type="text" className={`outbound-input ${errMobil ? "input-error" : ""}`} value={noMobil} onChange={(e) => { setNoMobil(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 30)); if (errMobil) setErrMobil(""); }} placeholder={butuhMobilDriver(tipe) ? "No Mobil (huruf+angka, tanpa spasi, min 5)" : "No Mobil (opsional)"} maxLength={30} />
             {errMobil ? <div className="outbound-field-err">{errMobil}</div> : <div className="outbound-field-hint">Huruf+angka, tanpa spasi, minimal 5 karakter.</div>}
           </div>
-          )}
-          {tipe !== "FOC" && (
           <div>
-            <label className="outbound-label">Nama Driver{butuhMobilDriver(tipe) && <span className="outbound-req">*</span>}</label>
-            <input type="text" className="outbound-input" value={namaDriver} onChange={(e) => setNamaDriver(e.target.value)} placeholder={butuhMobilDriver(tipe) ? "Nama Driver" : "Nama Driver (opsional untuk Pemusnahan)"} maxLength={30} />
+            <label className="outbound-label">Nama Driver{butuhDriver(tipe) && <span className="outbound-req">*</span>}</label>
+            <input type="text" className="outbound-input" value={namaDriver} onChange={(e) => setNamaDriver(e.target.value)} placeholder={butuhDriver(tipe) ? "Nama Driver" : "Nama Driver (opsional untuk Pemusnahan)"} maxLength={30} />
           </div>
-          )}
-          {tipe !== "FOC" && (
           <div>
             <label className="outbound-label">No GIN{tipe === "Secondary" && <span className="outbound-req">*</span>}</label>
             <input type="text" className="outbound-input" value={ginNo} onChange={(e) => setGinNo(e.target.value)} placeholder={tipe === "Secondary" ? "No GIN (wajib)" : "No GIN (opsional)"} maxLength={30} />
           </div>
-          )}
-          {tipe !== "FOC" && (
           <div>
             <label className="outbound-label">Ritase<span className="outbound-req">*</span></label>
             <div className="outbound-select-wrap">
@@ -358,7 +348,6 @@ export default function OutboundFormPage() {
               <i className="bi bi-chevron-down outbound-select-icon"></i>
             </div>
           </div>
-          )}
           <textarea className="outbound-textarea" value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Catatan (opsional)" maxLength={250} />
         </div>
       </div>

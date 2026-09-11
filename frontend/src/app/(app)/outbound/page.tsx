@@ -246,8 +246,8 @@ export default function OutboundTanggalPage() {
                 <i className="bi bi-file-earmark-excel"></i>
                 Upload Excel
               </button>
-              <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer", background: "#7c3aed" }} onClick={() => openModal("foc")}>
-                <i className="bi bi-gift"></i>
+              <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("foc")}>
+                <i className="bi bi-file-earmark-excel"></i>
                 Upload FOC
               </button>
               {isSuperAdmin && (
@@ -344,26 +344,26 @@ function UploadFocModal({ open, busy, uploadMsg, progressText, onClose, onSubmit
         .foc-modal-close { border: 0; background: transparent; color: #94A3B8; font-size: 18px; padding: 4px; cursor: pointer; border-radius: 6px; }
         .foc-modal-close:hover { color: #0F172A; background: #F1F5F9; }
         .foc-modal-body { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
-        .foc-note-box { background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 12px; padding: 12px 14px; font-size: 12px; font-weight: 600; color: #166534; line-height: 1.5; }
-        .foc-note-box strong { color: #15803D; }
+        .foc-note-box { background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 12px; padding: 12px 14px; font-size: 12px; font-weight: 600; color: var(--primary-navy, #191970); line-height: 1.5; }
+        .foc-note-box strong { color: var(--primary-navy, #191970); }
         .foc-file-wrap { width: 100%; border: 1px solid #CBD5E1; border-radius: 10px; padding: 6px; background: #F8FAFC; display: flex; align-items: center; gap: 10px; }
-        .foc-file-wrap:focus-within { border-color: #7c3aed; background: #FFFFFF; }
+        .foc-file-wrap:focus-within { border-color: var(--primary-navy, #191970); background: #FFFFFF; }
         .foc-file-btn { height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid #CBD5E1; background: #FFFFFF; color: #334155; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
         .foc-file-btn:hover { background: #F1F5F9; }
         .foc-file-name { font-size: 12px; font-weight: 600; color: #64748B; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
         .foc-modal-footer { padding: 14px 22px; border-top: 1px solid #E2E8F0; background: #F8FAFC; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
         .foc-cancel-btn { height: 38px; padding: 0 16px; border-radius: 10px; border: 1px solid #CBD5E1; background: #FFFFFF; color: #475569; font-size: 13px; font-weight: 700; cursor: pointer; }
         .foc-cancel-btn:hover { background: #F1F5F9; }
-        .foc-submit-btn { height: 38px; padding: 0 20px; border-radius: 10px; border: 0; background: #7c3aed; color: #FFFFFF; font-size: 13px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(124,58,237,0.2); }
-        .foc-submit-btn:hover:not(:disabled) { background: #6d28d9; transform: translateY(-1px); }
+        .foc-submit-btn { height: 38px; padding: 0 20px; border-radius: 10px; border: 0; background: var(--primary-navy, #191970); color: #FFFFFF; font-size: 13px; font-weight: 800; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 2px 6px rgba(25, 25, 112, 0.2); }
+        .foc-submit-btn:hover:not(:disabled) { background: #121254; transform: translateY(-1px); }
         .foc-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .foc-loading { position: absolute; inset: 0; background: rgba(255,255,255,0.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; z-index: 10; border-radius: 18px; backdrop-filter: blur(2px); }
-        .foc-spinner { width: 56px; height: 56px; border-radius: 50%; border: 4px solid #E2E8F0; border-top-color: #7c3aed; animation: focSpin 0.8s linear infinite; }
+        .foc-spinner { width: 56px; height: 56px; border-radius: 50%; border: 4px solid #E2E8F0; border-top-color: var(--primary-navy, #191970); animation: focSpin 0.8s linear infinite; }
         @keyframes focSpin { to { transform: rotate(360deg); } }
         .foc-loading-title { font-size: 15px; font-weight: 800; color: #0F172A; margin: 0; }
         .foc-loading-sub { font-size: 12px; font-weight: 600; color: #64748B; margin: 0; }
         .foc-progress { width: 180px; height: 5px; background: #E2E8F0; border-radius: 99px; overflow: hidden; }
-        .foc-progress-fill { width: 100%; height: 100%; background: linear-gradient(90deg, transparent, #7c3aed, transparent); animation: focProgress 1.5s ease-in-out infinite; }
+        .foc-progress-fill { width: 100%; height: 100%; background: linear-gradient(90deg, transparent, var(--primary-navy, #191970), transparent); animation: focProgress 1.5s ease-in-out infinite; }
         @keyframes focProgress { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
         .foc-upload-msg { font-size: 12px; font-weight: 700; color: #DC2626; margin: 0; }
       `}</style>

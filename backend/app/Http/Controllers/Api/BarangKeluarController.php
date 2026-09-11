@@ -1432,9 +1432,25 @@ $in = $request->all();
                 $grupPerGin[$shipmentKey]['items'][] = $bk;
             }
 
+            // Lookup produk JUG dari master
+            $jugAqua = DB::table('produk')->where('id_produk', 10516938)->first();
+            $jugVit = DB::table('produk')->where('id_produk', 10516939)->first();
+            $useJugMapping = $jugAqua && $jugVit;
+
             foreach ($grupPerGin as $grup) {
                 $shipmentIdAuto = $grup['shipment_id'];
                 $ginNo = $grup['gin_no'];
+
+                // Deteksi apakah ada item VIT dalam GIN ini (per-shipment)
+                $adaVit = false;
+                if ($useJugMapping) {
+                    foreach ($grup['items'] as $bkItem) {
+                        if (preg_match('/\bVIT\b/i', $bkItem->nama_produk ?? '')) {
+                            $adaVit = true;
+                            break;
+                        }
+                    }
+                }
 
                 foreach ($grup['items'] as $bk) {
                     $bestBeforeBk = $bk->best_before ?? null;
@@ -1470,13 +1486,38 @@ $in = $request->all();
                         }
                     }
 
+                    // Mapping ke JUG: ada VIT → JUG VIT, murni Aqua → JUG AQUA, lainnya → JUG VIT
+                    $idProdukIn = $bk->id_produk;
+                    $namaProdukIn = $bk->nama_produk;
+                    $satuanIn = $bk->satuan;
+                    if ($useJugMapping) {
+                        $isAqua = preg_match('/\bAQUA\b/i', $bk->nama_produk ?? '');
+                        $isVitItem = preg_match('/\bVIT\b/i', $bk->nama_produk ?? '');
+                        if ($adaVit) {
+                            // GIN ini ada Vit → semua jadi JUG VIT
+                            $idProdukIn = (int) $jugVit->id_produk;
+                            $namaProdukIn = $jugVit->nama_produk;
+                            $satuanIn = $jugVit->satuan;
+                        } elseif ($isAqua) {
+                            // Murni Aqua → JUG AQUA
+                            $idProdukIn = (int) $jugAqua->id_produk;
+                            $namaProdukIn = $jugAqua->nama_produk;
+                            $satuanIn = $jugAqua->satuan;
+                        } else {
+                            // Produk lain → JUG VIT
+                            $idProdukIn = (int) $jugVit->id_produk;
+                            $namaProdukIn = $jugVit->nama_produk;
+                            $satuanIn = $jugVit->satuan;
+                        }
+                    }
+
                     DB::table('barang_masuk')->insert([
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_pengguna'         => $bk->id_pengguna,
-                        'id_produk'           => $bk->id_produk,
-                        'nama_produk'         => $bk->nama_produk,
+                        'id_produk'           => $idProdukIn,
+                        'nama_produk'         => $namaProdukIn,
                         'jumlah'              => $bk->jumlah,
-                        'satuan'              => $bk->satuan,
+                        'satuan'              => $satuanIn,
                         'tanggal_masuk'       => $bk->tanggal_keluar,
                         'tipe_penerimaan'     => 'Secondary',
                         'best_before'         => $bestBeforeBk,
@@ -1777,41 +1818,23 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             } else {
                 $jumlahKurang = abs($selisih);
 
-                $rowsLama = DB::table('rencana_keluar_deep as r')
+                // Ambil referensi dari rencana lama untuk dapat info produk/batch/bb/satuan/bm_ref
+                $refRencana = DB::table('rencana_keluar_deep as r')
                     ->join('stok_gudang_deep as sgd', 'sgd.id_detail_stok', '=', 'r.id_detail_stok')
+                    ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sgd.id_stok_header')
                     ->where('r.id_barang_keluar', $idBarangKeluarLama)
                     ->where('r.id_pengguna_lokasi', $idPenggunaLokasi)
-                    ->select('r.id_rencana', 'r.id_detail_stok', 'r.id_deep', 'r.jumlah_rencana', 'r.best_before', 'r.batch', 'sgd.id_stok_header')
-                    ->orderBy('r.id_rencana', 'DESC')
-                    ->get();
-
-                $rencanaKembali = [];
-                $sisaKembali = $jumlahKurang;
-                foreach ($rowsLama as $rowLama) {
-                    if ($sisaKembali <= 0) {
-                        break;
-                    }
-                    $kembali = min($sisaKembali, (int) $rowLama->jumlah_rencana);
-
-                    $idDS = (int) $rowLama->id_detail_stok;
-                    $idSH = (int) $rowLama->id_stok_header;
-
-                    DB::table('stok_gudang_deep')->where('id_detail_stok', $idDS)->increment('jumlah', $kembali);
-                    DB::table('stok_gudang')->where('id_stok', $idSH)->increment('jumlah_sisa', $kembali);
-
-                    $rencanaKembali[] = [
-                        'id_detail_stok' => $idDS,
-                        'id_deep' => (int) $rowLama->id_deep,
-                        'jumlah_rencana' => -$kembali,
-                        'best_before' => $rowLama->best_before,
-                        'batch' => $rowLama->batch,
-                    ];
-                    $sisaKembali -= $kembali;
+                    ->select('sg.id_produk', 'sg.batch', 'sg.best_before', 'sg.satuan', 'sg.id_barang_masuk')
+                    ->first();
+                if (! $refRencana) {
+                    throw new Exception('Referensi stok tidak ditemukan untuk pengembalian.');
                 }
 
-                if ($sisaKembali > 0) {
-                    throw new Exception("Gagal mengembalikan stok. Histori lokasi pada card lama tidak mencukupi untuk mengembalikan sejumlah {$jumlahKurang}.");
-                }
+                $rencanaKembali = $this->kembalikanStokKeTransit(
+                    $idPenggunaLokasi, (int) $refRencana->id_produk, $jumlahKurang,
+                    $refRencana->best_before, $refRencana->batch, $refRencana->satuan,
+                    $refRencana->id_barang_masuk ?? null, (int) $old->id_pengguna
+                );
 
                 $this->simpanRencanaPerBarangKeluar($idPenggunaLokasi, $idBarangKeluarBaru, $rencanaKembali);
             }
@@ -1822,7 +1845,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
 
             $msg = $selisih > 0
                 ? "Berhasil menambahkan {$selisih} item. Stok telah dipotong dari gudang."
-                : 'Berhasil mengurangi '.abs($selisih).' item. Stok telah dikembalikan ke blok asal.';
+                : 'Berhasil mengurangi '.abs($selisih).' item. Stok telah dikembalikan ke blok TRANSIT.';
 
             return $this->ok(['id_barang_keluar_baru' => $idBarangKeluarBaru, 'selisih' => $selisih], $msg);
         } catch (Exception $e) {
@@ -2113,6 +2136,109 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         }
 
         return $this->ok(['inserted' => $inserted, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
+    }
+
+    /**
+     * Kembalikan stok ke blok TRANSIT (fallback ke deep kosong di REGULER bila TRANSIT penuh).
+     * Return array rencana (id_detail_stok, id_deep, jumlah_rencana negatif, best_before, batch).
+     */
+    private function kembalikanStokKeTransit($idPenggunaLokasi, $idProduk, $jumlah, $bestBefore, $batch, $satuan, $idBarangMasukRef = null, $idPenggunaRef = null)
+    {
+        $idProduk = (int) $idProduk;
+        $jumlah = (int) $jumlah;
+
+        // Resolve id_barang_masuk referensi
+        if (! $idBarangMasukRef) {
+            $idBarangMasukRef = DB::table('barang_masuk')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('id_produk', $idProduk)
+                ->where('status', 'Selesai')
+                ->orderByDesc('id_barang_masuk')
+                ->value('id_barang_masuk');
+        }
+        $idBarangMasukRef = (int) ($idBarangMasukRef ?? 0);
+        $idPenggunaRef = (int) ($idPenggunaRef ?? 0);
+
+        // Cari deep kandidat: TRANSIT dulu, lalu REGULER (exclude MOBIL/RECEH/BS/BAD/REJECT/HOLD/FESTIVE)
+        $kandidat = DB::table('deep as d')
+            ->join('level as lv', function ($j) { $j->on('lv.id_level', '=', 'd.id_level')->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'); })
+            ->join('line as ln', function ($j) { $j->on('ln.id_line', '=', 'lv.id_line')->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi'); })
+            ->join('block as b', function ($j) { $j->on('b.id_block', '=', 'ln.id_block')->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi'); })
+            ->leftJoin('stok_gudang_deep as sgd', function ($j) { $j->on('sgd.id_deep', '=', 'd.id_deep')->on('sgd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'); })
+            ->leftJoin('stok_gudang as s', function ($j) { $j->on('s.id_stok', '=', 'sgd.id_stok_header')->on('s.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'); })
+            ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->whereRaw("UPPER(TRIM(b.kode_block)) REGEXP '^[A-Z][A-Z0-9]*$'")
+            ->whereNotIn(DB::raw("UPPER(TRIM(b.kode_block))"), ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'FESTIVE', 'HOLD', 'MOBIL', 'RECEH'])
+            ->selectRaw('d.id_deep, d.kapasitas, b.kode_block, COALESCE(SUM(CASE WHEN s.id_stok IS NOT NULL THEN sgd.jumlah ELSE 0 END), 0) AS terisi')
+            ->groupBy('d.id_deep', 'd.kapasitas', 'b.kode_block')
+            ->havingRaw('kapasitas > terisi')
+            ->orderByRaw("UPPER(TRIM(b.kode_block)) = 'TRANSIT' DESC, b.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(d.deep AS UNSIGNED) DESC")
+            ->get();
+
+        $sisa = $jumlah;
+        $rencana = [];
+
+        foreach ($kandidat as $k) {
+            if ($sisa <= 0) break;
+            $left = (int) $k->kapasitas - (int) $k->terisi;
+            if ($left <= 0) continue;
+            $ambil = min($sisa, $left);
+
+            $lokasiBlock = strtoupper(trim($k->kode_block));
+
+            // Header stok: reuse jika ada baris dengan produk+lokasi+BB yang sama, atau buat baru
+            $idStok = DB::table('stok_gudang')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('id_produk', $idProduk)
+                ->where('lokasi_block', $lokasiBlock)
+                ->where('best_before', $bestBefore)
+                ->value('id_stok');
+
+            if (! $idStok) {
+                $idStok = DB::table('stok_gudang')->insertGetId([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi, 'id_produk' => $idProduk,
+                    'nama_produk' => DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk') ?? '',
+                    'id_barang_masuk' => $idBarangMasukRef, 'jumlah_sisa' => 0,
+                    'batch' => $batch, 'best_before' => $bestBefore, 'satuan' => $satuan,
+                    'lokasi_block' => $lokasiBlock, 'created_at' => now(),
+                ]);
+            }
+
+            // Increment header
+            DB::table('stok_gudang')->where('id_stok', $idStok)->increment('jumlah_sisa', $ambil);
+
+            // Deep stok: reuse jika ada baris dengan id_deep+header+BB yang sama
+            $detail = DB::table('stok_gudang_deep')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('id_stok_header', $idStok)
+                ->where('id_deep', (int) $k->id_deep)
+                ->where('best_before', $bestBefore)
+                ->first();
+
+            if ($detail) {
+                DB::table('stok_gudang_deep')->where('id_detail_stok', $detail->id_detail_stok)->increment('jumlah', $ambil);
+                $idDetailStok = (int) $detail->id_detail_stok;
+            } else {
+                $idDetailStok = DB::table('stok_gudang_deep')->insertGetId([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi, 'id_stok_header' => $idStok,
+                    'id_deep' => (int) $k->id_deep, 'jumlah' => $ambil,
+                    'best_before' => $bestBefore, 'batch' => $batch, 'lokasi_block' => $lokasiBlock,
+                    'created_at' => now(),
+                ]);
+            }
+
+            $rencana[] = [
+                'id_detail_stok' => $idDetailStok, 'id_deep' => (int) $k->id_deep,
+                'jumlah_rencana' => -$ambil, 'best_before' => $bestBefore, 'batch' => $batch,
+            ];
+            $sisa -= $ambil;
+        }
+
+        if ($sisa > 0) {
+            throw new Exception("Kapasitas TRANSIT tidak mencukupi untuk mengembalikan {$sisa} item. Kosongkan stok via mutasi terlebih dahulu.");
+        }
+
+        return $rencana;
     }
 
     private function ambilRencanaPerBarangKeluar($idBarangKeluar)

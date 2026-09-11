@@ -585,6 +585,59 @@ class BarangMasukController extends Controller
         $hasil = [];
         try {
             DB::transaction(function () use ($header, $items, &$hasil) {
+                // FEFO se-form: item se-produk dengan BB berbeda harus bisa
+                // menempati 1 line yang sama. Caranya: planning + eksekusi
+                // diurutkan BB muda dulu (DESC) per produk, karena pengisian
+                // deep berjalan dari belakang (deep/level kecil) ke muka
+                // (deep/level besar = diambil duluan oleh outbound).
+                // Muda di belakang + tua di muka = FEFO tetap jalan.
+                // Tanpa pengurutan ini, urutan input tua-dulu membuat filter
+                // BB (bestBefore <= bb_tertua) membuang line yang sama untuk
+                // item muda, sehingga tersimpan sebagai separate line.
+                // Contoh: Item-1 tua, Item-2 muda, produk sama -> dieksekusi
+                // muda dulu (belakang), baru tua (muka/release).
+                $meta = [];
+                foreach ($items as $idx => $itRaw) {
+                    $bbSort = '';
+                    $prodSort = 0;
+                    if (is_array($itRaw)) {
+                        $tmpFull = array_merge($header, $itRaw);
+                        $prodSort = (int) ($tmpFull['id_produk'] ?? 0);
+                        $tipeSort = trim((string) ($tmpFull['tipe_penerimaan'] ?? $header['tipe_penerimaan'] ?? 'Primary'));
+                        $bbSort = isset($tmpFull['best_before']) ? trim((string) $tmpFull['best_before']) : '';
+                        if ($prodSort > 0 && PengaturanProduk::isTanpaBatch($prodSort)) {
+                            $bbSort = '9999-12-31';
+                        }
+                        if ($tipeSort === 'REJECT') {
+                            $bbSort = '9999-12-31';
+                        }
+                    }
+                    $meta[$idx] = ['bb' => $bbSort, 'prod' => $prodSort];
+                }
+                $firstApp = [];
+                foreach ($items as $idx => $itRaw) {
+                    $p = $meta[$idx]['prod'] ?? 0;
+                    if (! array_key_exists($p, $firstApp)) {
+                        $firstApp[$p] = $idx;
+                    }
+                }
+                $urutanPlanning = array_keys($items);
+                usort($urutanPlanning, function ($a, $b) use ($meta, $firstApp) {
+                    $faA = $firstApp[$meta[$a]['prod'] ?? 0] ?? $a;
+                    $faB = $firstApp[$meta[$b]['prod'] ?? 0] ?? $b;
+                    if ($faA !== $faB) {
+                        return $faA <=> $faB;
+                    }
+                    $bbA = (string) ($meta[$a]['bb'] ?? '');
+                    $bbB = (string) ($meta[$b]['bb'] ?? '');
+                    if ($bbA !== $bbB) {
+                        // DESC: BB muda (tanggal besar) dulu.
+                        return $bbB <=> $bbA;
+                    }
+
+                    return $a <=> $b;
+                });
+
                 // Fase planning kumulatif: hitung alokasi non-overlapping untuk
                 // semua item se-form sebelum menulis stok apa pun.
                 // Tanpa ini, preview stateless memberi deep/line yang sama ke
@@ -594,7 +647,8 @@ class BarangMasukController extends Controller
                 // maka item-2 wajib jatuh ke line selanjutnya walau BB sama/tua/muda.
                 $reservasi = [];
                 $rencana = [];
-                foreach ($items as $idx => $it) {
+                foreach ($urutanPlanning as $idx) {
+                    $it = $items[$idx];
                     $no = $idx + 1;
                     if (! is_array($it)) {
                         throw new Exception("Item ke-{$no} tidak valid.");
@@ -669,7 +723,11 @@ class BarangMasukController extends Controller
                 // (abaikan alokasi estimasi frontend yang stateless).
                 // Konversi sudah dikerjakan di fase planning, jangan diulang
                 // agar tidak kena "Line tidak lagi kosong".
-                foreach ($rencana as $rc) {
+                // Urutan eksekusi = urutan planning (muda dulu) agar validasi
+                // BB line di store() lolos; hasil dikembalikan ke urutan input
+                // semula supaya frontend tidak salah memetakan nama item.
+                $hasilByIdx = [];
+                foreach ($rencana as $idx => $rc) {
                     $itExec = $rc['itFull'];
                     $itExec['alokasi'] = $rc['alokasi'];
                     $itExec['lokasi_line'] = $rc['lokasi_line'];
@@ -682,12 +740,14 @@ class BarangMasukController extends Controller
                             : 'gagal menyimpan';
                         throw new Exception("{$rc['nama']}: {$pesan}");
                     }
-                    $hasil[] = [
+                    $hasilByIdx[$idx] = [
                         'id_barang_masuk' => $body['data']['id_barang_masuk'] ?? null,
                         'lokasi_akhir_str' => $body['data']['lokasi_akhir_str'] ?? '',
                         'lokasi_akhir' => $body['data']['lokasi_akhir'] ?? [],
                     ];
                 }
+                ksort($hasilByIdx);
+                $hasil = array_values($hasilByIdx);
             });
         } catch (Throwable $e) {
             return $this->fail($e->getMessage().'. Tidak ada item yang tersimpan.', 422);
@@ -3530,6 +3590,17 @@ class BarangMasukController extends Controller
 
         if (!$ref) return $this->fail('Referensi Inbound / Truk tidak ditemukan.');
 
+        // Pertahankan grup detail: filter frontend (inbound, driver, detail)
+        // memisahkan auto-inbound vs normal lewat substring
+        // "Auto dari Outbound" pada catatan. Tanpa ini, tambah item dari
+        // detail auto-outbound tersimpan sebagai normal dan "hilang" dari
+        // detail yang sedang dibuka (muncul sebagai inbound baru di luar).
+        $catatanBaru = 'Tambah item susulan';
+        $catatanRef = (string) ($ref->catatan ?? '');
+        if (str_contains($catatanRef, 'Auto dari Outbound')) {
+            $catatanBaru .= ' - '.$catatanRef;
+        }
+
         DB::beginTransaction();
         try {
             $idBaru = DB::table('barang_masuk')->insertGetId([
@@ -3546,7 +3617,7 @@ class BarangMasukController extends Controller
                 'no_dn' => $ref->no_dn,
                 'nama_driver' => $ref->nama_driver,
                 'no_mobil' => $ref->no_mobil,
-                'catatan' => 'Tambah item susulan',
+                'catatan' => $catatanBaru,
                 'status' => 'Draft', 
                 'created_at' => now(),
             ]);

@@ -306,11 +306,28 @@ export default function InboundFormPage() {
     const waktuMulai = `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`;
 
     // Fase 1: validasi + preview kumulatif per item (read-only, belum menyimpan).
-    // Preview item ke-n membawa reservasi item 1..n-1 se-form agar tidak
-    // menumpuk ke deep/line yang sama. Backend /batch juga alokasi ulang
-    // sekuensial, jadi preview di sini sudah mencerminkan lokasi akhir.
+    // FEFO se-form: item se-produk beda BB harus jatuh ke 1 line yang sama.
+    // Karena pengisian deep dari belakang ke muka (muka = diambil outbound
+    // duluan), preview + simpan diurutkan BB muda dulu per produk: muda di
+    // belakang, tua di muka/release sehingga FEFO tetap jalan walau input
+    // user tua-dulu. Tanpa ini item muda mental ke line lain (separate line).
+    const bbUntukUrut = (it: Item) =>
+      it.no_batch ? "9999-12-31" : (isReject ? "9999-12-31" : (norm(it.best_before) || ""));
+    const firstApp = new Map<number, number>();
+    items.forEach((it, i) => { if (!firstApp.has(it.id_produk)) firstApp.set(it.id_produk, i); });
+    const urutanPreview = items.map((_, i) => i).sort((a, b) => {
+      const faA = firstApp.get(items[a].id_produk) ?? a;
+      const faB = firstApp.get(items[b].id_produk) ?? b;
+      if (faA !== faB) return faA - faB;
+      const bbA = bbUntukUrut(items[a]);
+      const bbB = bbUntukUrut(items[b]);
+      if (bbA !== bbB) return bbA < bbB ? 1 : -1; // DESC: muda dulu
+      return a - b;
+    });
     const reservasiKumulatif: { id_deep: number; jumlah: number; best_before: string; id_produk: number }[] = [];
-    for (let idx = 0; idx < items.length; idx++) {
+    const payloadByIdx: Record<number, Record<string, unknown>> = {};
+    const nameByIdx: Record<number, string> = {};
+    for (const idx of urutanPreview) {
       const it = items[idx];
       const no = idx + 1;
       if (it.id_produk <= 0) { failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: `Produk pada item ke-${no} belum dipilih.` }); continue; }
@@ -364,8 +381,8 @@ export default function InboundFormPage() {
         // Segarkan tampilan block per item agar sudah beda line sebelum Simpan.
         updateItem(idx, { alokasi: freshAlokasi, lokasi_line: freshLokasiLine, block_preview: freshLokasiLine || "-" });
 
-        names.push(it.nama_produk || `Produk ID ${it.id_produk}`);
-        payloads.push({
+        nameByIdx[idx] = it.nama_produk || `Produk ID ${it.id_produk}`;
+        payloadByIdx[idx] = {
           shipment_id: shipmentId,
           id_pengguna: session.user.id_pengguna,
           id_pengguna_lokasi: idPenggunaLokasi,
@@ -387,7 +404,7 @@ export default function InboundFormPage() {
           konversi: idKonversiKirim.length ? idKonversiKirim : undefined,
           waktu_mulai_input: waktuMulai,
           durasi_detik: timer,
-        });
+        };
       } catch (e) {
         let m = (e as Error).message || `Gagal memeriksa item ke-${no}.`;
         const low = m.toLowerCase();
@@ -406,6 +423,16 @@ export default function InboundFormPage() {
       setBusy(false);
       setResults({ success: [], failed });
       return;
+    }
+
+    // Susun payload kembali ke urutan input agar backend (yang juga
+    // mengurutkan muda-dulu secara internal lalu mengembalikan ke urutan
+    // terima) dan pemetaan nama hasil tetap selaras dengan Item 1..N.
+    for (let i = 0; i < items.length; i++) {
+      if (payloadByIdx[i] !== undefined) {
+        names.push(nameByIdx[i]);
+        payloads.push(payloadByIdx[i]);
+      }
     }
 
     // Fase 2: simpan sekaligus dalam 1 transaksi (atomik).
