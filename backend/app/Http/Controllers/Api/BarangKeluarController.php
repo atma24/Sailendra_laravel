@@ -888,6 +888,14 @@ public function store(Request $request)
                 } while ($ginAda);
             }
         }
+        // GIN wajib hanya untuk Secondary
+        if ($tipePengeluaran === 'Secondary' && $ginNo === '') {
+            throw new Exception('GIN wajib diisi untuk Pengeluaran Secondary');
+        }
+        // Normalisasi: kosong -> null (kecuali FOC sudah auto-generate)
+        if ($ginNo === '' && $tipePengeluaran !== 'FOC') {
+            $ginNo = null;
+        }
         $butuhMobilDriver = ! in_array($tipePengeluaran, ['Pemusnahan', 'FOC'], true);
         if ($butuhMobilDriver && ($namaDriver === '' || $noMobil === '')) {
             throw new Exception('nama_driver dan no_mobil wajib untuk Primary / Secondary');
@@ -919,11 +927,14 @@ public function store(Request $request)
         DB::beginTransaction();
         try {
             // Bersihkan data lama jika GIN sama dan status masih Pending / Draft
-            $oldIds = DB::table('barang_keluar')
-                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                ->where('gin_no', $ginNo)
-                ->whereIn('status', ['Pending', 'Draft'])
-                ->pluck('id_barang_keluar');
+            $oldIds = collect();
+            if (! empty($ginNo)) {
+                $oldIds = DB::table('barang_keluar')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('gin_no', $ginNo)
+                    ->whereIn('status', ['Pending', 'Draft'])
+                    ->pluck('id_barang_keluar');
+            }
 
             if ($oldIds->isNotEmpty()) {
                 DB::table('rencana_keluar_deep')
@@ -1947,6 +1958,161 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
     private function filterLokasiOutboundPemusnahan($aliasBlock = 'bl', $aliasLokasi = 'lk')
     {
         return " AND (UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%REJECT%') ";
+    }
+
+    // =========================================================================
+    // 6. UPLOAD FOC (Report FOC kawasan)
+    // =========================================================================
+    public function uploadFoc(Request $request)
+    {
+        set_time_limit(0);
+        $idPengguna = (int) $request->input('id_pengguna', 0);
+        if ($idPengguna <= 0) {
+            return $this->fail('id_pengguna wajib');
+        }
+
+        $file = $request->file('file_excel');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('Harap pilih file Excel atau CSV yang valid.');
+        }
+
+        $ext = strtolower($file->getClientOriginalExtension());
+        $path = $file->getRealPath();
+
+        try {
+            $parsed = $this->bacaFileSpreadsheet($path, $ext);
+            $headerRow = $parsed['header'];
+            $rowsData = $parsed['rows'];
+        } catch (Throwable $e) {
+            return $this->fail($e->getMessage());
+        }
+
+        if (empty($rowsData)) {
+            return $this->fail('File Excel kosong atau tidak memiliki data yang bisa dibaca.');
+        }
+
+        $colMap = [];
+        foreach ($headerRow as $index => $colName) {
+            $clean = trim((string) $colName);
+            if ($clean !== '') {
+                $colMap[$clean] = $index;
+            }
+        }
+
+        $idxDate = $colMap['Tanggal Pengambilan'] ?? null;
+        $idxLokasi = $colMap['Lokasi Pengambilan'] ?? null;
+        $idxJumlah = $colMap['Jumlah Pengambilan Gallon'] ?? null;
+        $idxPengaju = $colMap['Nama Pengaju'] ?? null;
+        $idxDanone = $colMap['Danone ID'] ?? null;
+        $idxPengambil = $colMap['Nama Pengambil'] ?? null;
+        $idxChecker = $colMap['Checker Approval'] ?? null;
+        $idxAdmin = $colMap['Admin Approval'] ?? null;
+        $idxSecurity = $colMap['Security Approval'] ?? null;
+        $idxDn = $colMap['Nomor DN'] ?? null;
+
+        $requiredCols = ['Tanggal Pengambilan', 'Lokasi Pengambilan', 'Jumlah Pengambilan Gallon', 'Danone ID', 'Nomor DN'];
+        foreach ($requiredCols as $col) {
+            if (! isset($colMap[$col])) {
+                return $this->fail("Kolom \"{$col}\" tidak ditemukan di file Excel.");
+            }
+        }
+
+        $idProdukFoc = 74559;
+        $namaProdukFoc = DB::table('produk')->where('id_produk', $idProdukFoc)->value('nama_produk') ?? '5 GALLON AQUA LOCAL';
+
+        $lokasiExists = DB::table('pengguna_lokasi')->pluck('id_pengguna_lokasi')->map(fn ($v) => trim((string) $v))->flip()->all();
+
+        $inserted = 0;
+        $skipped = 0;
+        $failed = 0;
+        $details = [];
+
+        foreach ($rowsData as $idx => $data) {
+            $rowNum = $idx + 2;
+            $rawDate = trim((string) ($data[$idxDate] ?? ''));
+            $rawLokasi = trim((string) ($data[$idxLokasi] ?? ''));
+            $rawJumlah = trim((string) ($data[$idxJumlah] ?? ''));
+            $rawPengaju = trim((string) ($data[$idxPengaju] ?? ''));
+            $rawDanone = trim((string) ($data[$idxDanone] ?? ''));
+            $rawPengambil = trim((string) ($data[$idxPengambil] ?? ''));
+            $rawDn = trim((string) ($data[$idxDn] ?? ''));
+
+            $jumlah = (int) $rawJumlah;
+            if ($jumlah <= 0) {
+                $failed++;
+                $details[] = "Baris {$rowNum}: Jumlah tidak valid ({$rawJumlah})";
+                continue;
+            }
+
+            if ($rawLokasi !== '' && ! isset($lokasiExists[$rawLokasi])) {
+                $failed++;
+                $details[] = "Baris {$rowNum}: Lokasi {$rawLokasi} tidak terdaftar";
+                continue;
+            }
+
+            // Filter approval: skip baris yang tidak semua APPROVED
+            $skipApproval = false;
+            if ($idxChecker !== null || $idxAdmin !== null || $idxSecurity !== null) {
+                $checker = strtoupper(trim((string) ($data[$idxChecker] ?? '')));
+                $admin = strtoupper(trim((string) ($data[$idxAdmin] ?? '')));
+                $security = strtoupper(trim((string) ($data[$idxSecurity] ?? '')));
+                if ($checker !== 'APPROVED' || $admin !== 'APPROVED' || $security !== 'APPROVED') {
+                    $skipApproval = true;
+                }
+            }
+
+            $tanggalKeluar = date('Y-m-d');
+            if ($rawDate !== '') {
+                $parsedDate = date('Y-m-d', strtotime(str_replace('/', '-', $rawDate)));
+                if ($parsedDate !== '1970-01-01' && $parsedDate !== false) {
+                    $tanggalKeluar = $parsedDate;
+                }
+            }
+
+            $namaDriver = $rawPengaju !== '' ? $rawPengaju : '-';
+            $noMobil = '-';
+            $catatan = $rawPengambil !== '' ? $rawPengambil : null;
+
+            $payload = [
+                'id_pengguna_lokasi' => $rawLokasi,
+                'id_pengguna' => $idPengguna,
+                'tipe_pengeluaran' => 'FOC',
+                'gin_no' => $rawDanone,
+                'nama_driver' => $namaDriver,
+                'no_mobil' => $noMobil,
+                'jumlah' => $jumlah,
+                'satuan' => 'GALLON',
+                'no_dn' => $rawDn,
+                'catatan' => $catatan,
+                'tanggal_keluar' => $tanggalKeluar,
+                'tanggal_pengiriman' => $tanggalKeluar,
+                'ritase' => 1,
+                'status' => $skipApproval ? 'Draft' : 'Pending',
+                'items' => [[
+                    'id_produk' => $idProdukFoc,
+                    'jumlah' => $jumlah,
+                    'satuan' => 'GALLON',
+                ]],
+            ];
+
+            try {
+                $this->simpanOutbound($payload);
+                $inserted++;
+            } catch (Throwable $e) {
+                $failed++;
+                $details[] = "Baris {$rowNum} (Danone {$rawDanone}): {$e->getMessage()}";
+            }
+        }
+
+        $msg = "Upload FOC selesai! {$inserted} baris berhasil.";
+        if ($skipped > 0) {
+            $msg .= " {$skipped} baris dilewati.";
+        }
+        if ($failed > 0) {
+            $msg .= " {$failed} baris gagal: " . implode('; ', array_slice($details, 0, 10));
+        }
+
+        return $this->ok(['inserted' => $inserted, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
     }
 
     private function ambilRencanaPerBarangKeluar($idBarangKeluar)

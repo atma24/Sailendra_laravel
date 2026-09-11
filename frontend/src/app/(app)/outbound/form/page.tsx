@@ -200,7 +200,7 @@ export default function OutboundFormPage() {
     if (norm(noMobil) !== "" && !isValidNoMobil(noMobil)) { setErrMobil("No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); notify("error", "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); return; }
     setErrMobil("");
     if (butuhMobilDriver(tipe) && norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
-    if (!isFoc(tipe) && norm(ginNo) === "") { notify("error", "No GIN wajib diisi."); return; }
+    if (tipe === "Secondary" && norm(ginNo) === "") { notify("error", "No GIN wajib diisi untuk Secondary."); return; }
     if (tipe === "Primary" && norm(tujuan) === "") { notify("error", "Tujuan wajib diisi untuk Primary."); return; }
     const payloadItems = items
       .filter((it) => it.id_produk > 0 && angka(it.jumlah) > 0)
@@ -344,8 +344,8 @@ export default function OutboundFormPage() {
           )}
           {tipe !== "FOC" && (
           <div>
-            <label className="outbound-label">No GIN<span className="outbound-req">*</span></label>
-            <input type="text" className="outbound-input" value={ginNo} onChange={(e) => setGinNo(e.target.value)} placeholder="No GIN" maxLength={30} />
+            <label className="outbound-label">No GIN{tipe === "Secondary" && <span className="outbound-req">*</span>}</label>
+            <input type="text" className="outbound-input" value={ginNo} onChange={(e) => setGinNo(e.target.value)} placeholder={tipe === "Secondary" ? "No GIN (wajib)" : "No GIN (opsional)"} maxLength={30} />
           </div>
           )}
           {tipe !== "FOC" && (

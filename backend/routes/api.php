@@ -165,6 +165,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/barang-keluar', [BarangKeluarController::class, 'store']);
     Route::post('/barang-keluar/upload', [BarangKeluarController::class, 'uploadExcel']);
     Route::post('/barang-keluar/upload-file', [BarangKeluarController::class, 'uploadFile']);
+    Route::post('/barang-keluar/upload-foc', [BarangKeluarController::class, 'uploadFoc']);
     Route::post('/barang-keluar/import-file', [BarangKeluarController::class, 'importFile']);
     Route::post('/barang-keluar/import', [BarangKeluarController::class, 'importHistorical']);
     Route::post('/barang-keluar/update', [BarangKeluarController::class, 'update']);
