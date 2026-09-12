@@ -536,26 +536,26 @@ function ManualPicker({ item, onPick }: {
     if (item.id_produk <= 0) { alert("Pilih produk terlebih dahulu."); return; }
     setOpen(true);
     try {
-      const r = await apiGet<{ data?: { id_lokasi: number; nama_lokasi: string }[] }>(stokUrl("manual_lokasi", {}));
-      setLoks(r.data?.data || []);
+      const r = await apiGet<{ id_lokasi: number; nama_lokasi: string }[]>(stokUrl("manual_lokasi", {}));
+      setLoks(r.data || []);
     } catch { /* ignore */ }
   };
 
   const pickBlock = async (idLokasi: number) => {
-    const r = await apiGet<{ data?: { id_block: number; kode_block: string }[] }>(stokUrl("manual_block", { id_lokasi: idLokasi }));
-    setBlocks(r.data?.data || []);
+    const r = await apiGet<{ id_block: number; kode_block: string }[]>(stokUrl("manual_block", { id_lokasi: idLokasi }));
+    setBlocks(r.data || []);
     setLines([]); setBatches([]);
   };
 
   const pickLine = async (idBlock: number) => {
-    const r = await apiGet<{ data?: { id_line: number; nomor_line: string }[] }>(stokUrl("manual_line", { id_block: idBlock }));
-    setLines(r.data?.data || []);
+    const r = await apiGet<{ id_line: number; nomor_line: string }[]>(stokUrl("manual_line", { id_block: idBlock }));
+    setLines(r.data || []);
     setBatches([]);
   };
 
   const pickBatch = async (idLine: number) => {
-    const r = await apiGet<{ data?: { batch: string; best_before: string }[] }>(stokUrl("manual_batch", { id_line: idLine }));
-    setBatches(r.data?.data || []);
+    const r = await apiGet<{ batch: string; best_before: string }[]>(stokUrl("manual_batch", { id_line: idLine }));
+    setBatches(r.data || []);
   };
 
   return (
