@@ -147,6 +147,11 @@ export default function OutboundFormPage() {
   const [submittedId, setSubmittedId] = useState<number>(0);
   const [previewItems, setPreviewItems] = useState<{ id_barang_keluar: number; nama_produk: string; rencana_deep: Rencana[] }[]>([]);
   const [lacking, setLacking] = useState<LackingItem[]>([]);
+  const [showSumberBlok, setShowSumberBlok] = useState(false);
+  const [sumberBlok, setSumberBlok] = useState<"mobil" | "reguler" | "">("");
+  const pendingPayload = useRef<Record<string, unknown> | null>(null);
+  const pendingPayloadItems = useRef<Record<string, unknown>[]>([]);
+  const pendingNames = useRef<string[]>([]);
 
   const startTime = useRef(new Date());
   const [timer, setTimer] = useState(0);
@@ -216,6 +221,37 @@ export default function OutboundFormPage() {
       });
     if (!payloadItems.length) { notify("error", "Item belum lengkap."); return; }
 
+    const waktuMulai = `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`;
+
+    if (tipe !== "Pemusnahan") {
+      pendingPayloadItems.current = payloadItems;
+      pendingNames.current = items.filter((it) => it.id_produk > 0 && angka(it.jumlah) > 0).map((it) => it.nama_produk);
+      pendingPayload.current = {
+        id_pengguna: session.user.id_pengguna,
+        id_pengguna_lokasi: idPenggunaLokasi,
+        tipe_pengeluaran: tipe,
+        tujuan: tipe === "Primary" ? tujuan : "",
+        no_mobil: norm(noMobil) === "" ? "" : norm(noMobil).toUpperCase(),
+        nama_driver: namaDriver,
+        gin_no: ginNo,
+        catatan: catatan,
+        tanggal_keluar: tanggalKeluar,
+        tanggal_pengiriman: tanggalPengiriman,
+        ritase: ritase,
+        status: "Pending",
+        items: payloadItems,
+        waktu_mulai_input: waktuMulai,
+        durasi_detik: timer,
+      };
+      setSumberBlok("");
+      setShowSumberBlok(true);
+      return;
+    }
+
+    await kirimPayload(payloadItems, "");
+  };
+
+  const kirimPayload = async (payloadItems: Record<string, unknown>[], blok: string) => {
     setBusy(true);
     setLacking([]);
     setPreviewItems([]);
@@ -233,6 +269,7 @@ export default function OutboundFormPage() {
         tanggal_keluar: tanggalKeluar,
         tanggal_pengiriman: tanggalPengiriman,
         ritase: ritase,
+        sumber_blok: blok,
         status: "Pending",
         items: payloadItems,
         waktu_mulai_input: `${startTime.current.getFullYear()}-${pad2(startTime.current.getMonth() + 1)}-${pad2(startTime.current.getDate())} ${pad2(startTime.current.getHours())}:${pad2(startTime.current.getMinutes())}:${pad2(startTime.current.getSeconds())}`,
@@ -249,6 +286,16 @@ export default function OutboundFormPage() {
         setLacking([{ nama_produk: "Produk", diminta: 0, tersedia: 0, satuan: "" }]);
       }
     } finally { setBusy(false); }
+  };
+
+  const handleSumberBlok = async (pilihan: "mobil" | "reguler") => {
+    setSumberBlok(pilihan);
+    setShowSumberBlok(false);
+    if (pendingPayload.current) {
+      await kirimPayload(pendingPayloadItems.current, pilihan);
+      pendingPayload.current = null;
+      pendingPayloadItems.current = [];
+    }
   };
 
   const konfirmasi = async () => {
@@ -439,6 +486,49 @@ export default function OutboundFormPage() {
             </div>
             <div className="outbound-error-action">
               <button type="button" className="outbound-error-close" onClick={() => setLacking([])}>Tutup</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSumberBlok && (
+        <div className="outbound-error-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowSumberBlok(false); }}>
+          <div className="outbound-error-modal" style={{ maxWidth: 420 }}>
+            <div className="outbound-error-title">
+              <i className="bi bi-geo-alt-fill"></i>
+              <span>Sumber Pengambilan Stok</span>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#475569", marginBottom: 14, lineHeight: 1.5 }}>
+              Pilih blok sumber pengambilan barang:
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button type="button" onClick={() => handleSumberBlok("mobil")}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", border: "2px solid #E2E8F0", borderRadius: 12, background: "#FFFFFF", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#191970"; e.currentTarget.style.background = "#EEF2FF"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E2E8F0"; e.currentTarget.style.background = "#FFFFFF"; }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#FEF3C7", color: "#D97706", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                  <i className="bi bi-truck"></i>
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>MOBIL</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B", marginTop: 2 }}>Ambil dari blok mobil. Jika kurang, otomatis lanjut ke transit/receh/reguler.</div>
+                </div>
+              </button>
+              <button type="button" onClick={() => handleSumberBlok("reguler")}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", border: "2px solid #E2E8F0", borderRadius: 12, background: "#FFFFFF", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#191970"; e.currentTarget.style.background = "#EEF2FF"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E2E8F0"; e.currentTarget.style.background = "#FFFFFF"; }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#DBEAFE", color: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                  <i className="bi bi-box-seam"></i>
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>Transit / Receh / Reguler</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B", marginTop: 2 }}>Ambil dari blok transit, receh, atau reguler. Blok mobil dilewati.</div>
+                </div>
+              </button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16, paddingTop: 12, borderTop: "1px solid #E2E8F0" }}>
+              <button type="button" className="outbound-error-close" onClick={() => { setShowSumberBlok(false); pendingPayload.current = null; }}>Batal</button>
             </div>
           </div>
         </div>

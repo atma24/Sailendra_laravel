@@ -859,6 +859,8 @@ public function store(Request $request)
         $statusInput = in_array(trim($in['status'] ?? ''), ['Draft', 'Pending']) ? trim($in['status']) : 'Pending';
         $waktuMulaiInput = ! empty($in['waktu_mulai_input']) ? trim($in['waktu_mulai_input']) : null;
         $durasiDetik = ! empty($in['durasi_detik']) ? (int) $in['durasi_detik'] : null;
+        $sumberBlok = trim($in['sumber_blok'] ?? '');
+        $excludeMobil = ($sumberBlok === 'reguler');
 
         // --- TAMBAHAN GUARD ---
         if ($ginNo !== '' && $idPenggunaLokasi !== '') {
@@ -972,7 +974,7 @@ public function store(Request $request)
                 if ($pakaiManual) {
                     $rencana = $this->buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $idLineManual, $batchManual, $bestBeforeManual, $tipePengeluaran);
                 } elseif ($statusInput !== 'Draft') {
-                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran);
+                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran, $excludeMobil);
                 }
 
                 if (empty($rencana) && $statusInput !== 'Draft') {
@@ -1601,19 +1603,19 @@ $in = $request->all();
         }
     }
 
-    private function buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $tipePengeluaran = 'Primary')
+    private function buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $tipePengeluaran = 'Primary', $excludeMobil = false)
     {
-        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, [], $tipePengeluaran);
+        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, [], $tipePengeluaran, $excludeMobil);
     }
 
-    private function buatRencanaFefoEditSelesai($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara = [], $tipePengeluaran = 'Primary')
+    private function buatRencanaFefoEditSelesai($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara = [], $tipePengeluaran = 'Primary', $excludeMobil = false)
     {
-        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran);
+        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $excludeMobil);
     }
 
-    private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary')
+    private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary', $excludeMobil = false)
     {
-        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
+        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk', $excludeMobil);
         $whereExtra = '';
         $params = [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk];
         if ($batch !== '') {
@@ -1653,9 +1655,9 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         return $this->prosesRencanaDariQuery($sql, [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk, $idLine, $batch, $batch, $bestBeforeManual, $bestBeforeManual], $jumlahButuh, []);
     }
 
-    private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran)
+    private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $excludeMobil = false)
     {
-        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
+        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk', $excludeMobil);
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
@@ -1973,9 +1975,14 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         return "{$orderBlok}, {$orderFefo}lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC";
     }
 
-    private function filterLokasiOutboundNormal($aliasBlock = 'bl', $aliasLokasi = 'lk')
+    private function filterLokasiOutboundNormal($aliasBlock = 'bl', $aliasLokasi = 'lk', $excludeMobil = false)
     {
-        return " AND sg.status != 'qi' AND NOT (UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BAD' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BAD' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BS' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BAD') ";
+        $base = " AND sg.status != 'qi' AND NOT (UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BAD' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BAD' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BS' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BAD') ";
+        if ($excludeMobil) {
+            $base .= " AND UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) != 'MOBIL' ";
+        }
+
+        return $base;
     }
 
     private function filterLokasiOutboundPemusnahan($aliasBlock = 'bl', $aliasLokasi = 'lk')
