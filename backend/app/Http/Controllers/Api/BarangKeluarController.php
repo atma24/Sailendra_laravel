@@ -1437,20 +1437,10 @@ $in = $request->all();
             $jugVit = DB::table('produk')->where('id_produk', 10516939)->first();
             $useJugMapping = $jugAqua && $jugVit;
 
+            $autoInboundCount = 0;
             foreach ($grupPerGin as $grup) {
                 $shipmentIdAuto = $grup['shipment_id'];
                 $ginNo = $grup['gin_no'];
-
-                // Deteksi apakah ada item VIT dalam GIN ini (per-shipment)
-                $adaVit = false;
-                if ($useJugMapping) {
-                    foreach ($grup['items'] as $bkItem) {
-                        if (preg_match('/\bVIT\b/i', $bkItem->nama_produk ?? '')) {
-                            $adaVit = true;
-                            break;
-                        }
-                    }
-                }
 
                 foreach ($grup['items'] as $bk) {
                     $bestBeforeBk = $bk->best_before ?? null;
@@ -1486,38 +1476,14 @@ $in = $request->all();
                         }
                     }
 
-                    // Mapping ke JUG: ada VIT → JUG VIT, murni Aqua → JUG AQUA, lainnya → JUG VIT
-                    $idProdukIn = $bk->id_produk;
-                    $namaProdukIn = $bk->nama_produk;
-                    $satuanIn = $bk->satuan;
-                    if ($useJugMapping) {
-                        $isAqua = preg_match('/\bAQUA\b/i', $bk->nama_produk ?? '');
-                        $isVitItem = preg_match('/\bVIT\b/i', $bk->nama_produk ?? '');
-                        if ($adaVit) {
-                            // GIN ini ada Vit → semua jadi JUG VIT
-                            $idProdukIn = (int) $jugVit->id_produk;
-                            $namaProdukIn = $jugVit->nama_produk;
-                            $satuanIn = $jugVit->satuan;
-                        } elseif ($isAqua) {
-                            // Murni Aqua → JUG AQUA
-                            $idProdukIn = (int) $jugAqua->id_produk;
-                            $namaProdukIn = $jugAqua->nama_produk;
-                            $satuanIn = $jugAqua->satuan;
-                        } else {
-                            // Produk lain → JUG VIT
-                            $idProdukIn = (int) $jugVit->id_produk;
-                            $namaProdukIn = $jugVit->nama_produk;
-                            $satuanIn = $jugVit->satuan;
-                        }
-                    }
-
-                    DB::table('barang_masuk')->insert([
+                    // Baris 1 (selalu): produk original apa adanya dari outbound.
+                    $rowsToInsert = [[
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_pengguna'         => $bk->id_pengguna,
-                        'id_produk'           => $idProdukIn,
-                        'nama_produk'         => $namaProdukIn,
+                        'id_produk'           => $bk->id_produk,
+                        'nama_produk'         => $bk->nama_produk,
                         'jumlah'              => $bk->jumlah,
-                        'satuan'              => $satuanIn,
+                        'satuan'              => $bk->satuan,
                         'tanggal_masuk'       => $bk->tanggal_keluar,
                         'tipe_penerimaan'     => 'Secondary',
                         'best_before'         => $bestBeforeBk,
@@ -1532,14 +1498,47 @@ $in = $request->all();
                         'catatan'             => 'Auto dari Outbound GIN ' . $ginNo,
                         'status'              => 'Draft',
                         'created_at'          => now(),
-                    ]);
+                    ]];
+
+                    // Baris 2 (hanya GALLON AQUA/VIT): tambah JUG dengan qty sama, BB/batch null.
+                    $namaBk = (string) ($bk->nama_produk ?? '');
+                    $isGalonAquaVit = preg_match('/GALLON/i', $namaBk)
+                        && (preg_match('/\bAQUA\b/i', $namaBk) || preg_match('/\bVIT\b/i', $namaBk));
+                    if ($isGalonAquaVit && $useJugMapping) {
+                        $jugRow = preg_match('/\bVIT\b/i', $namaBk) ? $jugVit : $jugAqua;
+                        $rowsToInsert[] = [
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_pengguna'         => $bk->id_pengguna,
+                            'id_produk'           => (int) $jugRow->id_produk,
+                            'nama_produk'         => $jugRow->nama_produk,
+                            'jumlah'              => $bk->jumlah,
+                            'satuan'              => $jugRow->satuan,
+                            'tanggal_masuk'       => $bk->tanggal_keluar,
+                            'tipe_penerimaan'     => 'Secondary',
+                            'best_before'         => null,
+                            'batch'               => null,
+                            'batch_sekarang'      => null,
+                            'asal_pabrik'         => $asalPabrik,
+                            'no_dn'               => '',
+                            'nama_driver'         => $bk->nama_driver,
+                            'no_mobil'            => $bk->no_mobil,
+                            'shipment_id'         => $shipmentIdAuto,
+                            'lokasi_block'        => $bk->lokasi_block,
+                            'catatan'             => 'Auto dari Outbound GIN ' . $ginNo,
+                            'status'              => 'Draft',
+                            'created_at'          => now(),
+                        ];
+                    }
+
+                    DB::table('barang_masuk')->insert($rowsToInsert);
+                    $autoInboundCount += count($rowsToInsert);
                 } // end items dalam 1 GIN (1 shipment)
             } // end grup per GIN
             // === END AUTO-INBOUND ===
 
             DB::commit();
 
-            return $this->ok(['ids_dikonfirmasi' => $idsProses, 'auto_inbound_count' => count($itemsSelesai)], 'Konfirmasi outbound berhasil.');
+            return $this->ok(['ids_dikonfirmasi' => $idsProses, 'auto_inbound_count' => $autoInboundCount], 'Konfirmasi outbound berhasil.');
         } catch (Exception $e) {
             DB::rollBack();
 

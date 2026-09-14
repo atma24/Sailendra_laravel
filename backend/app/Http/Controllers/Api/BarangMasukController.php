@@ -84,6 +84,89 @@ class BarangMasukController extends Controller
 
         $rows = $query->orderBy('bm.id_barang_masuk', 'DESC')->get();
 
+        // Enrich ritase untuk Secondary auto dari outbound (pure lookup, tanpa tulis catatan).
+        // Sumber: barang_keluar.ritase via GIN (catatan "Auto dari Outbound GIN {gin_no}")
+        // atau via shipment AUTO-OB{id} untuk GIN kosong.
+        foreach ($rows as $r) {
+            $r->ritase = null;
+        }
+        $autoRows = $rows->filter(function ($r) {
+            return strtoupper(trim((string) ($r->tipe_penerimaan ?? ''))) === 'SECONDARY'
+                && str_contains((string) ($r->catatan ?? ''), 'Auto dari Outbound');
+        });
+        if ($autoRows->isNotEmpty()) {
+            $ginList = [];
+            $obIds = [];
+            $ginRawByRow = [];
+            foreach ($autoRows as $r) {
+                $key = 'bm_' . $r->id_barang_masuk;
+                $ginRaw = null;
+                if (preg_match('/GIN\s+(.+?)\s*$/i', trim((string) ($r->catatan ?? '')), $m)) {
+                    // Catatan susulan berbentuk "Tambah item susulan - Auto dari Outbound GIN xxx"
+                    // tetap tertangkap karena regex mengambil segmen setelah GIN terakhir.
+                    $ginRaw = trim($m[1]);
+                }
+                if ($ginRaw === null || $ginRaw === '' || $ginRaw === '-') {
+                    $ship = trim((string) ($r->shipment_id ?? ''));
+                    if (preg_match('/^AUTO-OB(\d+)$/i', $ship, $ms)) {
+                        $obIds[] = (int) $ms[1];
+                        $ginRawByRow[$key] = null;
+                        continue;
+                    }
+                    $ginRawByRow[$key] = null;
+                    continue;
+                }
+                $ginRawByRow[$key] = $ginRaw;
+                $ginList[] = $ginRaw;
+            }
+            $ginList = array_values(array_unique($ginList));
+            $obIds = array_values(array_unique(array_filter($obIds)));
+
+            $ritaseByGin = [];
+            if (! empty($ginList)) {
+                $bkRows = DB::table('barang_keluar')
+                    ->select('gin_no', 'ritase')
+                    ->whereIn('gin_no', $ginList)
+                    ->get();
+                foreach ($bkRows as $bk) {
+                    $normKey = strtoupper(trim((string) ($bk->gin_no ?? '')));
+                    // 1 GIN = 1 ritase seragam, simpan kemunculan pertama saja.
+                    if ($normKey !== '' && ! array_key_exists($normKey, $ritaseByGin)) {
+                        $ritaseByGin[$normKey] = $bk->ritase;
+                    }
+                }
+            }
+            $ritaseByObId = [];
+            if (! empty($obIds)) {
+                $obRows = DB::table('barang_keluar')
+                    ->select('id_barang_keluar', 'ritase')
+                    ->whereIn('id_barang_keluar', $obIds)
+                    ->get();
+                foreach ($obRows as $bk) {
+                    $ritaseByObId[(int) $bk->id_barang_keluar] = $bk->ritase;
+                }
+            }
+
+            foreach ($autoRows as $r) {
+                $key = 'bm_' . $r->id_barang_masuk;
+                $ginRaw = $ginRawByRow[$key] ?? null;
+                if ($ginRaw !== null) {
+                    $normKey = strtoupper(trim($ginRaw));
+                    if (array_key_exists($normKey, $ritaseByGin)) {
+                        $r->ritase = $ritaseByGin[$normKey];
+                        continue;
+                    }
+                }
+                $ship = trim((string) ($r->shipment_id ?? ''));
+                if (preg_match('/^AUTO-OB(\d+)$/i', $ship, $ms)) {
+                    $oid = (int) $ms[1];
+                    if (array_key_exists($oid, $ritaseByObId)) {
+                        $r->ritase = $ritaseByObId[$oid];
+                    }
+                }
+            }
+        }
+
         return $this->ok($rows);
     }
 

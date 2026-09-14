@@ -31,6 +31,7 @@ type BmRow = {
   stok_sisa: number;
   status: string;
   shipment_id: string;
+  ritase?: number | string | null;
   tanpa_batch?: number | boolean;
   waktu_mulai_input?: string;
   durasi_detik?: number;
@@ -299,6 +300,9 @@ export default function InboundDetailPage() {
   }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
   const first = items[0];
+  const ritaseDisplay = first && first.ritase !== null && first.ritase !== undefined && String(first.ritase).trim() !== ""
+    ? String(first.ritase).trim()
+    : "-";
   const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
   const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `${lok ? "&" : "?"}sumber=${sumberFilter}` : ""}`;
 
@@ -603,6 +607,10 @@ export default function InboundDetailPage() {
               <div className="id-text-row">
                 <div className="id-text-label">Tipe Penerimaan</div>
                 <div className="id-text-value">{norm(first.tipe_penerimaan) || "-"}</div>
+              </div>
+              <div className="id-text-row">
+                <div className="id-text-label">Trip/Ritase</div>
+                <div className="id-text-value">{ritaseDisplay}</div>
               </div>
               <div className="id-text-row">
                 <div className="id-text-label">No Mobil</div>
