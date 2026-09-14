@@ -859,8 +859,6 @@ public function store(Request $request)
         $statusInput = in_array(trim($in['status'] ?? ''), ['Draft', 'Pending']) ? trim($in['status']) : 'Pending';
         $waktuMulaiInput = ! empty($in['waktu_mulai_input']) ? trim($in['waktu_mulai_input']) : null;
         $durasiDetik = ! empty($in['durasi_detik']) ? (int) $in['durasi_detik'] : null;
-        $sumberBlok = trim($in['sumber_blok'] ?? '');
-        $excludeMobil = ($sumberBlok === 'reguler');
 
         // --- TAMBAHAN GUARD ---
         if ($ginNo !== '' && $idPenggunaLokasi !== '') {
@@ -974,7 +972,7 @@ public function store(Request $request)
                 if ($pakaiManual) {
                     $rencana = $this->buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $idLineManual, $batchManual, $bestBeforeManual, $tipePengeluaran);
                 } elseif ($statusInput !== 'Draft') {
-                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran, $excludeMobil);
+                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran);
                 }
 
                 if (empty($rencana) && $statusInput !== 'Draft') {
@@ -1210,8 +1208,6 @@ $in = $request->all();
                 }
 
                 $waktuMulai = ! empty($in['waktu_mulai_input']) ? $in['waktu_mulai_input'] : DB::raw('waktu_mulai_input');
-                $sumberBlokSubmit = trim($in['sumber_blok'] ?? '');
-                $excludeMobilSubmit = ($sumberBlokSubmit === 'reguler');
 
                 $affected = DB::table('barang_keluar')
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)->where('tanggal_keluar', $ref->tanggal_keluar)
@@ -1229,7 +1225,7 @@ $in = $request->all();
                 $stokBookingSementara = [];
                 foreach ($items as $item) {
                     DB::table('rencana_keluar_deep')->where('id_barang_keluar', $item->id_barang_keluar)->delete();
-                    $rencana = $this->buatRencanaFefoEditSelesai($idPenggunaLokasi, $item->id_produk, $item->jumlah, $stokBookingSementara, $item->tipe_pengeluaran ?? 'Primary', $excludeMobilSubmit);
+                    $rencana = $this->buatRencanaFefoEditSelesai($idPenggunaLokasi, $item->id_produk, $item->jumlah, $stokBookingSementara, $item->tipe_pengeluaran ?? 'Primary');
                     $this->simpanRencanaPerBarangKeluar($idPenggunaLokasi, $item->id_barang_keluar, $rencana);
 
                     foreach ($rencana as $r) {
@@ -1605,19 +1601,19 @@ $in = $request->all();
         }
     }
 
-    private function buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $tipePengeluaran = 'Primary', $excludeMobil = false)
+    private function buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $tipePengeluaran = 'Primary')
     {
-        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, [], $tipePengeluaran, $excludeMobil);
+        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, [], $tipePengeluaran);
     }
 
-    private function buatRencanaFefoEditSelesai($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara = [], $tipePengeluaran = 'Primary', $excludeMobil = false)
+    private function buatRencanaFefoEditSelesai($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara = [], $tipePengeluaran = 'Primary')
     {
-        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $excludeMobil);
+        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran);
     }
 
-    private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary', $excludeMobil = false)
+    private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary')
     {
-        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk', $excludeMobil);
+        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
         $whereExtra = '';
         $params = [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk];
         if ($batch !== '') {
@@ -1657,9 +1653,9 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         return $this->prosesRencanaDariQuery($sql, [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk, $idLine, $batch, $batch, $bestBeforeManual, $bestBeforeManual], $jumlahButuh, []);
     }
 
-    private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $excludeMobil = false)
+    private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran)
     {
-        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk', $excludeMobil);
+        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
@@ -1977,14 +1973,9 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         return "{$orderBlok}, {$orderFefo}lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC";
     }
 
-    private function filterLokasiOutboundNormal($aliasBlock = 'bl', $aliasLokasi = 'lk', $excludeMobil = false)
+    private function filterLokasiOutboundNormal($aliasBlock = 'bl', $aliasLokasi = 'lk')
     {
-        $base = " AND sg.status != 'qi' AND NOT (UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BAD' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BAD' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BS' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BAD') ";
-        if ($excludeMobil) {
-            $base .= " AND UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) != 'MOBIL' ";
-        }
-
-        return $base;
+        return " AND sg.status != 'qi' AND NOT (UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) = 'BAD' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BS' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) = 'BAD' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%BADSTOCK%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BS' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) = 'BAD') ";
     }
 
     private function filterLokasiOutboundPemusnahan($aliasBlock = 'bl', $aliasLokasi = 'lk')
