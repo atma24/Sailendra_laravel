@@ -1210,6 +1210,8 @@ $in = $request->all();
                 }
 
                 $waktuMulai = ! empty($in['waktu_mulai_input']) ? $in['waktu_mulai_input'] : DB::raw('waktu_mulai_input');
+                $sumberBlokSubmit = trim($in['sumber_blok'] ?? '');
+                $excludeMobilSubmit = ($sumberBlokSubmit === 'reguler');
 
                 $affected = DB::table('barang_keluar')
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)->where('tanggal_keluar', $ref->tanggal_keluar)
@@ -1227,7 +1229,7 @@ $in = $request->all();
                 $stokBookingSementara = [];
                 foreach ($items as $item) {
                     DB::table('rencana_keluar_deep')->where('id_barang_keluar', $item->id_barang_keluar)->delete();
-                    $rencana = $this->buatRencanaFefoEditSelesai($idPenggunaLokasi, $item->id_produk, $item->jumlah, $stokBookingSementara, $item->tipe_pengeluaran ?? 'Primary');
+                    $rencana = $this->buatRencanaFefoEditSelesai($idPenggunaLokasi, $item->id_produk, $item->jumlah, $stokBookingSementara, $item->tipe_pengeluaran ?? 'Primary', $excludeMobilSubmit);
                     $this->simpanRencanaPerBarangKeluar($idPenggunaLokasi, $item->id_barang_keluar, $rencana);
 
                     foreach ($rencana as $r) {

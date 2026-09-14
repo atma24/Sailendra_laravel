@@ -186,6 +186,9 @@ export default function OutboundDetailPage() {
   const [aSatuan, setASatuan] = useState("");
   const [aCatatan, setACatatan] = useState("");
 
+  const [showSumberBlokModal, setShowSumberBlokModal] = useState(false);
+  const [pendingAksi, setPendingAksi] = useState<string>("");
+
   const notify = (type: string, msg: string) => {
     const id = ++toastSeq.current;
     setToasts((t) => [...t, { id, type, msg }]);
@@ -471,8 +474,15 @@ export default function OutboundDetailPage() {
     } finally { setBusy(false); }
   };
 
-  const ubahStatus = async (aksi: string) => {
+  const ubahStatus = async (aksi: string, sumberBlok?: string) => {
     if (firstId <= 0) return;
+
+    if (aksi === "submit_draft" && !sumberBlok) {
+      setPendingAksi(aksi);
+      setShowSumberBlokModal(true);
+      return;
+    }
+
     setBusy(true);
     try {
       // --- Script Tambahan Timer (Revisi) ---
@@ -493,14 +503,17 @@ export default function OutboundDetailPage() {
       }
       // --------------------------------------
 
-      await apiPost("/barang-keluar/update", {
+      const payload: Record<string, unknown> = {
         id_barang_keluar: firstId,
         id_pengguna_lokasi: String(header?.id_pengguna_lokasi || idPenggunaLokasi()),
         aksi,
         // --- Sisipkan payload timer ---
         waktu_mulai_input: waktuMulaiStr, 
         durasi_detik: durasiDetik,
-      });
+      };
+      if (sumberBlok) payload.sumber_blok = sumberBlok;
+
+      await apiPost("/barang-keluar/update", payload);
 
       sessionStorage.setItem(
         "sailendra_flash_toast",
@@ -513,6 +526,14 @@ export default function OutboundDetailPage() {
     } catch (e) {
       notify("error", (e as Error).message || "Gagal mengubah status.");
     } finally { setBusy(false); }
+  };
+
+  const handleSumberBlok = async (pilihan: "mobil" | "reguler") => {
+    setShowSumberBlokModal(false);
+    if (pendingAksi) {
+      await ubahStatus(pendingAksi, pilihan);
+      setPendingAksi("");
+    }
   };
 
   const ss = statusStyle(status);
@@ -920,6 +941,54 @@ export default function OutboundDetailPage() {
         <ConfirmDialog title="Hapus Item"
           message={`Hapus item <strong>${norm(confirmOne.nama_produk)}</strong>?`}
           onCancel={() => setConfirmOne(null)} onOk={hapusSatu} busy={busy} />
+      )}
+
+      {showSumberBlokModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1050, background: "rgba(15,23,42,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#FFFFFF", borderRadius: 18, width: "100%", maxWidth: 440, boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)", overflow: "hidden" }}>
+            <div style={{ padding: "20px 22px 14px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: "#EEF2FF", color: "#191970", border: "1px solid #C7D2FE", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+                <i className="bi bi-geo-alt-fill"></i>
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.2px" }}>Sumber Pengambilan Stok</div>
+            </div>
+            <div style={{ padding: "0 22px", fontSize: 13, fontWeight: 600, color: "#475569", lineHeight: 1.5 }}>
+              Pilih blok sumber pengambilan barang:
+            </div>
+            <div style={{ padding: "14px 22px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <button type="button" onClick={() => handleSumberBlok("mobil")}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", border: "2px solid #E2E8F0", borderRadius: 12, background: "#FFFFFF", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#191970"; e.currentTarget.style.background = "#EEF2FF"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E2E8F0"; e.currentTarget.style.background = "#FFFFFF"; }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#FEF3C7", color: "#D97706", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                  <i className="bi bi-truck"></i>
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>MOBIL</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B", marginTop: 2 }}>Ambil dari blok mobil. Jika kurang, otomatis lanjut ke transit/receh/reguler.</div>
+                </div>
+              </button>
+              <button type="button" onClick={() => handleSumberBlok("reguler")}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", border: "2px solid #E2E8F0", borderRadius: 12, background: "#FFFFFF", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#191970"; e.currentTarget.style.background = "#EEF2FF"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E2E8F0"; e.currentTarget.style.background = "#FFFFFF"; }}>
+                <div style={{ width: 40, height: 40, borderRadius: 10, background: "#DBEAFE", color: "#2563EB", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
+                  <i className="bi bi-box-seam"></i>
+                </div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>Transit / Receh / Reguler</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B", marginTop: 2 }}>Ambil dari blok transit, receh, atau reguler. Blok mobil dilewati.</div>
+                </div>
+              </button>
+            </div>
+            <div style={{ padding: "14px 22px", background: "#F8FAFC", borderTop: "1px solid #E2E8F0", display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => { setShowSumberBlokModal(false); setPendingAksi(""); }}
+                style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #CBD5E1", background: "#FFFFFF", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
