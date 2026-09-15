@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiPost, apiGet } from "@/lib/api";
-import { aktifLokasiId, useSession } from "@/lib/auth";
+import { aktifLokasiId, lokasiParam, useSession, type Session } from "@/lib/auth";
 
 type Produk = { id_produk: number; nama_produk: string; satuan: string };
 type Plant = { id_plant: string; nama_plant: string };
@@ -88,7 +88,11 @@ const css = `
 .outbound-manual-box { display: none; flex-direction: column; gap: 10px; border-top: 1px dashed #CBD5E1; padding-top: 10px; }
 .outbound-manual-box.show { display: flex; }
 .outbound-manual-select { width: 100%; height: 38px; border-radius: 10px; border: 1px solid #CBD5E1; background: #F8FAFC; color: #0F172A; font-size: 13px; font-weight: 600; padding: 0 12px; outline: none; box-sizing: border-box; }
+.outbound-manual-select:disabled { background: #F1F5F9; color: #94A3B8; cursor: not-allowed; }
 .outbound-manual-info { font-size: 12px; font-weight: 700; color: #64748B; line-height: 1.35; }
+.outbound-manual-err { font-size: 12px; font-weight: 700; color: #DC2626; background: #FEF2F2; border: 1px solid #FCA5A5; border-radius: 10px; padding: 8px 12px; line-height: 1.35; }
+.outbound-manual-summary { font-size: 12px; font-weight: 700; color: var(--primary-navy, #191970); background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 10px; padding: 8px 12px; line-height: 1.4; }
+.outbound-manual-label { display: block; font-size: 11px; font-weight: 800; color: #475569; margin-bottom: 4px; }
 .outbound-preview-box { border: 1px solid #E2E8F0; background: #EEF2FF; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .outbound-preview-title { font-size: 13px; font-weight: 800; color: var(--primary-navy, #191970); }
 .outbound-preview-row { border-top: 1px dashed #CBD5E1; padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
@@ -151,6 +155,8 @@ export default function OutboundFormPage() {
   const startTime = useRef(new Date());
   const [timer, setTimer] = useState(0);
 
+  const emptyItem = (): Item => ({ id_produk: 0, nama_produk: "", satuan: "", jumlah: "", id_line: 0, batch: "", best_before: "" });
+
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -177,8 +183,7 @@ export default function OutboundFormPage() {
   if (!session || !loaded) return null;
 
   const idPenggunaLokasi = aktifLokasiId(session);
-
-  const emptyItem = (): Item => ({ id_produk: 0, nama_produk: "", satuan: "", jumlah: "", id_line: 0, batch: "", best_before: "" });
+  const lokasiQuery = lokasiParam(session as Session);
 
   const addItem = () => setItems((arr) => [...arr, emptyItem()]);
   const removeItem = (idx: number) => setItems((arr) => arr.filter((_, i) => i !== idx));
@@ -186,7 +191,7 @@ export default function OutboundFormPage() {
     setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
 
   const pickProduk = (idx: number, p: Produk) =>
-    updateItem(idx, { id_produk: p.id_produk, nama_produk: `${p.id_produk} - ${p.nama_produk}`, satuan: (p.satuan || "").toUpperCase() });
+    updateItem(idx, { id_produk: p.id_produk, nama_produk: `${p.id_produk} - ${p.nama_produk}`, satuan: (p.satuan || "").toUpperCase(), id_line: 0, batch: "", best_before: "" });
 
   const notify = (type: string, msg: string) => {
     const id = ++toastSeq.current;
@@ -203,6 +208,8 @@ export default function OutboundFormPage() {
     if (butuhDriver(tipe) && norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
     if (tipe === "Secondary" && norm(ginNo) === "") { notify("error", "No GIN wajib diisi untuk Secondary."); return; }
     if (tipe === "Primary" && norm(tujuan) === "") { notify("error", "Tujuan wajib diisi untuk Primary."); return; }
+    const partialManual = items.findIndex((it) => it.id_produk > 0 && ((it.id_line > 0 && it.batch === "") || (it.id_line <= 0 && it.batch !== "")));
+    if (partialManual >= 0) { notify("error", `Item ${partialManual + 1}: lokasi manual belum lengkap. Lengkapi Line + Batch atau klik "Batalkan Lokasi" untuk pakai FEFO otomatis.`); return; }
     const payloadItems = items
       .filter((it) => it.id_produk > 0 && angka(it.jumlah) > 0)
       .map((it) => {
@@ -376,7 +383,7 @@ export default function OutboundFormPage() {
                   onChange={(e) => updateItem(idx, { jumlah: e.target.value })} />
               </div>
 
-              {submittedId <= 0 && <ManualPicker item={it} onPick={(idLine, batch, bestBefore) =>
+              {submittedId <= 0 && <ManualPicker key={`${idx}-${it.id_produk}`} item={it} lokasiQuery={lokasiQuery} onError={(m) => notify("error", m)} onPick={(idLine, batch, bestBefore) =>
                 updateItem(idx, { id_line: idLine, batch, best_before: bestBefore })} />}
 
               {previewItems.length > 0 && previewItems[idx]?.rencana_deep?.length > 0 && (
@@ -515,89 +522,182 @@ function PlantPicker({ plantList, value, onChange, disabled }: {
   );
 }
 
-function ManualPicker({ item, onPick }: {
-  item: Item; onPick: (idLine: number, batch: string, bestBefore: string) => void;
+function ManualPicker({ item, lokasiQuery, onPick, onError }: {
+  item: Item; lokasiQuery: string; onPick: (idLine: number, batch: string, bestBefore: string) => void; onError: (msg: string) => void;
 }) {
+  type LokRow = { id_lokasi: number; nama_lokasi: string; total_qty?: number };
+  type BlockRow = { id_block: number; kode_block: string; total_qty?: number };
+  type LineRow = { id_line: number; nomor_line: string; total_qty?: number };
+  type BatchRow = { batch: string; best_before: string; qty_sisa?: number };
+  type LoadKey = null | "lokasi" | "block" | "line" | "batch";
+
   const [open, setOpen] = useState(false);
-  const [loks, setLoks] = useState<{ id_lokasi: number; nama_lokasi: string }[]>([]);
-  const [blocks, setBlocks] = useState<{ id_block: number; kode_block: string }[]>([]);
-  const [lines, setLines] = useState<{ id_line: number; nomor_line: string }[]>([]);
-  const [batches, setBatches] = useState<{ batch: string; best_before: string }[]>([]);
+  const [selLokasi, setSelLokasi] = useState("");
+  const [selBlock, setSelBlock] = useState("");
+  const [loks, setLoks] = useState<LokRow[]>([]);
+  const [blocks, setBlocks] = useState<BlockRow[]>([]);
+  const [lines, setLines] = useState<LineRow[]>([]);
+  const [batches, setBatches] = useState<BatchRow[]>([]);
+  const [loading, setLoading] = useState<LoadKey>(null);
+  const [err, setErr] = useState("");
+
+  const idProduk = item.id_produk || 0;
+
+  // Reset cascade saat produk diganti ditangani via key={idx-id_produk} di parent
+  // (remount penuh) + pickProduk yang me-reset id_line/batch/best_before.
 
   const stokUrl = (mode: string, extra: Record<string, unknown>) => {
     const p = new URLSearchParams();
     p.set("mode", mode);
-    p.set("id_produk", String(item.id_produk || 0));
-    Object.entries(extra).forEach(([k, v]) => { if (v) p.set(k, String(v)); });
-    return `/stok?${p.toString()}`;
+    p.set("id_produk", String(idProduk));
+    Object.entries(extra).forEach(([k, v]) => {
+      if (v === "" || v === null || v === undefined) return;
+      if (typeof v === "number" && v <= 0) return;
+      p.set(k, String(v));
+    });
+    const base = `/stok?${p.toString()}`;
+    return lokasiQuery ? `${base}&${lokasiQuery}` : base;
+  };
+
+  const failMsg = (e: unknown, fallback: string) => {
+    const m = (e as Error)?.message || fallback;
+    setErr(m);
+    onError(m);
   };
 
   const loadLokasi = async () => {
-    if (item.id_produk <= 0) { alert("Pilih produk terlebih dahulu."); return; }
+    if (idProduk <= 0) { onError("Pilih produk terlebih dahulu."); return; }
+    if (open) { setOpen(false); return; }
     setOpen(true);
+    if (loks.length > 0) return;
+    setLoading("lokasi"); setErr("");
     try {
-      const r = await apiGet<{ id_lokasi: number; nama_lokasi: string }[]>(stokUrl("manual_lokasi", {}));
-      setLoks(r.data || []);
-    } catch { /* ignore */ }
+      const r = await apiGet<LokRow[]>(stokUrl("manual_lokasi", {}));
+      const list = r.data || [];
+      setLoks(list);
+      if (!list.length) setErr("Tidak ada stok tersedia untuk produk ini di lokasi Anda.");
+    } catch (e) { failMsg(e, "Gagal memuat lokasi."); } finally { setLoading(null); }
   };
 
-  const pickBlock = async (idLokasi: number) => {
-    const r = await apiGet<{ id_block: number; kode_block: string }[]>(stokUrl("manual_block", { id_lokasi: idLokasi }));
-    setBlocks(r.data || []);
+  const handleLokasi = async (v: string) => {
+    setSelLokasi(v); setSelBlock("");
+    setBlocks([]); setLines([]); setBatches([]);
+    onPick(0, "", "");
+    setErr("");
+    if (!v) return;
+    setLoading("block");
+    try {
+      const r = await apiGet<BlockRow[]>(stokUrl("manual_block", { id_lokasi: angka(v) }));
+      const list = r.data || [];
+      setBlocks(list);
+      if (!list.length) setErr("Tidak ada block berisi produk ini di lokasi tersebut.");
+    } catch (e) { failMsg(e, "Gagal memuat block."); } finally { setLoading(null); }
+  };
+
+  const handleBlock = async (v: string) => {
+    setSelBlock(v);
     setLines([]); setBatches([]);
+    onPick(0, "", "");
+    setErr("");
+    if (!v) return;
+    setLoading("line");
+    try {
+      const r = await apiGet<LineRow[]>(stokUrl("manual_line", { id_block: angka(v) }));
+      const list = r.data || [];
+      setLines(list);
+      if (!list.length) setErr("Tidak ada line berisi produk ini di block tersebut.");
+    } catch (e) { failMsg(e, "Gagal memuat line."); } finally { setLoading(null); }
   };
 
-  const pickLine = async (idBlock: number) => {
-    const r = await apiGet<{ id_line: number; nomor_line: string }[]>(stokUrl("manual_line", { id_block: idBlock }));
-    setLines(r.data || []);
+  const handleLine = async (v: string) => {
+    const idLine = angka(v);
+    onPick(idLine, "", "");
     setBatches([]);
+    setErr("");
+    if (!idLine) return;
+    setLoading("batch");
+    try {
+      const r = await apiGet<BatchRow[]>(stokUrl("manual_batch", { id_line: idLine }));
+      const list = r.data || [];
+      setBatches(list);
+      if (!list.length) setErr("Tidak ada batch tersedia di line tersebut.");
+    } catch (e) { failMsg(e, "Gagal memuat batch."); } finally { setLoading(null); }
   };
 
-  const pickBatch = async (idLine: number) => {
-    const r = await apiGet<{ batch: string; best_before: string }[]>(stokUrl("manual_batch", { id_line: idLine }));
-    setBatches(r.data || []);
+  const handleBatch = (v: string) => {
+    if (v === "") { onPick(item.id_line, "", ""); return; }
+    const sel = batches[angka(v)];
+    if (!sel) return;
+    onPick(item.id_line, sel.batch, sel.best_before || "");
   };
+
+  const batalkan = () => {
+    setOpen(false);
+    setSelLokasi(""); setSelBlock("");
+    setLoks([]); setBlocks([]); setLines([]); setBatches([]);
+    setErr(""); setLoading(null);
+    onPick(0, "", "");
+  };
+
+  const lineVal = item.id_line > 0 ? String(item.id_line) : "";
+  const batchIdx = item.batch !== "" ? batches.findIndex((b) => b.batch === item.batch && (b.best_before || "") === (item.best_before || "")) : -1;
+  const batchVal = batchIdx >= 0 ? String(batchIdx) : "";
+  const manualLengkap = item.id_line > 0 && item.batch !== "";
+  const lokName = loks.find((l) => String(l.id_lokasi) === selLokasi)?.nama_lokasi || "";
+  const blockName = blocks.find((b) => String(b.id_block) === selBlock)?.kode_block || "";
+  const lineName = lines.find((l) => String(l.id_line) === String(item.id_line))?.nomor_line || "";
 
   return (
     <div>
-      <button type="button" className="outbound-location-btn" disabled={item.id_produk <= 0} onClick={loadLokasi}>
-        <i className="bi bi-geo-alt"></i>
-        Pilih Lokasi
+      <button type="button" className="outbound-location-btn" disabled={idProduk <= 0} onClick={loadLokasi}>
+        <i className={`bi ${manualLengkap ? "bi-geo-alt-fill" : "bi-geo-alt"}`}></i>
+        {manualLengkap ? "Ubah Lokasi" : open ? "Tutup Lokasi" : "Pilih Lokasi"}
       </button>
 
+      {manualLengkap && (
+        <div className="outbound-manual-summary" style={{ marginTop: 8 }}>
+          Manual: {lokName || "Lokasi"}{blockName ? ` > Block ${blockName}` : ""}{lineName ? ` > Line ${lineName}` : ` > Line ${item.id_line}`} | Batch {item.batch} | BB {item.best_before || "-"}
+        </div>
+      )}
+
       {open && (
-        <div className="outbound-manual-box show">
-          <button type="button" className="outbound-location-btn" onClick={() => {
-            setOpen(false); setLoks([]); setBlocks([]); setLines([]); setBatches([]); onPick(0, "", "");
-          }}>
+        <div className="outbound-manual-box show" style={{ marginTop: manualLengkap ? 8 : 0 }}>
+          <button type="button" className="outbound-location-btn" onClick={batalkan}>
             Batalkan Lokasi
           </button>
 
-          <select className="outbound-manual-select" value="" onChange={(e) => pickBlock(angka(e.target.value))}>
-            <option value="">Pilih Lokasi</option>
-            {loks.map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{l.nama_lokasi}</option>)}
-          </select>
-          <select className="outbound-manual-select" disabled={!blocks.length} value="" onChange={(e) => pickLine(angka(e.target.value))}>
-            <option value="">Pilih Block</option>
-            {blocks.map((b) => <option key={b.id_block} value={b.id_block}>Block {b.kode_block}</option>)}
-          </select>
-          <select className="outbound-manual-select" disabled={!lines.length} value={item.id_line} onChange={(e) => {
-            const idLine = angka(e.target.value);
-            onPick(idLine, "", "");
-            pickBatch(idLine);
-          }}>
-            <option value="">Pilih Line</option>
-            {lines.map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
-          </select>
-          <select className="outbound-manual-select" disabled={!batches.length} value={item.batch} onChange={(e) => {
-            const sel = batches.find((b) => b.batch === e.target.value);
-            onPick(item.id_line, e.target.value, sel?.best_before || "");
-          }}>
-            <option value="">Pilih Batch</option>
-            {batches.map((b) => <option key={b.batch} value={b.batch}>{b.batch} | BB {b.best_before || "-"}</option>)}
-          </select>
+          {err && <div className="outbound-manual-err">{err}</div>}
 
-          <div className="outbound-manual-info">Jika lokasi tidak dipilih, sistem akan menggunakan FEFO otomatis.</div>
+          <div>
+            <label className="outbound-manual-label">Lokasi</label>
+            <select className="outbound-manual-select" value={selLokasi} disabled={loading === "lokasi"} onChange={(e) => handleLokasi(e.target.value)}>
+              <option value="">{loading === "lokasi" ? "Memuat lokasi..." : loks.length ? "Pilih Lokasi" : "Pilih Lokasi (klik Pilih Lokasi dulu)"}</option>
+              {loks.map((l) => <option key={l.id_lokasi} value={String(l.id_lokasi)}>{l.nama_lokasi}{l.total_qty !== undefined ? ` (sisa ${l.total_qty})` : ""}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="outbound-manual-label">Block</label>
+            <select className="outbound-manual-select" value={selBlock} disabled={!selLokasi || loading === "block"} onChange={(e) => handleBlock(e.target.value)}>
+              <option value="">{loading === "block" ? "Memuat block..." : !selLokasi ? "Pilih lokasi dulu" : blocks.length ? "Pilih Block" : "Tidak ada block"}</option>
+              {blocks.map((b) => <option key={b.id_block} value={String(b.id_block)}>Block {b.kode_block}{b.total_qty !== undefined ? ` (sisa ${b.total_qty})` : ""}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="outbound-manual-label">Line</label>
+            <select className="outbound-manual-select" value={lineVal} disabled={!selBlock || loading === "line"} onChange={(e) => handleLine(e.target.value)}>
+              <option value="">{loading === "line" ? "Memuat line..." : !selBlock ? "Pilih block dulu" : lines.length ? "Pilih Line" : "Tidak ada line"}</option>
+              {lines.map((l) => <option key={l.id_line} value={String(l.id_line)}>Line {l.nomor_line}{l.total_qty !== undefined ? ` (sisa ${l.total_qty})` : ""}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="outbound-manual-label">Batch</label>
+            <select className="outbound-manual-select" value={batchVal} disabled={!(item.id_line > 0) || loading === "batch"} onChange={(e) => handleBatch(e.target.value)}>
+              <option value="">{loading === "batch" ? "Memuat batch..." : !(item.id_line > 0) ? "Pilih line dulu" : batches.length ? "Pilih Batch" : "Tidak ada batch"}</option>
+              {batches.map((b, i) => <option key={`${b.batch}__${b.best_before || "-"}__${i}`} value={String(i)}>{b.batch} | BB {b.best_before || "-"}{b.qty_sisa !== undefined ? ` | Sisa ${b.qty_sisa}` : ""}</option>)}
+            </select>
+          </div>
+
+          <div className="outbound-manual-info">Jika lokasi tidak dipilih / dibatalkan, sistem akan menggunakan FEFO otomatis.</div>
         </div>
       )}
     </div>
