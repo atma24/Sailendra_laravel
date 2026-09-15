@@ -801,6 +801,99 @@ const ZONA_COLORS = [
   "#FACC15", // QI - Bright Yellow
 ];
 
+// Slice di bawah threshold ini terlalu kecil untuk teks (dilewati, nilainya tetap
+// terlihat via tooltip). Disamakan dengan perilaku datalabels sebelumnya.
+const ZONA_LABEL_MIN_PCT = 5;
+
+// Plugin Chart.js inline: menulis angka exact di tengah tiap slice pie.
+// Inline (bukan CDN) agar label dijamin tampil tanpa request jaringan tambahan.
+const zonaValueLabels = {
+  id: "zonaValueLabels",
+  afterDatasetsDraw(chart: unknown) {
+    const c = chart as {
+      config?: { type?: string };
+      ctx?: CanvasRenderingContext2D;
+      data?: { datasets?: { data?: unknown[]; backgroundColor?: unknown }[] };
+      getDatasetMeta?: (i: number) => { data?: unknown[] };
+    };
+    if (c.config?.type !== "pie") return;
+    const ctx = c.ctx;
+    const dataset = c.data?.datasets?.[0];
+    const values = ((dataset?.data as number[] | undefined) || []).map((v) => Number(v) || 0);
+    if (!ctx || values.length === 0) return;
+    const total = values.reduce((a, v) => a + v, 0);
+    if (total <= 0) return;
+    const arcs = c.getDatasetMeta?.(0)?.data || [];
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+    const bgList = Array.isArray(dataset?.backgroundColor)
+      ? (dataset?.backgroundColor as string[])
+      : [];
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `800 ${isMobile ? 10 : 12}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    values.forEach((v, i) => {
+      if ((v / total) * 100 < ZONA_LABEL_MIN_PCT) return;
+      const el = arcs[i] as
+        | {
+            x?: number;
+            y?: number;
+            startAngle?: number;
+            endAngle?: number;
+            outerRadius?: number;
+            innerRadius?: number;
+            getProps?: (props: string[], useFinal: boolean) => Record<string, number>;
+            tooltipPosition?: (useFinal?: boolean) => { x: number; y: number };
+            getCenterPoint?: (useFinal?: boolean) => { x: number; y: number };
+          }
+        | undefined;
+      if (!el) return;
+      let pos: { x: number; y: number } | null = null;
+      if (typeof el.tooltipPosition === "function") {
+        try {
+          pos = el.tooltipPosition(true);
+        } catch {
+          pos = null;
+        }
+      }
+      if (!pos && typeof el.getCenterPoint === "function") {
+        try {
+          pos = el.getCenterPoint(true);
+        } catch {
+          pos = null;
+        }
+      }
+      if (!pos) {
+        const p =
+          typeof el.getProps === "function"
+            ? el.getProps(["x", "y", "startAngle", "endAngle", "outerRadius", "innerRadius"], true)
+            : (el as Record<string, number>);
+        if (
+          typeof p.x !== "number" ||
+          typeof p.y !== "number" ||
+          typeof p.startAngle !== "number" ||
+          typeof p.endAngle !== "number" ||
+          typeof p.outerRadius !== "number"
+        ) {
+          return;
+        }
+        const mid = (p.startAngle + p.endAngle) / 2;
+        const r = ((p.outerRadius || 0) + (p.innerRadius || 0)) / 2;
+        pos = { x: p.x + Math.cos(mid) * r, y: p.y + Math.sin(mid) * r };
+      }
+      const bg = bgList[i];
+      const darkText = bg === "#FACC15" || bg === "#F59E0B";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = darkText ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.35)";
+      ctx.fillStyle = darkText ? "#0F172A" : "#FFFFFF";
+      const label = fmt(v);
+      ctx.strokeText(label, pos.x, pos.y);
+      ctx.fillText(label, pos.x, pos.y);
+    });
+    ctx.restore();
+  },
+};
+
 export default function DashboardPage() {
   const session = useSession();
   const [bulan, setBulan] = useState(() => new Date().toISOString().slice(0, 7));
@@ -861,18 +954,17 @@ export default function DashboardPage() {
   const loadCharts = useCallback(() => {
     const win = window as unknown as {
       Chart?: new (ctx: string | CanvasRenderingContext2D, cfg: unknown) => unknown;
-      ChartDataLabels?: unknown;
     };
     const Chart = win.Chart;
     if (!Chart || !summary) return;
-    // Daftarkan datalabels sekali saja (untuk angka exact di dalam pie).
+    // Daftarkan plugin label angka pie sekali saja (inline, tanpa CDN).
     const ChartAny = Chart as unknown as {
       register?: (p: unknown) => void;
-      _datalabelsRegistered?: boolean;
+      _zonaLabelsRegistered?: boolean;
     };
-    if (win.ChartDataLabels && !ChartAny._datalabelsRegistered && ChartAny.register) {
-      ChartAny.register(win.ChartDataLabels);
-      ChartAny._datalabelsRegistered = true;
+    if (!ChartAny._zonaLabelsRegistered && ChartAny.register) {
+      ChartAny.register(zonaValueLabels);
+      ChartAny._zonaLabelsRegistered = true;
     }
     const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
     const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -923,7 +1015,6 @@ export default function DashboardPage() {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            datalabels: { display: false },
             legend: {
               position: "top",
               labels: {
@@ -1020,24 +1111,6 @@ export default function DashboardPage() {
                 },
               },
             },
-            datalabels: {
-              formatter: (value: number) => {
-                const pct = zonaTotal > 0 ? (Number(value) / zonaTotal) * 100 : 0;
-                if (pct < 5) return "";
-                return fmt(value);
-              },
-              color: (c: { dataset: { backgroundColor?: string[] }; dataIndex: number }) => {
-                const bg = c.dataset?.backgroundColor?.[c.dataIndex];
-                return bg === "#FACC15" || bg === "#F59E0B" ? "#0F172A" : "#FFFFFF";
-              },
-              font: { weight: "bold" as const, size: isMobile ? 10 : 12 },
-              textStrokeColor: "rgba(0,0,0,0.25)",
-              textStrokeWidth: 2,
-              anchor: "center" as const,
-              align: "center" as const,
-              clamp: true,
-              clip: false,
-            },
           },
         },
       });
@@ -1080,7 +1153,6 @@ export default function DashboardPage() {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            datalabels: { display: false },
             legend: { display: false },
             tooltip: {
               backgroundColor: "#0F172A",
@@ -1193,12 +1265,6 @@ export default function DashboardPage() {
     <>
       <Script
         src="https://cdn.jsdelivr.net/npm/chart.js"
-        strategy="afterInteractive"
-        onReady={loadCharts}
-        onLoad={loadCharts}
-      />
-      <Script
-        src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"
         strategy="afterInteractive"
         onReady={loadCharts}
         onLoad={loadCharts}
