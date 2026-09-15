@@ -773,6 +773,11 @@ const dashCss = `
 
 const fmt = (n: string | number) => new Intl.NumberFormat("id-ID").format(Number(n) || 0);
 
+// Rumus persen okupansi gudang — sama persis dengan card Gabungan di halaman stock
+// (stock-view.tsx): bilangan bulat, max 100, 0 bila kapasitas tidak ada.
+const persenOkupansi = (qty: number, kap: number) =>
+  kap > 0 ? Math.min(100, Math.round((qty / kap) * 100)) : 0;
+
 const ZONAS: [string, string][] = [
   ["normal", "Normal"],
   ["bad", "Bad Stock"],
@@ -800,6 +805,7 @@ export default function DashboardPage() {
   const session = useSession();
   const [bulan, setBulan] = useState(() => new Date().toISOString().slice(0, 7));
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [totalKapRak, setTotalKapRak] = useState(0);
   const [stokSearch, setStokSearch] = useState("");
   const [selectedProduks, setSelectedProduks] = useState<string[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -826,6 +832,21 @@ export default function DashboardPage() {
       .catch(() => setSummary(null));
   }, [session, bulan, selectedProduks]);
 
+  // Total kapasitas rak gudang (penyebut persen okupansi, sama seperti card
+  // Gabungan di halaman stock). Kapasitas itu per-gudang, bukan per-bulan/produk,
+  // jadi cukup di-fetch per lokasi tanpa param bulan & produk.
+  useEffect(() => {
+    if (!session) return;
+    const params = new URLSearchParams(lokasiParam(session as Session));
+    apiGet<{ total_kapasitas: number }[]>(`/stok?mode=kapasitas_total&${params.toString()}`)
+      .then((r) => {
+        const rows = r.data || [];
+        const v = parseInt(String(rows[0]?.total_kapasitas ?? ""), 10);
+        setTotalKapRak(isNaN(v) ? 0 : v);
+      })
+      .catch(() => setTotalKapRak(0));
+  }, [session]);
+
   // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -838,8 +859,21 @@ export default function DashboardPage() {
   }, []);
 
   const loadCharts = useCallback(() => {
-    const Chart = (window as unknown as { Chart?: new (ctx: string | CanvasRenderingContext2D, cfg: unknown) => unknown }).Chart;
+    const win = window as unknown as {
+      Chart?: new (ctx: string | CanvasRenderingContext2D, cfg: unknown) => unknown;
+      ChartDataLabels?: unknown;
+    };
+    const Chart = win.Chart;
     if (!Chart || !summary) return;
+    // Daftarkan datalabels sekali saja (untuk angka exact di dalam pie).
+    const ChartAny = Chart as unknown as {
+      register?: (p: unknown) => void;
+      _datalabelsRegistered?: boolean;
+    };
+    if (win.ChartDataLabels && !ChartAny._datalabelsRegistered && ChartAny.register) {
+      ChartAny.register(win.ChartDataLabels);
+      ChartAny._datalabelsRegistered = true;
+    }
     const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
     const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
@@ -889,6 +923,7 @@ export default function DashboardPage() {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
+            datalabels: { display: false },
             legend: {
               position: "top",
               labels: {
@@ -928,31 +963,42 @@ export default function DashboardPage() {
       });
     }
 
-    // Doughnut Chart: Zona Stock Breakdown
-    const pie = pieRef.current;
-    if (pie) {
-      (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-      const ctx = pie.getContext("2d");
-      if (!ctx) return;
+    // Pie Chart: Zona Stock Breakdown (hanya zona berisi, angka exact di dalam slice)
+    {
       const zona = (summary.stock?.zona || {}) as Record<string, number>;
+      const zonaAktif = ZONAS.map((z, i) => ({
+        key: z[0],
+        label: z[1],
+        value: zona[z[0]] || 0,
+        color: ZONA_COLORS[i % ZONA_COLORS.length],
+      })).filter((d) => d.value > 0);
+      const zonaTotal = zonaAktif.reduce((a, d) => a + d.value, 0);
+      if (zonaAktif.length === 0 || zonaTotal === 0) {
+        (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
+        pieChartRef.current = null;
+      } else {
+        const pie = pieRef.current;
+        if (pie) {
+          (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
+          const ctx = pie.getContext("2d");
+          if (ctx) {
       pieChartRef.current = new Chart(ctx, {
-        type: "doughnut",
+        type: "pie",
         data: {
-          labels: ZONAS.map((z) => z[1]),
+          labels: zonaAktif.map((d) => d.label),
           datasets: [
             {
-              data: ZONAS.map((z) => zona[z[0]] || 0),
-              backgroundColor: ZONA_COLORS,
-              borderWidth: 3,
+              data: zonaAktif.map((d) => d.value),
+              backgroundColor: zonaAktif.map((d) => d.color),
+              borderWidth: 2,
               borderColor: "#FFFFFF",
-              hoverOffset: 6,
+              hoverOffset: 8,
             },
           ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          cutout: "70%",
           plugins: {
             legend: {
               position: isMobile ? "bottom" : "right",
@@ -966,10 +1012,38 @@ export default function DashboardPage() {
               backgroundColor: "#0F172A",
               padding: 10,
               cornerRadius: 8,
+              callbacks: {
+                label: (c: { label?: string; parsed?: number }) => {
+                  const v = Number(c.parsed ?? 0);
+                  const pct = zonaTotal > 0 ? ((v / zonaTotal) * 100).toFixed(1) : "0.0";
+                  return ` ${c.label ?? ""}: ${fmt(v)} pcs (${pct}%)`;
+                },
+              },
+            },
+            datalabels: {
+              formatter: (value: number) => {
+                const pct = zonaTotal > 0 ? (Number(value) / zonaTotal) * 100 : 0;
+                if (pct < 5) return "";
+                return fmt(value);
+              },
+              color: (c: { dataset: { backgroundColor?: string[] }; dataIndex: number }) => {
+                const bg = c.dataset?.backgroundColor?.[c.dataIndex];
+                return bg === "#FACC15" || bg === "#F59E0B" ? "#0F172A" : "#FFFFFF";
+              },
+              font: { weight: "bold" as const, size: isMobile ? 10 : 12 },
+              textStrokeColor: "rgba(0,0,0,0.25)",
+              textStrokeWidth: 2,
+              anchor: "center" as const,
+              align: "center" as const,
+              clamp: true,
+              clip: false,
             },
           },
         },
       });
+          }
+        }
+      }
     }
 
     // Bar Chart: Top Sales Product
@@ -1006,6 +1080,7 @@ export default function DashboardPage() {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
+            datalabels: { display: false },
             legend: { display: false },
             tooltip: {
               backgroundColor: "#0F172A",
@@ -1091,6 +1166,23 @@ export default function DashboardPage() {
     return "Gudang Utama";
   }, [session]);
 
+  const zonaAktifCount = useMemo(() => {
+    const zona = (summary?.stock?.zona || {}) as Record<string, number>;
+    return ZONAS.filter((z) => (zona[z[0]] || 0) > 0).length;
+  }, [summary]);
+
+  const zonaTotalQty = useMemo(() => {
+    const zona = (summary?.stock?.zona || {}) as Record<string, number>;
+    return ZONAS.reduce((a, z) => a + (zona[z[0]] || 0), 0);
+  }, [summary]);
+
+  // Persen okupansi gudang = total stok fisik / total kapasitas rak,
+  // sama persis dengan pill % di card Gabungan halaman stock.
+  const okupansiPersen = useMemo(
+    () => persenOkupansi(summary?.stock?.total_qty ?? 0, totalKapRak),
+    [summary, totalKapRak]
+  );
+
   if (!session) return null;
 
   const bulanLabelFull = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(
@@ -1101,6 +1193,12 @@ export default function DashboardPage() {
     <>
       <Script
         src="https://cdn.jsdelivr.net/npm/chart.js"
+        strategy="afterInteractive"
+        onReady={loadCharts}
+        onLoad={loadCharts}
+      />
+      <Script
+        src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"
         strategy="afterInteractive"
         onReady={loadCharts}
         onLoad={loadCharts}
@@ -1186,7 +1284,18 @@ export default function DashboardPage() {
             <div className="kpi-header">
               <div>
                 <div className="kpi-title">Total Stok Fisik</div>
-                <div className="kpi-value">{fmt(summary?.stock?.total_qty ?? 0)}</div>
+                <div
+                  className="kpi-value"
+                  style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
+                  title={
+                    totalKapRak > 0
+                      ? `Okupansi gudang: ${fmt(summary?.stock?.total_qty ?? 0)} / ${fmt(totalKapRak)} kapasitas`
+                      : undefined
+                  }
+                >
+                  {fmt(summary?.stock?.total_qty ?? 0)}
+                  <span className="kpi-tag">{okupansiPersen}%</span>
+                </div>
               </div>
               <div className="kpi-icon-wrapper">
                 <i className="bi bi-boxes"></i>
@@ -1235,14 +1344,18 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Zona Stock Doughnut Chart */}
+          {/* Zona Stock Pie Chart */}
           <div className="chart-card">
             <div className="card-header-flex">
               <div>
                 <h3 className="card-header-title">
                   <i className="bi bi-pie-chart-fill"></i> Distribusi Zona Stok
                 </h3>
-                <div className="card-header-sub">Persentase barang berdasarkan kategori zona gudang</div>
+                <div className="card-header-sub">
+                  {zonaTotalQty > 0
+                    ? `Total ${fmt(zonaTotalQty)} pcs • ${zonaAktifCount} zona aktif`
+                    : "Persentase barang berdasarkan kategori zona gudang"}
+                </div>
               </div>
               <div className="multi-select-container" ref={dropdownRef}>
                 <button
@@ -1291,7 +1404,14 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="canvas-wrapper">
-              <canvas id="pieChart" ref={pieRef}></canvas>
+              {zonaTotalQty > 0 ? (
+                <canvas id="pieChart" ref={pieRef}></canvas>
+              ) : (
+                <div className="dash-empty-state">
+                  <div className="dash-empty-icon"><i className="bi bi-pie-chart"></i></div>
+                  Belum ada stok di zona manapun.
+                </div>
+              )}
             </div>
           </div>
 
