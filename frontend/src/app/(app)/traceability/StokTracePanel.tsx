@@ -204,7 +204,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
       </div>
       {err && <div className="stok-trace-err">{err}</div>}
       {loading ? (
-        <div className="stok-trace-empty">Memuat snapshot stok gudang...</div>
+        <div className="stok-trace-empty">Memuat traceability stok gudang...</div>
       ) : filtered.length === 0 ? (
         <div className="stok-trace-empty">Tidak ada stok (stok kosong disembunyikan).</div>
       ) : (
