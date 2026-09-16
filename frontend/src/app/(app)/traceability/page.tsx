@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
-import StokTracePanel from "../stock-opname/StokTracePanel";
+import StokTracePanel from "./StokTracePanel";
 import Pagination, { PAGE_SIZE } from "@/components/Pagination";
 import { useToast } from "@/components/ToastProvider";
 

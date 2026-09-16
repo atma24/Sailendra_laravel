@@ -185,7 +185,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
     <div className="stok-trace-card">
       <style>{css}</style>
       <div className="stok-trace-head">
-        <h2 className="stok-trace-title">Traceability Stok Gudang (Otomatis — Snapshot Kini)</h2>
+        <h2 className="stok-trace-title">Traceability Stok Gudang</h2>
       </div>
       <div className="stok-trace-toolbar">
         <div className="stok-trace-search-wrap">
