@@ -361,35 +361,38 @@ class StokController extends Controller
                     return ['error' => 'id_line wajib untuk mode=manual_batch'];
                 }
                 $sql = "SELECT
-                    MIN(sg.id_stok) AS id_stok,
-                    MIN(sg.id_barang_masuk) AS id_barang_masuk,
-                    sg.id_produk,
-                    COALESCE(sg.nama_produk, p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
-                    COALESCE(sd.batch, sg.batch) AS batch,
-                    SUM(sd.jumlah) AS qty_sisa,
-                    {$satuan} AS satuan,
-                    sd.best_before,
-                    l.id_lokasi, l.nama_lokasi,
-                    b.id_block, b.kode_block,
-                    ln.id_line, ln.nomor_line,
-                    CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block,
-                    CONCAT(COALESCE(sd.batch, sg.batch, '-'), ' - Sisa ', SUM(sd.jumlah), ' ', {$satuan}) AS label
-                    FROM stok_gudang_deep sd
-                    JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
-                    LEFT JOIN produk p ON p.id_produk = sg.id_produk
-                    JOIN deep d ON d.id_deep = sd.id_deep
-                    JOIN level lv ON lv.id_level = d.id_level
-                    JOIN line ln ON ln.id_line = lv.id_line
-                    JOIN block b ON b.id_block = ln.id_block
-                    JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$zonaWhere}
-                    GROUP BY sg.id_produk,
-                        COALESCE(sg.nama_produk, p.nama_produk, CONCAT('Produk ', sg.id_produk)),
-                        COALESCE(sd.batch, sg.batch),
-                        {$satuan},
-                        sd.best_before,
-                        l.id_lokasi, l.nama_lokasi, b.id_block, b.kode_block, ln.id_line, ln.nomor_line
-                    ORDER BY COALESCE(sd.best_before,'9999-12-31') ASC, batch ASC";
+                    MIN(id_stok) AS id_stok, MIN(id_barang_masuk) AS id_barang_masuk,
+                    id_produk, nama_produk, batch,
+                    SUM(qty) AS qty_sisa, satuan, best_before,
+                    id_lokasi, nama_lokasi, id_block, kode_block, id_line, nomor_line, lokasi_block,
+                    CONCAT(COALESCE(batch, '-'), ' - Sisa ', SUM(qty), ' ', satuan) AS label
+                    FROM (
+                        SELECT
+                            sg.id_stok AS id_stok,
+                            sg.id_barang_masuk AS id_barang_masuk,
+                            sg.id_produk,
+                            COALESCE(sg.nama_produk, p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
+                            COALESCE(sd.batch, sg.batch) AS batch,
+                            sd.jumlah AS qty,
+                            {$satuan} AS satuan,
+                            sd.best_before,
+                            l.id_lokasi, l.nama_lokasi,
+                            b.id_block, b.kode_block,
+                            ln.id_line, ln.nomor_line,
+                            CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block
+                            FROM stok_gudang_deep sd
+                            JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
+                            LEFT JOIN produk p ON p.id_produk = sg.id_produk
+                            JOIN deep d ON d.id_deep = sd.id_deep
+                            JOIN level lv ON lv.id_level = d.id_level
+                            JOIN line ln ON ln.id_line = lv.id_line
+                            JOIN block b ON b.id_block = ln.id_block
+                            JOIN lokasi l ON l.id_lokasi = b.id_lokasi
+                            WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$zonaWhere}
+                    ) x
+                    GROUP BY id_stok, id_barang_masuk, id_produk, nama_produk, batch,
+                        satuan, best_before, id_lokasi, nama_lokasi, id_block, kode_block, id_line, nomor_line, lokasi_block
+                    ORDER BY COALESCE(best_before,'9999-12-31') ASC, batch ASC";
 
                 return ['sql' => $sql, 'bind' => array_merge([$idProduk, $idLine], $baseBind)];
 

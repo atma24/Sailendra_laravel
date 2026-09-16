@@ -359,16 +359,16 @@ export default function OutboundDetailPage() {
     if (!showItem) return;
     setBusy(true);
     try {
-      const r = await apiGet<{ data?: { id_lokasi: number; nama_lokasi: string }[] }>(stokUrl("manual_lokasi", {}));
-      setManualLok(r.data?.data || []);
+      const r = await apiGet<{ id_lokasi: number; nama_lokasi: string }[]>(stokUrl("manual_lokasi", {}));
+      setManualLok(r.data || []);
     } catch { /* ignore */ } finally { setBusy(false); }
   };
 
   const pickManualBlock = async (idLokasi: number) => {
     setBusy(true);
     try {
-      const r = await apiGet<{ data?: { id_block: number; kode_block: string }[] }>(stokUrl("manual_block", { id_lokasi: idLokasi }));
-      setManualBlock(r.data?.data || []);
+      const r = await apiGet<{ id_block: number; kode_block: string }[]>(stokUrl("manual_block", { id_lokasi: idLokasi }));
+      setManualBlock(r.data || []);
       setManualLine([]); setManualBatch([]);
     } catch { /* ignore */ } finally { setBusy(false); }
   };
@@ -376,8 +376,8 @@ export default function OutboundDetailPage() {
   const pickManualLine = async (idBlock: number) => {
     setBusy(true);
     try {
-      const r = await apiGet<{ data?: { id_line: number; nomor_line: string }[] }>(stokUrl("manual_line", { id_block: idBlock }));
-      setManualLine(r.data?.data || []);
+      const r = await apiGet<{ id_line: number; nomor_line: string }[]>(stokUrl("manual_line", { id_block: idBlock }));
+      setManualLine(r.data || []);
       setManualBatch([]);
     } catch { /* ignore */ } finally { setBusy(false); }
   };
@@ -385,8 +385,8 @@ export default function OutboundDetailPage() {
   const pickManualBatch = async (idLine: number) => {
     setBusy(true);
     try {
-      const r = await apiGet<{ data?: { batch: string; best_before: string }[] }>(stokUrl("manual_batch", { id_line: idLine }));
-      setManualBatch(r.data?.data || []);
+      const r = await apiGet<{ batch: string; best_before: string }[]>(stokUrl("manual_batch", { id_line: idLine }));
+      setManualBatch(r.data || []);
     } catch { /* ignore */ } finally { setBusy(false); }
   };
 
