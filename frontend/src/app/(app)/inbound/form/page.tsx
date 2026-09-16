@@ -130,9 +130,6 @@ export default function InboundFormPage() {
 
   const today = new Date().toISOString().slice(0, 10);
   const [tanggal, setTanggal] = useState(today);
-  // Flag: true hanya setelah user aktif memilih tanggal dari date picker.
-  // Default hari ini tidak dihitung sebagai "sudah memilih".
-  const [tanggalDipilih, setTanggalDipilih] = useState(false);
   const [tipe, setTipe] = useState("Primary");
   const [shipmentId, setShipmentId] = useState("");
   const [noDn, setNoDn] = useState("");
@@ -228,17 +225,19 @@ export default function InboundFormPage() {
     return out;
   };
 
-  // --- REKOMENDASI LOKASI HANYA SETELAH TANGGAL + JUMLAH TERISI ---
-  const autoBlock = async (idx: number, overrideBB?: string) => {
+  // --- REKOMENDASI LOKASI HANYA SETELAH ITEM CUKUP LENGKAP ---
+  // Tanggal selalu default hari ini; yang ditunggu adalah produk + jumlah
+  // + best before + asal pabrik agar rekomendasi akurat dan modal konversi
+  // tidak muncul mendadak saat form masih diisi.
+  const autoBlock = async (idx: number, override?: { bb?: string; asal?: string }) => {
     const it = items[idx];
     if (!it || it.id_produk <= 0 || angka(it.jumlah) <= 0) return;
-    if (!tanggalDipilih) {
-      notify("error", "Pilih Tanggal Masuk terlebih dahulu sebelum rekomendasi lokasi dihitung.");
-      return;
-    }
+    const bbEff = override?.bb ?? it.best_before;
+    const asalEff = override?.asal ?? it.asal_pabrik;
+    if (!it.no_batch && !isReject && !norm(bbEff)) return;
+    if (!it.no_batch && !norm(asalEff)) return;
 
-    const bbValue = overrideBB !== undefined ? overrideBB : it.best_before;
-    const bb = (it.no_batch || isReject) ? "9999-12-31" : (bbValue && bbValue !== "-" ? norm(bbValue) : null);
+    const bb = (it.no_batch || isReject) ? "9999-12-31" : (bbEff && bbEff !== "-" ? norm(bbEff) : null);
 
     try {
       const r = await apiPost<{ rekomendasi?: PreviewRec[]; lokasi_line?: string; konversi?: KonversiLine[]; message?: string }>(
@@ -297,7 +296,6 @@ export default function InboundFormPage() {
   // --- lalu kirim sekaligus ke /barang-masuk/batch dalam 1 transaksi.
   // --- Gagal di 1 item = tidak ada yang tersimpan, isian form tetap utuh.
   const simpan = async () => {
-    if (!tanggalDipilih) { notify("error", "Tanggal Masuk wajib dipilih terlebih dahulu."); return; }
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
     if (butuhShipmentDn(tipe) && norm(shipmentId) === "") { setErrShipment("Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); notify("error", "Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     setErrShipment("");
@@ -506,7 +504,7 @@ export default function InboundFormPage() {
               type="date" 
               className="inbound-input" 
               value={tanggal} 
-              onChange={(e) => { setTanggal(e.target.value); setTanggalDipilih(true); }} 
+              onChange={(e) => setTanggal(e.target.value)} 
               onClick={(e) => e.currentTarget.showPicker && e.currentTarget.showPicker()} 
             />
           </div>
@@ -581,7 +579,7 @@ export default function InboundFormPage() {
                 const val = e.target.value;
                 updateItem(idx, { best_before: val });
                 if (val && angka(it.jumlah) > 0) {
-                  autoBlock(idx, val);
+                  autoBlock(idx, { bb: val });
                 }
               }}
               onClick={(e) => {
@@ -597,7 +595,7 @@ export default function InboundFormPage() {
               <label className="inbound-label">Asal Pabrik{(!it.no_batch) && <span className="inbound-req">*</span>}</label>
             <PlantPicker plantList={plantList} value={it.asal_pabrik}
               disabled={it.no_batch}
-              onChange={(v) => updateItem(idx, { asal_pabrik: v })} />
+              onChange={(v) => { updateItem(idx, { asal_pabrik: v }); autoBlock(idx, { asal: v }); }} />
             </div>
 
             <input type="text" className="inbound-input" value={batchPreview(it)} placeholder="Batch" readOnly />
