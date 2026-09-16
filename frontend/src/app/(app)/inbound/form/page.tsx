@@ -130,6 +130,9 @@ export default function InboundFormPage() {
 
   const today = new Date().toISOString().slice(0, 10);
   const [tanggal, setTanggal] = useState(today);
+  // Flag: true hanya setelah user aktif memilih tanggal dari date picker.
+  // Default hari ini tidak dihitung sebagai "sudah memilih".
+  const [tanggalDipilih, setTanggalDipilih] = useState(false);
   const [tipe, setTipe] = useState("Primary");
   const [shipmentId, setShipmentId] = useState("");
   const [noDn, setNoDn] = useState("");
@@ -229,8 +232,8 @@ export default function InboundFormPage() {
   const autoBlock = async (idx: number, overrideBB?: string) => {
     const it = items[idx];
     if (!it || it.id_produk <= 0 || angka(it.jumlah) <= 0) return;
-    if (!norm(tanggal)) {
-      notify("error", "Isi Tanggal Masuk terlebih dahulu sebelum rekomendasi lokasi dihitung.");
+    if (!tanggalDipilih) {
+      notify("error", "Pilih Tanggal Masuk terlebih dahulu sebelum rekomendasi lokasi dihitung.");
       return;
     }
 
@@ -294,7 +297,7 @@ export default function InboundFormPage() {
   // --- lalu kirim sekaligus ke /barang-masuk/batch dalam 1 transaksi.
   // --- Gagal di 1 item = tidak ada yang tersimpan, isian form tetap utuh.
   const simpan = async () => {
-    if (!norm(tanggal)) { notify("error", "Tanggal Masuk wajib diisi."); return; }
+    if (!tanggalDipilih) { notify("error", "Tanggal Masuk wajib dipilih terlebih dahulu."); return; }
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
     if (butuhShipmentDn(tipe) && norm(shipmentId) === "") { setErrShipment("Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); notify("error", "Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     setErrShipment("");
@@ -503,7 +506,7 @@ export default function InboundFormPage() {
               type="date" 
               className="inbound-input" 
               value={tanggal} 
-              onChange={(e) => setTanggal(e.target.value)} 
+              onChange={(e) => { setTanggal(e.target.value); setTanggalDipilih(true); }} 
               onClick={(e) => e.currentTarget.showPicker && e.currentTarget.showPicker()} 
             />
           </div>
