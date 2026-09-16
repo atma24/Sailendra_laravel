@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
-import { isMultiRole, useSession } from "@/lib/auth";
+import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
+import StokTracePanel from "../stock-opname/StokTracePanel";
 import Pagination, { PAGE_SIZE } from "@/components/Pagination";
 import { useToast } from "@/components/ToastProvider";
 
@@ -303,6 +304,8 @@ export default function TraceabilityPage() {
   return (
     <div className="trace-page">
       <style>{css}</style>
+
+      <StokTracePanel lokasiQuery={lokasiParam(session)} />
 
       <div className="trace-card">
         <div className="trace-header">

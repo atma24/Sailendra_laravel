@@ -153,6 +153,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['get', 'post'], '/mutasi/proses', [MutasiController::class, 'store']);
 
     Route::get('/traceability', [TraceabilityController::class, 'index']);
+    Route::get('/traceability/stok-snapshot', [TraceabilityController::class, 'stokSnapshot']);
+    Route::get('/traceability/stok-snapshot/detail', [TraceabilityController::class, 'stokSnapshotDetail']);
     Route::get('/traceability/show', [TraceabilityController::class, 'show']);
     Route::get('/traceability/best-before', [TraceabilityController::class, 'getBestBeforeList']);
     Route::post('/traceability/import', [TraceabilityController::class, 'import']);

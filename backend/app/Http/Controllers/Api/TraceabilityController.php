@@ -39,6 +39,137 @@ class TraceabilityController extends Controller
     }
 
     // =========================================================================
+    // 1b. SNAPSHOT STOK GUDANG (panel atas halaman traceability)
+    //     Snapshot kini: nama produk, jumlah, batch, BB, plant, lokasi full-deep.
+    //     Plant dari 4 digit kanan batch. Stok kosong disembunyikan.
+    //     Lokasi kosong = semua lokasi.
+    // =========================================================================
+    public function stokSnapshot(Request $request)
+    {
+        $multi = trim((string) $request->input('id_pengguna_lokasi_multi', ''));
+        if ($multi !== '') {
+            $lokasiIds = array_values(array_filter(array_map('trim', explode(',', $multi)), fn ($id) => $id !== ''));
+        } else {
+            $single = trim((string) $request->input('id_pengguna_lokasi', ''));
+            $lokasiIds = $single !== '' ? [$single] : [];
+        }
+
+        $lokWhere = '1 = 1';
+        $bind = [];
+        if (! empty($lokasiIds)) {
+            $placeholders = implode(',', array_fill(0, count($lokasiIds), '?'));
+            $lokWhere = "sd.id_pengguna_lokasi IN ($placeholders)";
+            $bind = $lokasiIds;
+        }
+
+        // Agregasi per produk+batch: jumlah ditotal, lokasi digabung jadi satu daftar.
+        DB::statement('SET SESSION group_concat_max_len = 100000');
+
+        $rows = DB::select(
+            "SELECT id_produk, nama_produk, satuan, batch,
+                    MIN(best_before) AS best_before,
+                    id_plant, MAX(nama_plant) AS nama_plant, MAX(asal_pabrik) AS asal_pabrik,
+                    GROUP_CONCAT(DISTINCT lokasi_detail ORDER BY lokasi_detail ASC SEPARATOR ', ') AS lokasi,
+                    SUM(jumlah) AS jumlah
+             FROM (
+                 SELECT sg.id_produk AS id_produk, p.nama_produk AS nama_produk,
+                        UPPER(TRIM(COALESCE(p.satuan, ''))) AS satuan,
+                        COALESCE(NULLIF(sg.batch, ''), NULLIF(bm.batch_sekarang, ''), NULLIF(bm.batch, ''), NULLIF(sd.batch, '')) AS batch,
+                        sd.best_before AS best_before,
+                        UPPER(RIGHT(COALESCE(NULLIF(sg.batch, ''), NULLIF(bm.batch_sekarang, ''), NULLIF(bm.batch, ''), NULLIF(sd.batch, '')), 4)) AS id_plant,
+                        pl.nama_plant AS nama_plant,
+                        bm.asal_pabrik AS asal_pabrik,
+                        CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi_block,
+                        CONCAT(b.kode_block, '-', ln.nomor_line, '-', lv.level, '-', d.deep) AS lokasi_detail,
+                        sd.jumlah AS jumlah
+                 FROM stok_gudang_deep sd
+                 JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header AND sg.id_pengguna_lokasi = sd.id_pengguna_lokasi
+                 JOIN barang_masuk bm ON bm.id_barang_masuk = sg.id_barang_masuk
+                 JOIN deep d ON d.id_deep = sd.id_deep AND d.id_pengguna_lokasi = sd.id_pengguna_lokasi
+                 JOIN level lv ON lv.id_level = d.id_level AND lv.id_pengguna_lokasi = d.id_pengguna_lokasi
+                 JOIN line ln ON ln.id_line = lv.id_line AND ln.id_pengguna_lokasi = lv.id_pengguna_lokasi
+                 JOIN block b ON b.id_block = ln.id_block AND b.id_pengguna_lokasi = ln.id_pengguna_lokasi
+                 JOIN produk p ON p.id_produk = sg.id_produk
+                 LEFT JOIN plant pl ON UPPER(RIGHT(COALESCE(NULLIF(sg.batch, ''), NULLIF(bm.batch_sekarang, ''), NULLIF(bm.batch, ''), NULLIF(sd.batch, '')), 4)) = UPPER(pl.id_plant)
+                 WHERE {$lokWhere} AND sd.jumlah > 0
+             ) AS x
+             GROUP BY id_produk, nama_produk, satuan, batch, id_plant
+             ORDER BY nama_produk ASC, best_before ASC, batch ASC",
+            $bind
+        );
+
+        $data = [];
+        foreach ($rows as $row) {
+            $row->id_produk = (int) $row->id_produk;
+            $row->jumlah = (int) $row->jumlah;
+            $data[] = (array) $row;
+        }
+
+        return $this->ok($data, 'Snapshot traceability stok gudang berhasil diambil.');
+    }
+
+    // =========================================================================
+    // 1c. DETAIL SNAPSHOT PER LOKASI (klik baris panel atas)
+    //     Rincian jumlah per lokasi full-deep untuk satu produk+batch.
+    // =========================================================================
+    public function stokSnapshotDetail(Request $request)
+    {
+        $multi = trim((string) $request->input('id_pengguna_lokasi_multi', ''));
+        if ($multi !== '') {
+            $lokasiIds = array_values(array_filter(array_map('trim', explode(',', $multi)), fn ($id) => $id !== ''));
+        } else {
+            $single = trim((string) $request->input('id_pengguna_lokasi', ''));
+            $lokasiIds = $single !== '' ? [$single] : [];
+        }
+
+        $idProduk = (int) $request->input('id_produk', 0);
+        $batch = trim((string) $request->input('batch', ''));
+
+        if ($idProduk <= 0) {
+            return $this->fail('id_produk wajib');
+        }
+
+        $lokWhere = '1 = 1';
+        $bind = [];
+        if (! empty($lokasiIds)) {
+            $placeholders = implode(',', array_fill(0, count($lokasiIds), '?'));
+            $lokWhere = "sd.id_pengguna_lokasi IN ($placeholders)";
+            $bind = $lokasiIds;
+        }
+        $bind[] = $idProduk;
+        $bind[] = $batch;
+
+        $rows = DB::select(
+            "SELECT lokasi_detail, best_before, SUM(jumlah) AS jumlah
+             FROM (
+                 SELECT CONCAT(b.kode_block, '-', ln.nomor_line, '-', lv.level, '-', d.deep) AS lokasi_detail,
+                        sd.best_before AS best_before,
+                        sd.jumlah AS jumlah
+                 FROM stok_gudang_deep sd
+                 JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header AND sg.id_pengguna_lokasi = sd.id_pengguna_lokasi
+                 JOIN barang_masuk bm ON bm.id_barang_masuk = sg.id_barang_masuk
+                 JOIN deep d ON d.id_deep = sd.id_deep AND d.id_pengguna_lokasi = sd.id_pengguna_lokasi
+                 JOIN level lv ON lv.id_level = d.id_level AND lv.id_pengguna_lokasi = d.id_pengguna_lokasi
+                 JOIN line ln ON ln.id_line = lv.id_line AND ln.id_pengguna_lokasi = lv.id_pengguna_lokasi
+                 JOIN block b ON b.id_block = ln.id_block AND b.id_pengguna_lokasi = ln.id_pengguna_lokasi
+                 WHERE {$lokWhere} AND sd.jumlah > 0 AND sg.id_produk = ?
+                   AND COALESCE(NULLIF(sg.batch, ''), NULLIF(bm.batch_sekarang, ''), NULLIF(bm.batch, ''), NULLIF(sd.batch, ''), '') = ?
+             ) AS x
+             GROUP BY lokasi_detail, best_before
+             ORDER BY lokasi_detail ASC, best_before ASC",
+            $bind
+        );
+
+        $data = [];
+        foreach ($rows as $row) {
+            $row->jumlah = (int) $row->jumlah;
+            $data[] = (array) $row;
+        }
+
+        return $this->ok($data, 'Rincian lokasi berhasil diambil.');
+    }
+
+    // =========================================================================
     // 2. GET LIST TRACEABILITY & SEARCHING (Ref: source 21)
     // =========================================================================
     public function index(Request $request)
