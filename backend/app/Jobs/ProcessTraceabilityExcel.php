@@ -17,7 +17,7 @@ class ProcessTraceabilityExcel implements ShouldQueue
     protected $uploadLokasi;
     protected $mapProduk;
 
-    public $timeout = 600;
+    public $timeout = 1300;
     public $tries = 1;
 
     public function __construct(string $filePath, string $uploadLokasi, array $mapProduk)
