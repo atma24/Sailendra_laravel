@@ -1607,9 +1607,9 @@ class LayoutGudangController extends Controller
         $isSpecialTarget = strpos($targetText, 'bad') !== false || strpos($targetText, 'reject') !== false;
         $isRejectTarget = strpos($targetText, 'reject') !== false;
 
-        // if ($this->isGallonSpsBlocked($lineAsalInfo, $lineTujuanInfo)) {
-        //     return $this->fail('GALLON dan SPS tidak bisa saling transfer.');
-        // }
+        if ($this->isGallonSpsBlocked($lineAsalInfo, $lineTujuanInfo)) {
+            return $this->fail('GALLON dan SPS tidak bisa saling transfer.');
+        }
 
         try {
             return DB::transaction(function () use (

@@ -219,9 +219,9 @@ class MutasiController extends Controller
         $lokasi_sumber = $this->normalize_line_label($lineSumber['label']);
         $lokasi_tujuan = $this->normalize_line_label($lineTujuan['label']);
 
-        // if ($this->is_gallon_sps_transfer_blocked($lineSumber, $lineTujuan)) {
-        //     return $this->fail('GALLON dan SPS tidak bisa saling transfer.', 422);
-        // }
+        if ($this->is_gallon_sps_transfer_blocked($lineSumber, $lineTujuan)) {
+            return $this->fail('GALLON dan SPS tidak bisa saling transfer.', 422);
+        }
 
         if (($lineSumber['mode'] ?? '') !== $rule['source_mode']) {
             return $this->fail('Lokasi sumber tidak sesuai dengan jenis mutasi.');

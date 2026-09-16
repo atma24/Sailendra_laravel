@@ -285,7 +285,7 @@ useEffect(() => {
     const isGallonSps = (a: number, b: number) =>
       (lokasiLabel(a).includes("GALLON") && lokasiLabel(b).includes("SPS")) ||
       (lokasiLabel(a).includes("SPS") && lokasiLabel(b).includes("GALLON"));
-    // if (!isQa && isGallonSps(dariLokasi, keLokasi)) { notify("error", "GALLON dan SPS tidak bisa saling transfer mutasi."); return false; }
+    if (!isQa && isGallonSps(dariLokasi, keLokasi)) { notify("error", "GALLON dan SPS tidak bisa saling transfer mutasi."); return false; }
     return true;
   };
 
