@@ -106,6 +106,25 @@ class StokController extends Controller
             ." OR {$loc} LIKE 'TRANSIT-%' OR {$loc} LIKE 'HOLD-%' ) ";
     }
 
+    private function manualBlockFilter(): string
+    {
+        $b = 'b';
+        $l = 'l';
+
+        return " AND NOT (UPPER(REPLACE({$b}.kode_block, ' ', '')) LIKE '%BADSTOCK%'
+            OR UPPER(REPLACE({$b}.kode_block, ' ', '')) LIKE '%REJECT%'
+            OR UPPER(REPLACE({$b}.kode_block, ' ', '')) = 'BS'
+            OR UPPER(REPLACE({$b}.kode_block, ' ', '')) = 'BAD'
+            OR UPPER(REPLACE({$l}.nama_lokasi, ' ', '')) LIKE '%BADSTOCK%'
+            OR UPPER(REPLACE({$l}.nama_lokasi, ' ', '')) LIKE '%REJECT%'
+            OR UPPER(REPLACE({$l}.nama_lokasi, ' ', '')) = 'BS'
+            OR UPPER(REPLACE({$l}.nama_lokasi, ' ', '')) = 'BAD'
+            OR UPPER(REPLACE(COALESCE({$l}.kategori, ''), ' ', '')) LIKE '%BADSTOCK%'
+            OR UPPER(REPLACE(COALESCE({$l}.kategori, ''), ' ', '')) LIKE '%REJECT%'
+            OR UPPER(REPLACE(COALESCE({$l}.kategori, ''), ' ', '')) = 'BS'
+            OR UPPER(REPLACE(COALESCE({$l}.kategori, ''), ' ', '')) = 'BAD') ";
+    }
+
     private function satuanCaseSg(): string
     {
         return "CASE
@@ -302,7 +321,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$this->manualBlockFilter()}
                     GROUP BY l.id_lokasi, l.nama_lokasi, l.kategori
                     ORDER BY l.nama_lokasi ASC";
 
@@ -324,7 +343,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND b.id_lokasi = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND b.id_lokasi = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$this->manualBlockFilter()}
                     GROUP BY b.id_block, b.id_lokasi, b.kode_block
                     ORDER BY b.kode_block ASC";
 
@@ -346,7 +365,7 @@ class StokController extends Controller
                     JOIN line ln ON ln.id_line = lv.id_line
                     JOIN block b ON b.id_block = ln.id_block
                     JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_block = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$zonaWhere}
+                    WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_block = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$this->manualBlockFilter()}
                     GROUP BY ln.id_line, ln.id_block, ln.nomor_line
                     ORDER BY CAST(ln.nomor_line AS UNSIGNED) ASC, ln.nomor_line ASC";
 
@@ -388,7 +407,7 @@ class StokController extends Controller
                             JOIN line ln ON ln.id_line = lv.id_line
                             JOIN block b ON b.id_block = ln.id_block
                             JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-                            WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$zonaWhere}
+                            WHERE sd.jumlah > 0 AND sg.id_produk = ? AND ln.id_line = ? AND UPPER(COALESCE(sg.status,'')) != 'QI' {$lokSgSd}{$this->manualBlockFilter()}
                     ) x
                     GROUP BY id_stok, id_barang_masuk, id_produk, nama_produk, batch,
                         satuan, best_before, id_lokasi, nama_lokasi, id_block, kode_block, id_line, nomor_line, lokasi_block
