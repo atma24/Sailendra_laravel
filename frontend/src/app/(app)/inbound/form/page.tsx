@@ -225,10 +225,14 @@ export default function InboundFormPage() {
     return out;
   };
 
-  // --- PERBAIKAN: AUTO BLOCK DENGAN VALIDASI TANGGAL KOSONG + RESERVASI KUMULATIF ---
+  // --- REKOMENDASI LOKASI HANYA SETELAH TANGGAL + JUMLAH TERISI ---
   const autoBlock = async (idx: number, overrideBB?: string) => {
     const it = items[idx];
     if (!it || it.id_produk <= 0 || angka(it.jumlah) <= 0) return;
+    if (!norm(tanggal)) {
+      notify("error", "Isi Tanggal Masuk terlebih dahulu sebelum rekomendasi lokasi dihitung.");
+      return;
+    }
 
     const bbValue = overrideBB !== undefined ? overrideBB : it.best_before;
     const bb = (it.no_batch || isReject) ? "9999-12-31" : (bbValue && bbValue !== "-" ? norm(bbValue) : null);
@@ -290,6 +294,7 @@ export default function InboundFormPage() {
   // --- lalu kirim sekaligus ke /barang-masuk/batch dalam 1 transaksi.
   // --- Gagal di 1 item = tidak ada yang tersimpan, isian form tetap utuh.
   const simpan = async () => {
+    if (!norm(tanggal)) { notify("error", "Tanggal Masuk wajib diisi."); return; }
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
     if (butuhShipmentDn(tipe) && norm(shipmentId) === "") { setErrShipment("Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); notify("error", "Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     setErrShipment("");
