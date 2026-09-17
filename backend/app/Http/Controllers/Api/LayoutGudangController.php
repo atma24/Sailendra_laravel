@@ -68,7 +68,7 @@ class LayoutGudangController extends Controller
             ->selectRaw('MIN(CASE WHEN sd.jumlah > 0 THEN sh.best_before END) AS min_bb_deep')
             ->selectRaw('MIN(CASE WHEN sh.id_produk = ? AND sd.jumlah > 0 THEN sh.best_before END) AS min_bb_produk', [$idProduk])
             ->selectRaw('MAX(CASE WHEN sd.jumlah > 0 THEN sh.status END) AS status_deep')
-            ->selectRaw('MIN(COALESCE(sd.batch, sh.batch)) AS batch_produk')
+            ->selectRaw('MIN(CASE WHEN sd.jumlah > 0 THEN COALESCE(sh.batch, sd.batch) END) AS batch_produk')
             ->groupBy('b.id_block', 'b.id_lokasi', 'b.kode_block', 'ln.id_line', 'ln.nomor_line', 'lv.id_level', 'lv.level', 'd.id_deep', 'd.deep', 'd.kapasitas')
             ->orderBy('b.kode_block')
             ->orderByRaw('COALESCE(ln.nomor_line, 0)')

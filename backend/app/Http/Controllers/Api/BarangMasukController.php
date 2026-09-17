@@ -916,6 +916,8 @@ class BarangMasukController extends Controller
 
         $grouped = [];
         $countUnmapped = 0;
+        $countSelfSource = 0;
+        $rejectedSelf = [];
         
         for ($i = $dataStartIndex; $i < count($rowsData); $i++) {
             $data = $rowsData[$i];
@@ -945,6 +947,14 @@ class BarangMasukController extends Controller
             $produk = $mapProduk[$namaProdukExcel];
 
             $asalId = $idxAsalId >= 0 ? trim((string) ($data[$idxAsalId] ?? '')) : '';
+            // Pengaman self-source: Source Id sama dengan lokasi login ditolak per baris.
+            if ($asalId !== '' && $asalId === $idPenggunaLokasi) {
+                $countSelfSource++;
+                if (count($rejectedSelf) < 5) {
+                    $rejectedSelf[] = $shipmentId;
+                }
+                continue;
+            }
             $asalName = $idxAsalName >= 0 ? trim((string) ($data[$idxAsalName] ?? '')) : 'Pabrik';
             $asalPabrik = ($asalId !== '') ? $asalId . ' - ' . $asalName : $asalName;
             $transporter = $idxTransporter >= 0 ? trim((string) ($data[$idxTransporter] ?? '')) : '-';
@@ -997,6 +1007,9 @@ class BarangMasukController extends Controller
         }
 
         if (empty($grouped)) {
+            if ($countSelfSource > 0) {
+                return $this->fail("Gagal memproses file. $countSelfSource baris ditolak karena Source Id sama dengan lokasi login ($idPenggunaLokasi).");
+            }
             return $this->fail('Gagal memproses file. Pastikan data tidak kosong dan produk terdaftar di Master Data.');
         }
 
@@ -1050,7 +1063,12 @@ class BarangMasukController extends Controller
             if ($countUnmapped > 0) {
                 $msg .= " Peringatan: $countUnmapped baris diabaikan (produk tidak dikenal).";
             }
-            return $this->ok(['inserted' => $inserted, 'skipped' => $skipped], $msg);
+            if ($countSelfSource > 0) {
+                $contoh = implode(', ', array_unique($rejectedSelf));
+                $msg .= " ($countSelfSource baris ditolak karena Source Id sama dengan lokasi $idPenggunaLokasi"
+                    . ($contoh !== '' ? ": $contoh" : '') . ").";
+            }
+            return $this->ok(['inserted' => $inserted, 'skipped' => $skipped, 'rejected_self' => $countSelfSource], $msg);
             
         } catch (Throwable $e) {
             DB::rollBack();
