@@ -1477,6 +1477,8 @@ $in = $request->all();
                     }
 
                     // Baris 1 (selalu): produk original apa adanya dari outbound.
+                    // FOC resmi: auto-inbound dari outbound FOC bertipe FOC, sisanya Secondary.
+                    $tipeAutoInbound = (strtoupper(trim((string) ($bk->tipe_pengeluaran ?? ''))) === 'FOC') ? 'FOC' : 'Secondary';
                     $rowsToInsert = [[
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_pengguna'         => $bk->id_pengguna,
@@ -1485,7 +1487,7 @@ $in = $request->all();
                         'jumlah'              => $bk->jumlah,
                         'satuan'              => $bk->satuan,
                         'tanggal_masuk'       => $bk->tanggal_keluar,
-                        'tipe_penerimaan'     => 'Secondary',
+                        'tipe_penerimaan'     => $tipeAutoInbound,
                         'best_before'         => $bestBeforeBk,
                         'batch'               => $batchBk,
                         'batch_sekarang'      => $batchBk,
@@ -1514,7 +1516,7 @@ $in = $request->all();
                             'jumlah'              => $bk->jumlah,
                             'satuan'              => $jugRow->satuan,
                             'tanggal_masuk'       => $bk->tanggal_keluar,
-                            'tipe_penerimaan'     => 'Secondary',
+                            'tipe_penerimaan'     => $tipeAutoInbound,
                             'best_before'         => null,
                             'batch'               => null,
                             'batch_sekarang'      => null,

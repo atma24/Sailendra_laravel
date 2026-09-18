@@ -18,6 +18,7 @@ type BmRow = {
   nama_driver: string;
   status: string;
   catatan: string;
+  tipe_penerimaan: string;
 };
 
 type TanggalItem = { tanggal: string; total_item: number; total_qty: number };
@@ -41,6 +42,11 @@ const css = `
 .inbound-upload-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
 .inbound-upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .inbound-grid { display: flex; flex-direction: column; gap: 7px; }
+.inbound-3col { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 7px; align-items: start; }
+.inbound-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.inbound-col-head { font-size: 12px; font-weight: 900; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
+.inbound-sub-label { font-size: 10px; font-weight: 900; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
+@media (max-width: 1024px) { .inbound-3col { grid-template-columns: 1fr; } }
 .inbound-date-card { padding: 8px; text-decoration: none; color: inherit; display: block; }
 .inbound-date-card:hover { transform: translateY(-1px); border-color: rgba(25,25,112,.18); box-shadow: 0 8px 20px rgba(15,23,42,0.06); }
 .inbound-card-top { display: flex; align-items: center; gap: 8px; }
@@ -80,8 +86,12 @@ export default function InboundTanggalPage() {
   const [search, setSearch] = useState("");
   const [keyword, setKeyword] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const [normalPage, setNormalPage] = useState(1);
-  const [outboundPage, setOutboundPage] = useState(1);
+  const [primaryPage, setPrimaryPage] = useState(1);
+  const [secManualPage, setSecManualPage] = useState(1);
+  const [secOutboundPage, setSecOutboundPage] = useState(1);
+  const [xwhPage, setXwhPage] = useState(1);
+  const [focPage, setFocPage] = useState(1);
+  const [focOutboundPage, setFocOutboundPage] = useState(1);
   
   // State untuk Upload Excel OTM
   const [uploading, setUploading] = useState(false);
@@ -108,8 +118,12 @@ export default function InboundTanggalPage() {
   }, [session, keyword]);
 
   useEffect(() => {
-    setNormalPage(1);
-    setOutboundPage(1);
+    setPrimaryPage(1);
+    setSecManualPage(1);
+    setSecOutboundPage(1);
+    setXwhPage(1);
+    setFocPage(1);
+    setFocOutboundPage(1);
   }, [search, keyword, rows]);
 
   const handleFileUploadSubmit = async (file: File) => {
@@ -151,9 +165,19 @@ export default function InboundTanggalPage() {
   const q = search.trim().toLowerCase();
   const canAdd = session && !["Support", "Forklift"].includes(session.user.role);
 
-  // Split rows: normal vs auto-generated from outbound
-  const normalRows = rows.filter(r => !(r.catatan || "").includes("Auto dari Outbound"));
-  const outboundRows = rows.filter(r => (r.catatan || "").includes("Auto dari Outbound"));
+  // Split rows ke 3 kolom: Primary (kiri, +REJECT/fallback) | Secondary (tengah) | XWH (kanan).
+  // Kolom tengah dipecah lagi: Secondary Manual vs Dari Outbound (copas logika lama).
+  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const isAutoOutbound = (r: BmRow) => (r.catatan || "").includes("Auto dari Outbound");
+  const primaryRows = rows.filter((r) => {
+    const t = tipeNorm(r.tipe_penerimaan);
+    return t === "PRIMARY" || t === "REJECT" || t === "";
+  });
+  const secManualRows = rows.filter((r) => tipeNorm(r.tipe_penerimaan) === "SECONDARY" && !isAutoOutbound(r));
+  const secOutboundRows = rows.filter((r) => tipeNorm(r.tipe_penerimaan) === "SECONDARY" && isAutoOutbound(r));
+  const xwhRows = rows.filter((r) => tipeNorm(r.tipe_penerimaan) === "PRIMARY XWH");
+  const focRows = rows.filter((r) => tipeNorm(r.tipe_penerimaan) === "FOC" && !isAutoOutbound(r));
+  const focOutboundRows = rows.filter((r) => tipeNorm(r.tipe_penerimaan) === "FOC" && isAutoOutbound(r));
 
   const buildTanggalMap = (source: BmRow[]) => {
     const map: Record<string, TanggalItem> = {};
@@ -169,24 +193,45 @@ export default function InboundTanggalPage() {
     return map;
   };
 
-  const normalMap = buildTanggalMap(normalRows);
-  const outboundMap = buildTanggalMap(outboundRows);
-  const normalList = Object.values(normalMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
-  const outboundList = Object.values(outboundMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const primaryMap = buildTanggalMap(primaryRows);
+  const secManualMap = buildTanggalMap(secManualRows);
+  const secOutboundMap = buildTanggalMap(secOutboundRows);
+  const xwhMap = buildTanggalMap(xwhRows);
+  const focMap = buildTanggalMap(focRows);
+  const focOutboundMap = buildTanggalMap(focOutboundRows);
+  const primaryList = Object.values(primaryMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const secManualList = Object.values(secManualMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const secOutboundList = Object.values(secOutboundMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const xwhList = Object.values(xwhMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const focList = Object.values(focMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const focOutboundList = Object.values(focOutboundMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
 
-  const normalTotalPages = totalPagesOf(normalList.length, PAGE_SIZE);
-  const outboundTotalPages = totalPagesOf(outboundList.length, PAGE_SIZE);
-  const normalPaged = paginate(normalList, normalPage, PAGE_SIZE);
-  const outboundPaged = paginate(outboundList, outboundPage, PAGE_SIZE);
+  const primaryTotalPages = totalPagesOf(primaryList.length, PAGE_SIZE);
+  const secManualTotalPages = totalPagesOf(secManualList.length, PAGE_SIZE);
+  const secOutboundTotalPages = totalPagesOf(secOutboundList.length, PAGE_SIZE);
+  const xwhTotalPages = totalPagesOf(xwhList.length, PAGE_SIZE);
+  const focTotalPages = totalPagesOf(focList.length, PAGE_SIZE);
+  const focOutboundTotalPages = totalPagesOf(focOutboundList.length, PAGE_SIZE);
+  const primaryPaged = paginate(primaryList, primaryPage, PAGE_SIZE);
+  const secManualPaged = paginate(secManualList, secManualPage, PAGE_SIZE);
+  const secOutboundPaged = paginate(secOutboundList, secOutboundPage, PAGE_SIZE);
+  const xwhPaged = paginate(xwhList, xwhPage, PAGE_SIZE);
+  const focPaged = paginate(focList, focPage, PAGE_SIZE);
+  const focOutboundPaged = paginate(focOutboundList, focOutboundPage, PAGE_SIZE);
 
-  const renderTanggal = (list: TanggalItem[], sumber?: string) =>
+  const renderTanggal = (list: TanggalItem[], sumber?: string, tipe?: string) =>
     list.length === 0 ? (
       <div className="inbound-card inbound-empty">Tidak ada data tanggal inbound.</div>
     ) : (
       <div className="inbound-grid">
-        {list.map((item) => (
+        {list.map((item) => {
+          const qp = new URLSearchParams();
+          if (sumber) qp.set("sumber", sumber);
+          if (tipe) qp.set("tipe", tipe);
+          const qs = qp.toString();
+          return (
           <Link key={item.tanggal} className="inbound-card inbound-date-card"
-            href={`/inbound/driver/${encodeURIComponent(item.tanggal)}${sumber ? `?sumber=${sumber}` : ""}`}>
+            href={`/inbound/driver/${encodeURIComponent(item.tanggal)}${qs ? `?${qs}` : ""}`}>
             <div className="inbound-card-top">
               <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
               <div>
@@ -196,7 +241,8 @@ export default function InboundTanggalPage() {
               <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
             </div>
           </Link>
-        ))}
+          );
+        })}
       </div>
     );
 
@@ -243,30 +289,78 @@ export default function InboundTanggalPage() {
         busy={uploading}
       />
 
-      {/* === SECTION: Normal Inbound === */}
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 900, color: "var(--text-main)", marginBottom: 7, display: "flex", alignItems: "center", gap: 8 }}>
-          <i className="bi bi-inbox" style={{ color: "var(--primary)" }}></i>
-          Penerimaan Normal
-          <span className="inbound-section-count">{normalList.length}</span>
-        </div>
-        {renderTanggal(normalPaged, "normal")}
-        <Pagination page={normalPage} totalPages={normalTotalPages} totalItems={normalList.length} pageSize={PAGE_SIZE} onChange={setNormalPage} />
-      </div>
-
-      {/* === SECTION: Dari Outbound === */}
-      {outboundList.length > 0 && (
-        <div>
-          <div className="inbound-section-divider">
-            <div className="inbound-section-divider-line"></div>
-            <span className="inbound-section-divider-label">Dari Outbound</span>
-            <span className="inbound-section-count">{outboundList.length}</span>
-            <div className="inbound-section-divider-line"></div>
+      {/* === 4 KOLOM: Primary | Secondary | XWH | FOC === */}
+      <div className="inbound-3col">
+        {/* KOLOM KIRI: Primary (+REJECT) */}
+        <div className="inbound-col">
+          <div className="inbound-col-head">
+            <i className="bi bi-inbox" style={{ color: "var(--primary)" }}></i>
+            Primary
+            <span className="inbound-section-count">{primaryList.length}</span>
           </div>
-          {renderTanggal(outboundPaged, "outbound")}
-          <Pagination page={outboundPage} totalPages={outboundTotalPages} totalItems={outboundList.length} pageSize={PAGE_SIZE} onChange={setOutboundPage} />
+          {renderTanggal(primaryPaged, "normal", "primary")}
+          <Pagination page={primaryPage} totalPages={primaryTotalPages} totalItems={primaryList.length} pageSize={PAGE_SIZE} onChange={setPrimaryPage} />
         </div>
-      )}
+
+        {/* KOLOM TENGAH: Secondary Manual + Dari Outbound */}
+        <div className="inbound-col">
+          <div className="inbound-col-head">
+            <i className="bi bi-arrow-repeat" style={{ color: "var(--primary)" }}></i>
+            Secondary
+            <span className="inbound-section-count">{secManualList.length + secOutboundList.length}</span>
+          </div>
+          <div className="inbound-sub-label">Secondary Manual</div>
+          {renderTanggal(secManualPaged, "normal", "secondary")}
+          <Pagination page={secManualPage} totalPages={secManualTotalPages} totalItems={secManualList.length} pageSize={PAGE_SIZE} onChange={setSecManualPage} />
+          {secOutboundList.length > 0 && (
+            <>
+              <div className="inbound-section-divider">
+                <div className="inbound-section-divider-line"></div>
+                <span className="inbound-section-divider-label">Dari Outbound</span>
+                <span className="inbound-section-count">{secOutboundList.length}</span>
+                <div className="inbound-section-divider-line"></div>
+              </div>
+              {renderTanggal(secOutboundPaged, "outbound", "secondary")}
+              <Pagination page={secOutboundPage} totalPages={secOutboundTotalPages} totalItems={secOutboundList.length} pageSize={PAGE_SIZE} onChange={setSecOutboundPage} />
+            </>
+          )}
+        </div>
+
+        {/* KOLOM KANAN: XWH */}
+        <div className="inbound-col">
+          <div className="inbound-col-head">
+            <i className="bi bi-box-seam" style={{ color: "var(--primary)" }}></i>
+            XWH
+            <span className="inbound-section-count">{xwhList.length}</span>
+          </div>
+          {renderTanggal(xwhPaged, "normal", "xwh")}
+          <Pagination page={xwhPage} totalPages={xwhTotalPages} totalItems={xwhList.length} pageSize={PAGE_SIZE} onChange={setXwhPage} />
+        </div>
+
+        {/* KOLOM PALING KANAN: FOC Manual + Dari Outbound */}
+        <div className="inbound-col">
+          <div className="inbound-col-head">
+            <i className="bi bi-gift" style={{ color: "var(--primary)" }}></i>
+            FOC
+            <span className="inbound-section-count">{focList.length + focOutboundList.length}</span>
+          </div>
+          <div className="inbound-sub-label">FOC Manual</div>
+          {renderTanggal(focPaged, "normal", "foc")}
+          <Pagination page={focPage} totalPages={focTotalPages} totalItems={focList.length} pageSize={PAGE_SIZE} onChange={setFocPage} />
+          {focOutboundList.length > 0 && (
+            <>
+              <div className="inbound-section-divider">
+                <div className="inbound-section-divider-line"></div>
+                <span className="inbound-section-divider-label">Dari Outbound</span>
+                <span className="inbound-section-count">{focOutboundList.length}</span>
+                <div className="inbound-section-divider-line"></div>
+              </div>
+              {renderTanggal(focOutboundPaged, "outbound", "foc")}
+              <Pagination page={focOutboundPage} totalPages={focOutboundTotalPages} totalItems={focOutboundList.length} pageSize={PAGE_SIZE} onChange={setFocOutboundPage} />
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

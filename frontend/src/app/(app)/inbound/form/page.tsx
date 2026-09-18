@@ -33,7 +33,12 @@ const angka = (v: unknown) => {
 };
 const norm = (v: unknown) => String(v ?? "").trim();
 // No Mobil: tanpa spasi, wajib ada huruf + angka, minimal 5 char, maks 30.
-const isValidNoMobil = (v: unknown) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/.test(norm(v).toUpperCase());
+// FOC meniru outbound FOC: boleh '-' (tanpa mobil dinas).
+const isValidNoMobil = (v: unknown, tipe?: string) => {
+  const s = norm(v).toUpperCase();
+  if (tipe === "FOC" && s === "-") return true;
+  return /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/.test(s);
+};
 // Shipment ID + No DN wajib untuk Primary / Primary XWH.
 const butuhShipmentDn = (tipe: string) => tipe === "Primary" || tipe === "Primary XWH";
 // Flag tanpa_batch dari Master Data Produk (BB otomatis 9999, batch "-").
@@ -301,7 +306,7 @@ export default function InboundFormPage() {
     setErrShipment("");
     if (butuhShipmentDn(tipe) && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     if (norm(noMobil) === "") { setErrMobil("No Mobil wajib diisi."); notify("error", "No Mobil wajib diisi."); return; }
-    if (!isValidNoMobil(noMobil)) { setErrMobil("No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); notify("error", "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); return; }
+    if (!isValidNoMobil(noMobil, tipe)) { setErrMobil(tipe === "FOC" ? "No Mobil harus huruf+angka tanpa spasi (min 5), atau - bila tanpa mobil." : "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); notify("error", "No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter (contoh: B1234CD)."); return; }
     setErrMobil("");
     if (norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
 
@@ -515,6 +520,7 @@ export default function InboundFormPage() {
                 <option value="Primary">Penerimaan Primary</option>
                 <option value="Primary XWH">Penerimaan Primary XWH</option>
                 <option value="Secondary">Penerimaan Secondary</option>
+                <option value="FOC">Penerimaan FOC</option>
                 <option value="REJECT">Penerimaan REJECT</option>
               </select>
               <i className="bi bi-chevron-down inbound-select-icon"></i>
@@ -532,7 +538,7 @@ export default function InboundFormPage() {
           </div>
           <div>
             <label className="inbound-label">No Mobil<span className="inbound-req">*</span></label>
-            <input type="text" className={`inbound-input ${errMobil ? "input-error" : ""}`} value={noMobil} onChange={(e) => { setNoMobil(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 30)); if (errMobil) setErrMobil(""); }} placeholder="No Mobil (huruf+angka, tanpa spasi, min 5)" maxLength={30} />
+            <input type="text" className={`inbound-input ${errMobil ? "input-error" : ""}`} value={noMobil} onChange={(e) => { setNoMobil(e.target.value.toUpperCase().replace(tipe === "FOC" ? /[^A-Z0-9-]/g : /[^A-Z0-9]/g, "").slice(0, 30)); if (errMobil) setErrMobil(""); }} placeholder={tipe === "FOC" ? "No Mobil (atau - bila tanpa mobil)" : "No Mobil (huruf+angka, tanpa spasi, min 5)"} maxLength={30} />
             {errMobil ? <div className="inbound-field-err">{errMobil}</div> : <div className="inbound-field-err" style={{ color: "#64748B", fontWeight: 600 }}>Huruf+angka, tanpa spasi, minimal 5 karakter.</div>}
           </div>
           <div>

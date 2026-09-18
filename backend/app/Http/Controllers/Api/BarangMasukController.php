@@ -374,7 +374,7 @@ class BarangMasukController extends Controller
             }
             if ($tipePenerimaan !== 'REJECT') {
                 $blockKhusus = self::BLOCK_KHUSUS;
-                if ($tipePenerimaan === 'Secondary') {
+                if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'FOC') {
                     $blockKhusus[] = 'MOBIL';
                 } else {
                     $blockKhusus[] = 'RECEH';
@@ -389,8 +389,8 @@ class BarangMasukController extends Controller
         if ($idPengguna <= 0 || $idProduk <= 0 || $jumlah <= 0 || $satuan === '') {
             return $this->fail('Field wajib: id_pengguna, id_produk, jumlah, satuan');
         }
-        if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT'], true)) {
-            return $this->fail('Field wajib: tipe_penerimaan (Primary / Secondary / Primary XWH / REJECT)');
+        if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT', 'FOC'], true)) {
+            return $this->fail('Field wajib: tipe_penerimaan (Primary / Secondary / Primary XWH / REJECT / FOC)');
         }
         if ($asalPabrik === null || $asalPabrik === '') {
             return $this->fail('Field wajib: asal_pabrik');
@@ -398,10 +398,10 @@ class BarangMasukController extends Controller
         if (in_array($tipePenerimaan, ['Primary', 'Primary XWH'], true) && $shipmentId === '') {
             return $this->fail('Field wajib: shipment_id untuk Penerimaan Primary / Primary XWH');
         }
-        if ($tipePenerimaan !== 'Secondary' && $tipePenerimaan !== 'REJECT' && $noDn === '') {
+        if ($tipePenerimaan !== 'Secondary' && $tipePenerimaan !== 'REJECT' && $tipePenerimaan !== 'FOC' && $noDn === '') {
             return $this->fail('Field wajib: no_dn untuk Penerimaan Primary / Primary XWH');
         }
-        if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'REJECT') {
+        if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'REJECT' || $tipePenerimaan === 'FOC') {
             $noDn = '';
         }
 
@@ -427,7 +427,9 @@ class BarangMasukController extends Controller
             return $this->fail('Field wajib: no_mobil');
         }
         $noMobil = strtoupper($noMobil);
-        if (! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) {
+        // FOC meniru outbound FOC: tanpa mobil dinas, boleh '-' (tanpa pola huruf+angka).
+        $bolehTanpaMobil = ($tipePenerimaan === 'FOC' && $noMobil === '-');
+        if (! $bolehTanpaMobil && ! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) {
             return $this->fail('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
         }
 
@@ -1833,8 +1835,8 @@ class BarangMasukController extends Controller
 
                 if ($bestBefore !== null) $upd['best_before'] = $bestBefore;
                 if ($tipePenerimaan !== null) {
-                    if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT'], true)) {
-                        throw new Exception('tipe_penerimaan harus Primary, Secondary, Primary XWH, atau REJECT');
+                    if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT', 'FOC'], true)) {
+                        throw new Exception('tipe_penerimaan harus Primary, Secondary, Primary XWH, REJECT, atau FOC');
                     }
                     $upd['tipe_penerimaan'] = $tipePenerimaan;
                 } else {
@@ -1876,7 +1878,8 @@ class BarangMasukController extends Controller
                 if ($noMobil !== null) {
                     if ($noMobil === '') throw new Exception('no_mobil wajib diisi');
                     $noMobil = strtoupper($noMobil);
-                    if (! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) throw new Exception('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
+                    $bolehTanpaMobilEdit = ($tipePenerimaan === 'FOC' && $noMobil === '-');
+                    if (! $bolehTanpaMobilEdit && ! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) throw new Exception('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
                     $upd['no_mobil'] = $noMobil;
                 }
                 if ($namaDriver !== null) $upd['nama_driver'] = $namaDriver;
@@ -2340,7 +2343,7 @@ class BarangMasukController extends Controller
     // =========================================================================
     private function rekomendasiAuto(string $idPenggunaLokasi, int $idProduk, float $qty, ?string $bestBefore, string $tipePenerimaan, bool $libatkanKonversi = true, array $reservasiBatch = []): array
     {
-        $isSecondary = $tipePenerimaan === 'Secondary';
+        $isSecondary = $tipePenerimaan === 'Secondary' || $tipePenerimaan === 'FOC';
         $previewMode = $qty <= 0;
 
         // Peta deep -> line untuk reservasi batch (item lain se-form).
@@ -2936,7 +2939,7 @@ class BarangMasukController extends Controller
     {
         if ($tipePenerimaan !== 'REJECT') {
             $blockKhusus = self::BLOCK_KHUSUS;
-            if ($tipePenerimaan === 'Secondary') {
+            if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'FOC') {
                 $blockKhusus[] = 'MOBIL';
             } else {
                 $blockKhusus[] = 'RECEH';
@@ -3075,7 +3078,7 @@ class BarangMasukController extends Controller
                 ->havingRaw('total_kapasitas > total_terisi AND total_kapasitas > 0')
                 ->orderByRaw('(b.kode_block = ?) DESC, ABS(ln.nomor_line - ?) ASC, b.kode_block ASC, ln.nomor_line ASC', [$kodeBlock, $noLine]);
 
-            if ($tipePenerimaan === 'Secondary') {
+            if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'FOC') {
                 $qNumpang->whereNotIn('b.kode_block', ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'FESTIVE', 'HOLD', 'MOBIL']);
             } elseif ($tipePenerimaan !== 'REJECT') {
                 $qNumpang->whereNotIn('b.kode_block', ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'RECEH', 'TRANSIT', 'FESTIVE', 'HOLD']);
@@ -3739,7 +3742,7 @@ class BarangMasukController extends Controller
                 return;
             }
             $exclude = ['BS', 'BAD', 'BADSTOCK', 'REJECT', 'RECEH', 'TRANSIT', 'FESTIVE'];
-            if ($tipePenerimaan === 'Secondary') {
+            if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'FOC') {
                 $exclude = ['BS', 'BAD', 'BADSTOCK', 'REJECT', 'RECEH', 'TRANSIT', 'FESTIVE', 'HOLD', 'MOBIL'];
             }
             $q->whereRaw("UPPER(TRIM(b.kode_block)) REGEXP '^[A-Z][A-Z0-9]*$'")

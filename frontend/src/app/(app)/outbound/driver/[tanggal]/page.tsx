@@ -115,9 +115,19 @@ export default function OutboundDriverPage() {
   if (!session || !loaded) return null;
 
   const kw = q.trim().toLowerCase();
-  const isFoc = (r: BkRow) => (r.tipe_pengeluaran || "").toUpperCase() === "FOC";
-  const filteredRows = tipeFilter === "foc" ? rows.filter(isFoc) : tipeFilter === "normal" ? rows.filter((r) => !isFoc(r)) : rows;
-  const sectionLabel = tipeFilter === "foc" ? "FOC" : tipeFilter === "normal" ? "Normal" : "";
+  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const matchTipe = (r: BkRow) => {
+    if (!tipeFilter) return true;
+    const t = tipeNorm(r.tipe_pengeluaran);
+    if (tipeFilter === "primary") return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
+    if (tipeFilter === "secondary") return t === "SECONDARY";
+    if (tipeFilter === "foc") return t === "FOC";
+    // Kompatibilitas URL lama: ?tipe=normal = semua non-FOC.
+    if (tipeFilter === "normal") return t !== "FOC";
+    return true;
+  };
+  const filteredRows = rows.filter(matchTipe);
+  const sectionLabel = tipeFilter === "foc" ? "FOC" : tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "normal" ? "Normal" : "";
   const driverMap: Record<string, DriverItem> = {};
   filteredRows.forEach((row) => {
     const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";

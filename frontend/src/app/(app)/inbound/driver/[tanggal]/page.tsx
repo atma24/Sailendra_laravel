@@ -17,6 +17,7 @@ type BmRow = {
   shipment_id: string;
   catatan: string;
   status: string;
+  tipe_penerimaan: string;
 };
 
 type ShipmentItem = {
@@ -87,6 +88,17 @@ export default function InboundDriverPage() {
   const [loaded, setLoaded] = useState(false);
   const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "");
   const sumberFilter = searchParams.get("sumber") || "";
+  const tipeFilter = searchParams.get("tipe") || "";
+  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const matchTipe = (r: BmRow) => {
+    if (!tipeFilter) return true;
+    const t = tipeNorm(r.tipe_penerimaan);
+    if (tipeFilter === "primary") return t === "PRIMARY" || t === "REJECT" || t === "";
+    if (tipeFilter === "secondary") return t === "SECONDARY";
+    if (tipeFilter === "xwh") return t === "PRIMARY XWH";
+    if (tipeFilter === "foc") return t === "FOC";
+    return true;
+  };
 
   useEffect(() => {
     if (!session || !tanggal) return;
@@ -119,8 +131,10 @@ export default function InboundDriverPage() {
 
   const kw = q.trim().toLowerCase();
   const isAutoOutbound = (r: BmRow) => (r.catatan || "").includes("Auto dari Outbound");
-  const filteredRows = sumberFilter === "outbound" ? rows.filter(isAutoOutbound) : sumberFilter === "normal" ? rows.filter((r) => !isAutoOutbound(r)) : rows;
-  const sectionLabel = sumberFilter === "outbound" ? "Dari Outbound" : sumberFilter === "normal" ? "Normal" : "";
+  const bySumber = sumberFilter === "outbound" ? rows.filter(isAutoOutbound) : sumberFilter === "normal" ? rows.filter((r) => !isAutoOutbound(r)) : rows;
+  const filteredRows = bySumber.filter(matchTipe);
+  const tipeLabel = tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "xwh" ? "XWH" : tipeFilter === "foc" ? "FOC" : "";
+  const sectionLabel = sumberFilter === "outbound" ? `Dari Outbound${tipeLabel ? ` · ${tipeLabel}` : ""}` : sumberFilter === "normal" ? `${tipeLabel || "Normal"}` : tipeLabel;
   // Satu kartu per (driver + shipment_id), mirip GIN di outbound
   const shipMap: Record<string, ShipmentItem> = {};
   filteredRows.forEach((row) => {
@@ -161,11 +175,17 @@ export default function InboundDriverPage() {
     if (lok) p.set("lok", lok);
     if (sv) p.set("status", sv);
     if (sumberFilter) p.set("sumber", sumberFilter);
+    if (tipeFilter) p.set("tipe", tipeFilter);
     const qs = p.toString();
     return `/inbound/driver/${encodeURIComponent(tanggal)}${qs ? `?${qs}` : ""}`;
   };
 
-  const backHref = `/inbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `${lok ? "&" : "?"}sumber=${sumberFilter}` : ""}`;
+  const backQs = new URLSearchParams();
+  if (lok) backQs.set("lok", lok);
+  if (sumberFilter) backQs.set("sumber", sumberFilter);
+  if (tipeFilter) backQs.set("tipe", tipeFilter);
+  const backQsStr = backQs.toString();
+  const backHref = `/inbound${backQsStr ? `?${backQsStr}` : ""}`;
 
   return (
     <div className="inbound-page">
@@ -214,7 +234,7 @@ export default function InboundDriverPage() {
             const ss = statusStyle(d.status);
             return (
             <Link key={`${d.nama_driver}::${d.shipment_id}`} className="inbound-card inbound-driver-card"
-              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `&sumber=${sumberFilter}` : ""}`}>
+              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `&sumber=${sumberFilter}` : ""}${tipeFilter ? `&tipe=${tipeFilter}` : ""}`}>
               <div className="driver-top">
                 <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
                 <div style={{ flex: 1, minWidth: 0 }}>

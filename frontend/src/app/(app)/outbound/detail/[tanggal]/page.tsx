@@ -214,8 +214,18 @@ export default function OutboundDetailPage() {
         const r = await apiGet<BkDetail[]>(`/barang-keluar?${sp.toString()}`);
         if (cancelled) return;
         const rows = r.data || [];
-        const isFoc = (x: BkDetail) => (x.tipe_pengeluaran || "").toUpperCase() === "FOC";
-        const tipeRows = tipeFilter === "foc" ? rows.filter(isFoc) : tipeFilter === "normal" ? rows.filter((x) => !isFoc(x)) : rows;
+        const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+        const matchTipe = (x: BkDetail) => {
+          if (!tipeFilter) return true;
+          const t = tipeNorm(x.tipe_pengeluaran);
+          if (tipeFilter === "primary") return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
+          if (tipeFilter === "secondary") return t === "SECONDARY";
+          if (tipeFilter === "foc") return t === "FOC";
+          // Kompatibilitas URL lama: ?tipe=normal = semua non-FOC.
+          if (tipeFilter === "normal") return t !== "FOC";
+          return true;
+        };
+        const tipeRows = rows.filter(matchTipe);
         const myRows = tipeRows.filter((x) => (norm(x.nama_driver) || "Tanpa nama driver") === driver);
         const firstId = angka(myRows[0]?.id_barang_keluar);
 

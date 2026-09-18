@@ -168,6 +168,17 @@ export default function InboundDetailPage() {
   const shipment = searchParams.get("shipment") || "";
   const lok = searchParams.get("lok") || "";
   const sumberFilter = searchParams.get("sumber") || "";
+  const tipeFilter = searchParams.get("tipe") || "";
+  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const matchTipe = (x: BmRow) => {
+    if (!tipeFilter) return true;
+    const t = tipeNorm(x.tipe_penerimaan);
+    if (tipeFilter === "primary") return t === "PRIMARY" || t === "REJECT" || t === "";
+    if (tipeFilter === "secondary") return t === "SECONDARY";
+    if (tipeFilter === "xwh") return t === "PRIMARY XWH";
+    if (tipeFilter === "foc") return t === "FOC";
+    return true;
+  };
 
   const [rows, setRows] = useState<BmRow[]>([]);
   const [produkList, setProdukList] = useState<Produk[]>([]); // Untuk Tambah Item
@@ -262,7 +273,13 @@ export default function InboundDetailPage() {
           const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
           const isAutoOut = (x.catatan || "").includes("Auto dari Outbound");
           const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
-          return sameDriver && sameShip && sameSumber;
+          const t = String(x.tipe_penerimaan ?? "").trim().toUpperCase();
+          const sameTipe = !tipeFilter
+            || (tipeFilter === "primary" && (t === "PRIMARY" || t === "REJECT" || t === ""))
+            || (tipeFilter === "secondary" && t === "SECONDARY")
+            || (tipeFilter === "xwh" && t === "PRIMARY XWH")
+            || (tipeFilter === "foc" && t === "FOC");
+          return sameDriver && sameShip && sameSumber && sameTipe;
         });
 
         const firstRow = filtered[0];
@@ -282,7 +299,7 @@ export default function InboundDetailPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, tanggal, lok, driver, shipment, multi]);
+  }, [session, tanggal, lok, driver, shipment, sumberFilter, tipeFilter, multi]);
 
   if (!session || !loaded) return null;
 
@@ -296,7 +313,7 @@ export default function InboundDetailPage() {
     const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
     const isAutoOut = (r.catatan || "").includes("Auto dari Outbound");
     const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
-    return sameDriver && sameShip && sameSumber;
+    return sameDriver && sameShip && sameSumber && matchTipe(r);
   }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
   const first = items[0];
@@ -304,7 +321,12 @@ export default function InboundDetailPage() {
     ? String(first.ritase).trim()
     : "-";
   const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
-  const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `${lok ? "&" : "?"}sumber=${sumberFilter}` : ""}`;
+  const backQs = new URLSearchParams();
+  if (lok) backQs.set("lok", lok);
+  if (sumberFilter) backQs.set("sumber", sumberFilter);
+  if (tipeFilter) backQs.set("tipe", tipeFilter);
+  const backQsStr = backQs.toString();
+  const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${backQsStr ? `?${backQsStr}` : ""}`;
 
   const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
   const hasPending = items.some(i => (i.status || "").toLowerCase() === "pending");
@@ -344,7 +366,7 @@ export default function InboundDetailPage() {
          const bb = isRej || noBatch ? "9999-12-31" : (draftBb[i.id_barang_masuk] || "");
          if (!bb) throw new Error(`Best before untuk ${i.nama_produk} belum diisi.`);
 
-         const isSecondary = (i.tipe_penerimaan || "").toUpperCase() === "SECONDARY";
+          const isSecondary = ["SECONDARY", "FOC"].includes((i.tipe_penerimaan || "").toUpperCase());
          const catatanVal = draftCatatan[i.id_barang_masuk] || "";
          if (angka(i.jumlah) === 0 && isSecondary && !catatanVal) {
             throw new Error(`Catatan wajib diisi untuk ${i.nama_produk} (jumlah 0).`);
@@ -503,7 +525,7 @@ export default function InboundDetailPage() {
   const simpanJumlah = async () => {
     if (!showItem) return;
     const j = angka(iJumlah);
-    const isSecondary = (showItem.tipe_penerimaan || "").toUpperCase() === "SECONDARY";
+    const isSecondary = ["SECONDARY", "FOC"].includes((showItem.tipe_penerimaan || "").toUpperCase());
     if (j < 0) { notify("error", "Jumlah tidak valid."); return; }
     if (j === 0 && isSecondary && !norm(iCatatan)) { notify("error", "Catatan wajib diisi jika jumlah 0."); return; }
     setBusy(true);
@@ -749,7 +771,7 @@ export default function InboundDetailPage() {
                       placeholder={noBatch ? "Produk Tanpa BB" : "Pilih Best Before"}
                       onChange={(e) => setDraftBb({...draftBb, [item.id_barang_masuk]: e.target.value})} 
                     />
-                    {(item.tipe_penerimaan || "").toUpperCase() === "SECONDARY" && (
+                    {(["SECONDARY", "FOC"].includes((item.tipe_penerimaan || "").toUpperCase())) && (
                       <div style={{ marginTop: 6 }}>
                         <label className="id-text-label" style={{marginBottom: 4}}>Catatan (wajib jika qty 0)</label>
                         <input 
@@ -821,7 +843,7 @@ export default function InboundDetailPage() {
               <div className="dialog-field">
                 <label>No DN</label>
                 <input type="text" value={hDn} onChange={(e) => setHDn(e.target.value)}
-                  readOnly={["Secondary", "REJECT"].includes(norm(first.tipe_penerimaan))} maxLength={30} />
+                  readOnly={["Secondary", "REJECT", "FOC"].includes(norm(first.tipe_penerimaan))} maxLength={30} />
               </div>
               <div className="dialog-field">
                 <label>Nama Driver</label>
@@ -867,7 +889,7 @@ export default function InboundDetailPage() {
                   readOnly={(showItem.tipe_penerimaan || "").toUpperCase() === "REJECT" || showItem.status.toLowerCase() === "selesai"}
                   onChange={(e) => setIBestBefore(e.target.value)} />
               </div>
-              {angka(iJumlah) === 0 && (showItem.tipe_penerimaan || "").toUpperCase() === "SECONDARY" && (
+              {angka(iJumlah) === 0 && ["SECONDARY", "FOC"].includes((showItem.tipe_penerimaan || "").toUpperCase()) && (
                 <div className="dialog-field dialog-field-full">
                   <label>Catatan <span style={{ color: "#ef4444" }}>*</span></label>
                   <input type="text" value={iCatatan} onChange={(e) => setICatatan(e.target.value)}

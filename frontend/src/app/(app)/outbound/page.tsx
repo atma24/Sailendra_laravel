@@ -80,6 +80,10 @@ const css = `
 .outbound-section-divider-line { flex: 1; height: 1px; background: #e5e7eb; }
 .outbound-section-divider-label { font-size: 11px; font-weight: 900; color: #7c3aed; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
 .outbound-section-count { font-size: 10px; font-weight: 800; color: #9ca3af; background: #f3f4f6; padding: 2px 8px; border-radius: 10px; }
+.outbound-3col { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; align-items: start; }
+.outbound-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.outbound-col-head { font-size: 12px; font-weight: 900; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
+@media (max-width: 1024px) { .outbound-3col { grid-template-columns: 1fr; } }
 `;
 
 export default function OutboundTanggalPage() {
@@ -136,13 +140,20 @@ export default function OutboundTanggalPage() {
     return map;
   };
 
-  const isFoc = (r: BkRow) => (r.tipe_pengeluaran || "").toUpperCase() === "FOC";
-  const normalRows = rows.filter((r) => !isFoc(r));
-  const focRows = rows.filter((r) => isFoc(r));
+  // Split rows ke 3 kolom: Primary+Pemusnahan (kiri) | Secondary (tengah) | FOC (kanan).
+  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const primaryRows = rows.filter((r) => {
+    const t = tipeNorm(r.tipe_pengeluaran);
+    return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
+  });
+  const secondaryRows = rows.filter((r) => tipeNorm(r.tipe_pengeluaran) === "SECONDARY");
+  const focRows = rows.filter((r) => tipeNorm(r.tipe_pengeluaran) === "FOC");
 
-  const normalMap = buildTanggalMap(normalRows);
+  const primaryMap = buildTanggalMap(primaryRows);
+  const secondaryMap = buildTanggalMap(secondaryRows);
   const focMap = buildTanggalMap(focRows);
-  const normalList = Object.values(normalMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const primaryList = Object.values(primaryMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const secondaryList = Object.values(secondaryMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const focList = Object.values(focMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
 
   const openModal = async (which: "upload" | "import" | "foc") => {
@@ -265,28 +276,38 @@ export default function OutboundTanggalPage() {
         </div>
       </div>
 
-      {/* === SECTION: Normal Outbound === */}
-      <div>
-        <div style={{ fontSize: 12, fontWeight: 900, color: "var(--text-main)", marginBottom: 7, display: "flex", alignItems: "center", gap: 8 }}>
-          <i className="bi bi-truck" style={{ color: "var(--primary)" }}></i>
-          Pengeluaran Normal
-          <span className="outbound-section-count">{normalList.length}</span>
+      {/* === 3 KOLOM: Primary+Pemusnahan | Secondary | FOC === */}
+      <div className="outbound-3col">
+        {/* KOLOM KIRI: Primary + Pemusnahan */}
+        <div className="outbound-col">
+          <div className="outbound-col-head">
+            <i className="bi bi-truck" style={{ color: "var(--primary)" }}></i>
+            Primary
+            <span className="outbound-section-count">{primaryList.length}</span>
+          </div>
+          <PagedTanggal items={primaryList} emptyMsg="Tidak ada data outbound primary." resetKey={`${search}|${keyword}|${primaryRows.length}`} section="primary" />
         </div>
-        <PagedTanggal items={normalList} emptyMsg="Tidak ada data outbound normal." resetKey={`${search}|${keyword}|${normalRows.length}`} section="normal" />
-      </div>
 
-      {/* === SECTION: FOC === */}
-      {focList.length > 0 && (
-        <div>
-          <div className="outbound-section-divider">
-            <div className="outbound-section-divider-line"></div>
-            <span className="outbound-section-divider-label">FOC (Free of Charge)</span>
+        {/* KOLOM TENGAH: Secondary */}
+        <div className="outbound-col">
+          <div className="outbound-col-head">
+            <i className="bi bi-arrow-repeat" style={{ color: "var(--primary)" }}></i>
+            Secondary
+            <span className="outbound-section-count">{secondaryList.length}</span>
+          </div>
+          <PagedTanggal items={secondaryList} emptyMsg="Tidak ada data outbound secondary." resetKey={`${search}|${keyword}|${secondaryRows.length}`} section="secondary" />
+        </div>
+
+        {/* KOLOM KANAN: FOC */}
+        <div className="outbound-col">
+          <div className="outbound-col-head">
+            <i className="bi bi-gift" style={{ color: "var(--primary)" }}></i>
+            FOC
             <span className="outbound-section-count">{focList.length}</span>
-            <div className="outbound-section-divider-line"></div>
           </div>
           <PagedTanggal items={focList} emptyMsg="Tidak ada data outbound FOC." resetKey={`${search}|${keyword}|${focRows.length}`} section="foc" />
         </div>
-      )}
+      </div>
 
       {/* === MODALS === */}
       {modal && modal !== "foc" && (
