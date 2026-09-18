@@ -1402,13 +1402,19 @@ $in = $request->all();
                 WHERE bk.id_pengguna_lokasi = ? AND bk.id_barang_keluar IN ($placeholders)
             ", $paramsSync);
 
-            // === AUTO-INBOUND: Buat barang_masuk Secondary dari outbound selesai ===
+            // === AUTO-INBOUND: Buat barang_masuk dari outbound selesai ===
+            // Hanya Secondary & FOC yang kembali sebagai inbound.
+            // Primary & Pemusnahan tidak membuat auto-inbound (barang keluar permanen).
             // 1 GIN = 1 shipment_id, agar semua item dalam 1 GIN tampil sebagai
             // 1 detail inbound (bukan 1 detail per item).
             $itemsSelesai = DB::table('barang_keluar')
                 ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                 ->whereIn('id_barang_keluar', $idsProses)
-                ->get();
+                ->get()
+                ->reject(function ($bk) {
+                    return in_array(strtoupper(trim((string) ($bk->tipe_pengeluaran ?? ''))), ['PRIMARY', 'PEMUSNAHAN'], true);
+                })
+                ->values();
 
             $fallbackShipment = 'AUTO-OB'.(int) $header->id_barang_keluar;
             $grupPerGin = [];

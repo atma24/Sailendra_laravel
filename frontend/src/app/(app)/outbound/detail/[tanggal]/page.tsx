@@ -279,6 +279,8 @@ export default function OutboundDetailPage() {
   const canDelete = (isDraft || isPending) && canCrud;
   const firstId = angka(header?.id_barang_keluar || items[0]?.id_barang_keluar || 0);
   const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
+  // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan keluar permanen).
+  const adaAutoInbound = items.some((it) => ["SECONDARY", "FOC"].includes(String(it.tipe_pengeluaran || "").trim().toUpperCase()));
   const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `${lok ? "&" : "?"}tipe=${tipeFilter}` : ""}`;
 
   const openHeader = () => {
@@ -515,7 +517,7 @@ export default function OutboundDetailPage() {
       sessionStorage.setItem(
         "sailendra_flash_toast",
         JSON.stringify({
-          message: aksi === "revert_to_draft" ? "Outbound dikembalikan ke Draft." : aksi === "konfirmasi" ? "Konfirmasi outbound berhasil. Inbound otomatis dibuat dari data outbound ini." : "Outbound disubmit ke Pending.",
+          message: aksi === "revert_to_draft" ? "Outbound dikembalikan ke Draft." : aksi === "konfirmasi" ? (adaAutoInbound ? "Konfirmasi outbound berhasil. Inbound otomatis dibuat dari data outbound ini." : "Konfirmasi outbound berhasil.") : "Outbound disubmit ke Pending.",
           type: "success",
         })
       );
@@ -647,7 +649,7 @@ export default function OutboundDetailPage() {
           </>
         )}
 
-        {isSelesai && (
+        {isSelesai && adaAutoInbound && (
           <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 32, height: 32, borderRadius: 8, background: "#dcfce7", color: "#16a34a", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <i className="bi bi-arrow-down-up" style={{ fontSize: 14 }}></i>
