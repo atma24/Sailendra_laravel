@@ -902,7 +902,7 @@ class BarangMasukController extends Controller
         $idxAsalName = $colMap['Source Name'] ?? -1;
         $idxTransporter = $colMap['Actual Transporter Name'] ?? -1;
         $idxQty = $colMap['Actual Quantity'] ?? -1;
-        $idxDate = $colMap['Actual PickUp Date'] ?? -1;
+        $idxDate = $colMap['Planned PickUp Date'] ?? -1;
         $idxDn = $colMap['DN number'] ?? -1;
         $idxTruck = $colMap['Truck Type'] ?? -1;
 
@@ -1105,7 +1105,6 @@ class BarangMasukController extends Controller
 
         DB::beginTransaction();
         try {
-            $insertedRencana = 0;
             $processedItems = 0;
 
             foreach ($itemsReq as $it) {
@@ -1148,10 +1147,10 @@ class BarangMasukController extends Controller
                     $batchBaru = '-';
                 }
 
-                // Qty 0: skip alokasi, langsung Pending tanpa lokasi
+                // Qty 0: skip alokasi, langsung Selesai tanpa lokasi/stok
                 if ((int) $draft->jumlah <= 0) {
                     $updateData = [
-                        'status' => 'Pending',
+                        'status' => 'Selesai',
                         'best_before' => $bbReq,
                         'batch' => $batchBaru,
                         'batch_sekarang' => $batchBaru,
@@ -1188,26 +1187,17 @@ class BarangMasukController extends Controller
                     throw new Exception("Tidak ada alokasi lokasi kosong untuk {$draft->nama_produk}");
                 }
 
+                // Langsung Selesai: tulis stok fisik sekarang (tanpa tahap Pending/rencana).
+                $grouped = [];
                 foreach ($alokasi as $al) {
-                    DB::table('rencana_masuk_deep')->insert([
-                        'id_barang_masuk' => $draft->id_barang_masuk,
-                        'id_pengguna_lokasi' => $idPenggunaLokasi,
-                        'id_deep' => $al['id_deep'],
-                        'jumlah_rencana' => $al['alokasi'],
-                        'best_before' => $bbReq,
-                        'batch' => $batchBaru
-                    ]);
-                    $insertedRencana++;
+                    $labelLine = strtoupper(trim($al['kode_block'])) . '-' . $al['nomor_line'];
+                    $grouped[$labelLine][] = $al;
                 }
-
-                $kumpulanLokasi = [];
-                foreach ($alokasi as $al) {
-                    $kumpulanLokasi[] = $al['kode_block'] . '-' . $al['nomor_line'];
-                }
+                $kumpulanLokasi = array_keys($grouped);
                 $lokasiAkhirStr = implode(', ', array_unique($kumpulanLokasi));
 
                 $updateData = [
-                    'status' => 'Pending',
+                    'status' => 'Selesai',
                     'best_before' => $bbReq,
                     'batch' => $batchBaru,
                     'batch_sekarang' => $batchBaru,
@@ -1225,6 +1215,39 @@ class BarangMasukController extends Controller
                 DB::table('barang_masuk')
                     ->where('id_barang_masuk', $draft->id_barang_masuk)
                     ->update($updateData);
+
+                foreach ($grouped as $labelLine => $details) {
+                    $totalQtyLine = 0;
+                    foreach ($details as $d) {
+                        $totalQtyLine += $d['alokasi'];
+                    }
+
+                    $idStok = DB::table('stok_gudang')->insertGetId([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_produk' => $draft->id_produk,
+                        'nama_produk' => $draft->nama_produk,
+                        'id_barang_masuk' => $draft->id_barang_masuk,
+                        'jumlah_sisa' => $totalQtyLine,
+                        'batch' => $batchBaru,
+                        'satuan' => $draft->satuan,
+                        'best_before' => $bbReq,
+                        'lokasi_block' => $labelLine,
+                        'created_at' => now(),
+                    ]);
+
+                    foreach ($details as $d) {
+                        DB::table('stok_gudang_deep')->insert([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_stok_header' => $idStok,
+                            'id_deep' => $d['id_deep'],
+                            'jumlah' => $d['alokasi'],
+                            'best_before' => $bbReq,
+                            'batch' => $batchBaru,
+                            'lokasi_block' => $labelLine,
+                            'created_at' => now(),
+                        ]);
+                    }
+                }
                 $processedItems++;
             }
 
@@ -1233,7 +1256,7 @@ class BarangMasukController extends Controller
             }
 
             DB::commit();
-            return $this->okMessage("Berhasil Submit! Status berubah menjadi Pending.");
+            return $this->okMessage("Berhasil Submit! Status berubah menjadi Selesai, stok telah ditambahkan.");
 
         } catch (Throwable $e) {
             DB::rollBack();
@@ -2290,7 +2313,8 @@ class BarangMasukController extends Controller
     }
 
     // =========================================================================
-    // 6. HAPUS INBOUND
+    // 6. HAPUS INBOUND PER ITEM (hard-delete seperti awal)
+    //    Pembatalan Canceled + catatan hanya untuk per shipment via batal().
     // =========================================================================
     public function destroy(Request $request)
     {
@@ -2325,6 +2349,7 @@ class BarangMasukController extends Controller
                 }
 
                 DB::table('stok_gudang')->where('id_barang_masuk', $idBm)->delete();
+                DB::table('rencana_masuk_deep')->where('id_barang_masuk', $idBm)->delete();
 
                 $deleted = DB::table('barang_masuk')->where('id_barang_masuk', $idBm)->delete();
                 if ($deleted <= 0) {
@@ -2336,6 +2361,122 @@ class BarangMasukController extends Controller
         }
 
         return $this->okMessage('Barang masuk & stok terhapus', ['deleted' => $deleted]);
+    }
+
+    // =========================================================================
+    // 6b. BATAL INBOUND PER SHIPMENT (1 aksi + 1 catatan untuk semua item)
+    // =========================================================================
+    public function batal(Request $request)
+    {
+        $shipmentId = trim((string) $request->input('shipment_id', ''));
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
+        $catatan = trim((string) $request->input('catatan', ''));
+        $namaPengguna = trim((string) ($request->input('nama_pengguna', '') ?: $request->input('diperbarui_oleh', '')));
+
+        if ($shipmentId === '' || $idPenggunaLokasi === '') {
+            return $this->fail('shipment_id dan id_pengguna_lokasi wajib diisi.', 422);
+        }
+        if ($catatan === '' || mb_strlen($catatan) < 3) {
+            return $this->fail('Catatan pembatalan wajib diisi (minimal 3 karakter).', 422);
+        }
+        if (mb_strlen($catatan) > 250) {
+            return $this->fail('Catatan pembatalan maksimal 250 karakter.', 422);
+        }
+
+        try {
+            $ids = DB::table('barang_masuk')
+                ->where('shipment_id', $shipmentId)
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->whereRaw("LOWER(TRIM(status)) IN ('draft','pending')")
+                ->pluck('id_barang_masuk')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            if (empty($ids)) {
+                return $this->fail('Tidak ada item Draft/Pending untuk shipment ini (mungkin sudah Selesai/Canceled).', 422);
+            }
+
+            $count = 0;
+            DB::transaction(function () use ($ids, $idPenggunaLokasi, $catatan, $namaPengguna, &$count) {
+                foreach ($ids as $idBm) {
+                    $this->batalkanSatuInbound($idBm, $idPenggunaLokasi, $catatan, $namaPengguna);
+                    $count++;
+                }
+            });
+
+            return $this->ok(['canceled' => $count, 'ids' => $ids], "Inbound dibatalkan ({$count} item).");
+        } catch (Throwable $e) {
+            return $this->fail($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Batalkan 1 row inbound: bersihkan stok/rencana (bila Pending),
+     * lalu UPDATE status=Canceled + timpa catatan. Harus dipanggil
+     * di dalam (atau sebagai) transaction oleh pemanggil.
+     */
+    private function batalkanSatuInbound(int $idBm, string $idPenggunaLokasi, string $catatan, string $namaPengguna): int
+    {
+        $canceled = 0;
+        DB::transaction(function () use ($idBm, $idPenggunaLokasi, $catatan, $namaPengguna, &$canceled) {
+            $row = DB::table('barang_masuk')
+                ->where('id_barang_masuk', $idBm)
+                ->when($idPenggunaLokasi !== '', fn ($q) => $q->where('id_pengguna_lokasi', $idPenggunaLokasi))
+                ->lockForUpdate()
+                ->first();
+
+            if (! $row) {
+                throw new Exception('Data tidak ditemukan');
+            }
+
+            $status = strtolower(trim((string) ($row->status ?? '')));
+            if ($status === 'canceled' || $status === 'cancelled' || $status === 'batal') {
+                throw new Exception('Inbound sudah dibatalkan sebelumnya.');
+            }
+            if (! in_array($status, ['draft', 'pending'], true)) {
+                throw new Exception('Hanya inbound Draft/Pending yang bisa dibatalkan.');
+            }
+
+            $dipakai = DB::table('rencana_keluar_deep as r')
+                ->join('stok_gudang_deep as sgd', 'sgd.id_detail_stok', '=', 'r.id_detail_stok')
+                ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sgd.id_stok_header')
+                ->where('sg.id_barang_masuk', $idBm)
+                ->lockForUpdate()
+                ->exists();
+
+            if ($dipakai) {
+                throw new Exception('Tidak bisa batal: barang masuk sudah dipakai di rencana / outbound');
+            }
+
+            $idStokList = DB::table('stok_gudang')
+                ->where('id_barang_masuk', $idBm)
+                ->pluck('id_stok')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            if (! empty($idStokList)) {
+                DB::table('stok_gudang_deep')->whereIn('id_stok_header', $idStokList)->delete();
+            }
+
+            DB::table('stok_gudang')->where('id_barang_masuk', $idBm)->delete();
+            DB::table('rencana_masuk_deep')->where('id_barang_masuk', $idBm)->delete();
+
+            $upd = [
+                'status' => 'Canceled',
+                'catatan' => $catatan,
+                'diperbarui_pada' => DB::raw('NOW()'),
+            ];
+            if ($namaPengguna !== '') {
+                $upd['diperbarui_oleh'] = $namaPengguna;
+            }
+
+            $canceled = DB::table('barang_masuk')->where('id_barang_masuk', $idBm)->update($upd);
+            if ($canceled <= 0) {
+                throw new Exception('Data tidak ditemukan');
+            }
+        });
+
+        return $canceled;
     }
 
     // =========================================================================

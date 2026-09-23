@@ -128,7 +128,7 @@ class DashboardController extends Controller
             ->selectRaw('COUNT(DISTINCT CASE WHEN DATE(bk.tanggal_keluar) BETWEEN ? AND ? THEN bk.gin_no END) AS bulan_ini', [$monthStart, $monthEnd])
             ->selectRaw('SUM(CASE WHEN DATE(bk.tanggal_keluar) BETWEEN ? AND ? THEN bk.jumlah ELSE 0 END) AS qty_bulan_ini', [$monthStart, $monthEnd])
             ->selectRaw('SUM(CASE WHEN DATE(bk.tanggal_keluar) = ? THEN bk.jumlah ELSE 0 END) AS qty_today', [$today])
-            ->selectRaw("COUNT(DISTINCT CASE WHEN LOWER(COALESCE(bk.status,'')) NOT IN ('confirmed','selesai') THEN bk.gin_no END) AS pending");
+            ->selectRaw("COUNT(DISTINCT CASE WHEN LOWER(COALESCE(bk.status,'')) NOT IN ('confirmed','selesai','canceled','cancelled') THEN bk.gin_no END) AS pending");
 
         $base = $this->withLokasiFilter($base, 'bk.id_pengguna_lokasi', $filter);
         $r = (array) $base->first();

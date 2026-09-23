@@ -105,6 +105,16 @@ const css = `
 .dialog-btn-save:hover { filter: brightness(1.05); }
 .dialog-danger { background: #ef4444; color: #FFFFFF; }
 .dialog-danger:hover { filter: brightness(1.05); }
+.od-picker-wrap { position: relative; }
+.od-picker-button { width: 100%; min-height: 36px; border-radius: 8px; border: 1px solid #dedede; background: #fbfcff; padding: 8px 12px; font-size: 13px; font-weight: 500; color: var(--text-main); outline: none; display: flex; align-items: center; justify-content: space-between; gap: 7px; cursor: pointer; }
+.od-picker-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.od-picker-panel { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 3050; background: #FFFFFF; border: 1px solid #e2e7f0; border-radius: 8px; box-shadow: 0 10px 24px rgba(15,23,42,0.12); padding: 8px; }
+.od-picker-panel.show { display: block; }
+.od-picker-search { width: 100%; height: 34px; border-radius: 6px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 12px; outline: none; margin-bottom: 6px; box-sizing: border-box; }
+.od-option-list { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.od-option { border: 0; outline: 0; width: 100%; text-align: left; background: #FFFFFF; color: var(--text-main); border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600; display: flex; align-items: flex-start; cursor: pointer; }
+.od-option:hover, .od-option.selected { background: var(--primary-soft); color: var(--primary); }
+.od-empty-result { padding: 8px; color: var(--text-soft); font-size: 12px; font-weight: 600; text-align: center; }
 .status-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 900; white-space: nowrap; }
 .penyesuaian-box { font-size: 10.5px; color: #6b7280; font-weight: 750; line-height: 1.5; margin-top: 9px; padding-top: 9px; border-top: 1px solid #dfe3ee; }
 .sailendra-toast-wrap { position: fixed; top: 18px; right: 18px; z-index: 3000; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); pointer-events: none; }
@@ -129,7 +139,12 @@ const statusStyle = (s: string): { bg: string; color: string } => {
   const st = (s || "").toLowerCase();
   if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
   if (st === "selesai" || st === "confirmed") return { bg: "#d1fae5", color: "#065f46" };
+  if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c" };
   return { bg: "#e5e7eb", color: "#4b5563" };
+};
+const isCanceledStatus = (s: unknown) => {
+  const st = String(s ?? "").trim().toLowerCase();
+  return st === "canceled" || st === "cancelled" || st === "batal";
 };
 
 export default function OutboundDetailPage() {
@@ -159,6 +174,7 @@ export default function OutboundDetailPage() {
   const [showQr, setShowQr] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmOne, setConfirmOne] = useState<BkDetail | null>(null);
+  const [catatanBatal, setCatatanBatal] = useState("");
   // --- Script Tambahan Timer ---
   const waktuMulaiRef = useRef<Date | null>(null);
 
@@ -179,6 +195,10 @@ export default function OutboundDetailPage() {
   const [manualBlock, setManualBlock] = useState<{ id_block: number; kode_block: string }[]>([]);
   const [manualLine, setManualLine] = useState<{ id_line: number; nomor_line: string }[]>([]);
   const [manualBatch, setManualBatch] = useState<{ batch: string; best_before: string }[]>([]);
+  const [qLok, setQLok] = useState("");
+  const [qBlock, setQBlock] = useState("");
+  const [qLine, setQLine] = useState("");
+  const [qBatch, setQBatch] = useState("");
 
   // add item form
   const [aProduk, setAProduk] = useState(0);
@@ -273,10 +293,11 @@ export default function OutboundDetailPage() {
   const isSelesai = statusLower === "selesai" || statusLower === "confirmed";
   const isDraft = statusLower === "draft";
   const isPending = statusLower === "pending";
+  const isCanceled = isCanceledStatus(status);
   const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
   const canEditHeader = isDraft && canCrud;
   const canEditItem = (isDraft || isSelesai) && canCrud;
-  const canDelete = (isDraft || isPending) && canCrud;
+  const canBatalkan = (isDraft || isPending) && canCrud && items.length > 0;
   const firstId = angka(header?.id_barang_keluar || items[0]?.id_barang_keluar || 0);
   const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
   // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan keluar permanen).
@@ -320,6 +341,7 @@ export default function OutboundDetailPage() {
     setIBatch("");
     setIBestBefore("");
     setManualLok([]); setManualBlock([]); setManualLine([]); setManualBatch([]);
+    setQLok(""); setQBlock(""); setQLine(""); setQBatch("");
   };
 
   const simpanItem = async () => {
@@ -444,6 +466,12 @@ export default function OutboundDetailPage() {
     } finally { setBusy(false); }
   };
 
+  const openBatalkan = () => {
+    setCatatanBatal("");
+    setConfirmOne(null);
+    setConfirmAll(true);
+  };
+
   const hapusSatu = async () => {
     if (!confirmOne) return;
     setBusy(true);
@@ -452,13 +480,7 @@ export default function OutboundDetailPage() {
         id_barang_keluar: confirmOne.id_barang_keluar,
         id_pengguna_lokasi: String(confirmOne.id_pengguna_lokasi || aktifLokasiId(session)),
       });
-      sessionStorage.setItem(
-        "sailendra_flash_toast",
-        JSON.stringify({
-          message: "Item outbound berhasil dihapus.",
-          type: "success",
-        })
-      );
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Item outbound berhasil dihapus.", type: "success" }));
       setConfirmOne(null);
       window.location.reload();
     } catch (e) {
@@ -466,20 +488,25 @@ export default function OutboundDetailPage() {
     } finally { setBusy(false); }
   };
 
-  const hapusSemua = async () => {
+  const batalkanSemua = async () => {
+    if (firstId <= 0) return;
+    if (norm(catatanBatal).length < 3) {
+      notify("error", "Catatan pembatalan wajib diisi (minimal 3 karakter).");
+      return;
+    }
     setBusy(true);
     try {
-      for (const it of items) {
-        await apiPost("/barang-keluar/hapus", {
-          id_barang_keluar: it.id_barang_keluar,
-          id_pengguna_lokasi: String(it.id_pengguna_lokasi || aktifLokasiId(session)),
-        });
-      }
-      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Semua item outbound berhasil dihapus.", type: "success" }));
+      await apiPost("/barang-keluar/batal", {
+        id_barang_keluar: firstId,
+        id_pengguna_lokasi: String(header?.id_pengguna_lokasi || aktifLokasiId(session)),
+        nama_pengguna: session.user.username,
+        catatan: norm(catatanBatal).slice(0, 250),
+      });
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Outbound berhasil dibatalkan.", type: "success" }));
       setConfirmAll(false);
       router.push(backHref);
     } catch (e) {
-      toast((e as Error).message || "Gagal menghapus semua item.", "error");
+      toast((e as Error).message || "Gagal membatalkan outbound.", "error");
     } finally { setBusy(false); }
   };
 
@@ -615,12 +642,12 @@ export default function OutboundDetailPage() {
               </div>
             </div>
 
-            {!isSelesai && (
+            {!isSelesai && !isCanceled && (
               <div className="od-actions" style={{ marginTop: 8 }}>
-                {canDelete && items.length > 0 && (
-                  <button type="button" className="od-delete-all" onClick={() => setConfirmAll(true)}>
-                    <i className="bi bi-trash"></i>
-                    <span>Hapus Semua</span>
+                {canBatalkan && (
+                  <button type="button" className="od-delete-all" onClick={openBatalkan}>
+                    <i className="bi bi-x-circle"></i>
+                    <span>Batalkan</span>
                   </button>
                 )}
                 {canCrud && (
@@ -690,22 +717,21 @@ export default function OutboundDetailPage() {
                 <div className="od-item-top">
                   <div className="od-product-name">{norm(it.nama_produk) || "-"}</div>
                   <div className="od-item-icons">
-                    {canEditItem && (
+                    {canEditItem && !isCanceled && (
                       <button type="button" className="od-icon-btn" title="Edit Item" onClick={() => openItem(it)}>
                         <i className="bi bi-pencil-fill"></i>
                       </button>
                     )}
-                    {canDelete ? (
-                      <button type="button" className="od-icon-btn" title="Hapus Item" onClick={() => setConfirmOne(it)}>
-                        <i className="bi bi-trash"></i>
-                      </button>
-                    ) : (
-                      <button type="button" className="od-icon-btn" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}>
+                    {canBatalkan && !isCanceledStatus(it.status) && (
+                      <button type="button" className="od-icon-btn" title="Hapus Item" onClick={() => { setConfirmAll(false); setConfirmOne(it); }}>
                         <i className="bi bi-trash"></i>
                       </button>
                     )}
                     {isSelesai && (
                       <span className="od-check"><i className="bi bi-check-lg"></i></span>
+                    )}
+                    {isCanceledStatus(it.status) && (
+                      <span className="status-badge" style={statusStyle("Canceled")}>Canceled</span>
                     )}
                   </div>
                 </div>
@@ -793,12 +819,11 @@ export default function OutboundDetailPage() {
               {isDraft && (
                 <div className="dialog-field dialog-field-full">
                   <label>Nama Produk</label>
-                  <select value={iProdukBaru} onChange={(e) => setIProdukBaru(angka(e.target.value))}>
-                    <option value="0">-- Tetap produk saat ini --</option>
-                    {produkList.map((p) => (
-                      <option key={p.id_produk} value={p.id_produk}>{p.id_produk} - {p.nama_produk}</option>
-                    ))}
-                  </select>
+                  <ProdukPickerEdit
+                    produkList={produkList}
+                    value={iProdukBaru}
+                    onChange={(id) => setIProdukBaru(id)}
+                  />
                 </div>
               )}
               <div className="dialog-field dialog-field-full">
@@ -824,34 +849,50 @@ export default function OutboundDetailPage() {
                     <>
                       <div className="dialog-field">
                         <label>Lokasi</label>
+                        <input type="text" className="od-picker-search" placeholder="Cari lokasi" value={qLok}
+                          onChange={(e) => setQLok(e.target.value)} />
                         <select onChange={(e) => pickManualBlock(angka(e.target.value))}>
                           <option value="0">Pilih Lokasi</option>
-                          {manualLok.map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{l.nama_lokasi}</option>)}
+                          {manualLok
+                            .filter((l) => qLok.trim() === "" || String(l.nama_lokasi || "").toUpperCase().includes(qLok.trim().toUpperCase()))
+                            .map((l) => <option key={l.id_lokasi} value={l.id_lokasi}>{l.nama_lokasi}</option>)}
                         </select>
                       </div>
                       <div className="dialog-field">
                         <label>Block</label>
+                        <input type="text" className="od-picker-search" placeholder="Cari block" value={qBlock}
+                          onChange={(e) => setQBlock(e.target.value)} />
                         <select onChange={(e) => pickManualLine(angka(e.target.value))}>
                           <option value="0">Pilih Block</option>
-                          {manualBlock.map((b) => <option key={b.id_block} value={b.id_block}>Block {b.kode_block}</option>)}
+                          {manualBlock
+                            .filter((b) => qBlock.trim() === "" || String(b.kode_block || "").toUpperCase().includes(qBlock.trim().toUpperCase()))
+                            .map((b) => <option key={b.id_block} value={b.id_block}>Block {b.kode_block}</option>)}
                         </select>
                       </div>
                       <div className="dialog-field">
                         <label>Line</label>
+                        <input type="text" className="od-picker-search" placeholder="Cari line" value={qLine}
+                          onChange={(e) => setQLine(e.target.value)} />
                         <select onChange={(e) => pickManualBatch(angka(e.target.value))}>
                           <option value="0">Pilih Line</option>
-                          {manualLine.map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
+                          {manualLine
+                            .filter((l) => qLine.trim() === "" || String(l.nomor_line || "").toUpperCase().includes(qLine.trim().toUpperCase()))
+                            .map((l) => <option key={l.id_line} value={l.id_line}>Line {l.nomor_line}</option>)}
                         </select>
                       </div>
                       <div className="dialog-field">
                         <label>Batch</label>
+                        <input type="text" className="od-picker-search" placeholder="Cari batch / BB" value={qBatch}
+                          onChange={(e) => setQBatch(e.target.value)} />
                         <select value={iBatch} onChange={(e) => {
                           const sel = manualBatch.find((b) => b.batch === e.target.value);
                           setIBatch(e.target.value);
                           setIBestBefore(sel?.best_before || "");
                         }}>
                           <option value="">Pilih Batch</option>
-                          {manualBatch.map((b) => <option key={b.batch} value={b.batch}>{b.batch} | BB {b.best_before || "-"}</option>)}
+                          {manualBatch
+                            .filter((b) => qBatch.trim() === "" || `${b.batch} ${b.best_before || ""}`.toUpperCase().includes(qBatch.trim().toUpperCase()))
+                            .map((b) => <option key={b.batch} value={b.batch}>{b.batch} | BB {b.best_before || "-"}</option>)}
                         </select>
                       </div>
                     </>
@@ -879,16 +920,14 @@ export default function OutboundDetailPage() {
             <div className="dialog-grid">
               <div className="dialog-field dialog-field-full">
                 <label>Pilih Produk</label>
-                <select value={aProduk} onChange={(e) => {
-                  const p = produkList.find((x) => x.id_produk === angka(e.target.value));
-                  setAProduk(angka(e.target.value));
-                  setASatuan(p?.satuan || "");
-                }}>
-                  <option value="0">-- Pilih Produk --</option>
-                  {produkList.map((p) => (
-                    <option key={p.id_produk} value={p.id_produk}>{p.id_produk} - {p.nama_produk}</option>
-                  ))}
-                </select>
+                <ProdukPicker
+                  produkList={produkList}
+                  value={aProduk}
+                  onChange={(p) => {
+                    setAProduk(p.id_produk);
+                    setASatuan(p.satuan || "");
+                  }}
+                />
               </div>
               <div className="dialog-field">
                 <label>Jumlah ({aSatuan || "PCS"})</label>
@@ -924,15 +963,135 @@ export default function OutboundDetailPage() {
       )}
 
       {confirmAll && (
-        <ConfirmDialog title="Hapus Semua Item"
-          message={`Yakin ingin menghapus SEMUA item outbound ini (<strong>${items.length}</strong>)?`}
-          onCancel={() => setConfirmAll(false)} onOk={hapusSemua} busy={busy} />
+        <BatalDialog
+          title="Batalkan Outbound"
+          message={`Batalkan seluruh item outbound (<strong>${items.length}</strong>)? Tindakan ini mengubah status menjadi <strong>Canceled</strong> dan tidak menghapus riwayat.`}
+          catatan={catatanBatal}
+          onCatatan={setCatatanBatal}
+          onCancel={() => setConfirmAll(false)} onOk={batalkanSemua} busy={busy} />
       )}
       {confirmOne && (
         <ConfirmDialog title="Hapus Item"
-          message={`Hapus item <strong>${norm(confirmOne.nama_produk)}</strong>?`}
+          message={`Hapus item <strong>${norm(confirmOne.nama_produk)}</strong>? Data akan dihapus permanen.`}
           onCancel={() => setConfirmOne(null)} onOk={hapusSatu} busy={busy} />
       )}
+    </div>
+  );
+}
+
+function ProdukPicker({ produkList, value, onChange }: {
+  produkList: Produk[]; value: number; onChange: (p: Produk) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const selected = produkList.find((x) => x.id_produk === value);
+  const selectedLabel = selected ? `${selected.id_produk} - ${selected.nama_produk}` : "";
+  const filtered = produkList.filter((p) => {
+    const label = `${p.id_produk} - ${p.nama_produk}`.toUpperCase();
+    return q.trim() === "" || label.includes(q.trim().toUpperCase());
+  });
+  return (
+    <div className="od-picker-wrap">
+      <button type="button" className="od-picker-button" onClick={() => setOpen((o) => !o)}>
+        <span className="od-picker-text">{selectedLabel || "-- Pilih Produk --"}</span>
+        <i className="bi bi-search"></i>
+      </button>
+      {open && (
+        <div className="od-picker-panel show">
+          <input type="text" className="od-picker-search" placeholder="Cari ID atau nama produk" value={q}
+            onChange={(e) => setQ(e.target.value)} autoFocus />
+          <div className="od-option-list">
+            {filtered.map((p) => (
+              <button key={p.id_produk} type="button" className={`od-option ${value === p.id_produk ? "selected" : ""}`}
+                onClick={() => { onChange(p); setOpen(false); setQ(""); }}>
+                <span>{p.id_produk} - {p.nama_produk}</span>
+              </button>
+            ))}
+            {!filtered.length && <div className="od-empty-result">Produk tidak ditemukan</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProdukPickerEdit({ produkList, value, onChange }: {
+  produkList: Produk[]; value: number; onChange: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const selected = produkList.find((x) => x.id_produk === value);
+  const selectedLabel = selected ? `${selected.id_produk} - ${selected.nama_produk}` : "";
+  const filtered = produkList.filter((p) => {
+    const label = `${p.id_produk} - ${p.nama_produk}`.toUpperCase();
+    return q.trim() === "" || label.includes(q.trim().toUpperCase());
+  });
+  return (
+    <div className="od-picker-wrap">
+      <button type="button" className="od-picker-button" onClick={() => setOpen((o) => !o)}>
+        <span className="od-picker-text">{selectedLabel || "-- Tetap produk saat ini --"}</span>
+        <i className="bi bi-search"></i>
+      </button>
+      {open && (
+        <div className="od-picker-panel show">
+          <input type="text" className="od-picker-search" placeholder="Cari ID atau nama produk" value={q}
+            onChange={(e) => setQ(e.target.value)} autoFocus />
+          <div className="od-option-list">
+            <button type="button" className={`od-option ${value === 0 ? "selected" : ""}`}
+              onClick={() => { onChange(0); setOpen(false); setQ(""); }}>
+              <span>-- Tetap produk saat ini --</span>
+            </button>
+            {filtered.map((p) => (
+              <button key={p.id_produk} type="button" className={`od-option ${value === p.id_produk ? "selected" : ""}`}
+                onClick={() => { onChange(p.id_produk); setOpen(false); setQ(""); }}>
+                <span>{p.id_produk} - {p.nama_produk}</span>
+              </button>
+            ))}
+            {!filtered.length && <div className="od-empty-result">Produk tidak ditemukan</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BatalDialog({ title, message, catatan, onCatatan, onCancel, onOk, busy }: {
+  title: string; message: string; catatan: string; onCatatan: (v: string) => void; onCancel: () => void; onOk: () => void; busy?: boolean;
+}) {
+  const valid = catatan.trim().length >= 3;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1050, background: "rgba(15, 23, 42, 0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "#FFFFFF", borderRadius: 18, width: "100%", maxWidth: 440, boxShadow: "0 25px 50px -12px rgba(15, 23, 42, 0.25)", overflow: "hidden" }}>
+        <div style={{ padding: "20px 22px 14px", display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: "#FEF2F2", color: "#EF4444", border: "1px solid #FCA5A5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+            <i className="bi bi-x-circle"></i>
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.2px" }}>{title}</div>
+        </div>
+        <div style={{ padding: "0 22px 20px", fontSize: 13, fontWeight: 600, color: "#475569", lineHeight: 1.5 }}
+          dangerouslySetInnerHTML={{ __html: message }} />
+        <div style={{ padding: "0 22px 20px" }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "#0F172A", marginBottom: 6 }}>
+            Catatan pembatalan <span style={{ color: "#EF4444" }}>*</span>
+          </label>
+          <textarea value={catatan} onChange={(e) => onCatatan(e.target.value)} maxLength={250} rows={3}
+            placeholder="Wajib diisi, contoh: GIN batal berangkat / salah input..."
+            style={{ width: "100%", border: "1px solid #CBD5E1", borderRadius: 10, padding: "10px 12px", fontSize: 13, fontWeight: 600, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+          {!valid && (
+            <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: "#B91C1C" }}>Catatan wajib diisi (minimal 3 karakter).</div>
+          )}
+        </div>
+        <div style={{ padding: "14px 22px", background: "#F8FAFC", borderTop: "1px solid #E2E8F0", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onCancel} disabled={busy}
+            style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #CBD5E1", background: "#FFFFFF", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+            Batal
+          </button>
+          <button type="button" onClick={onOk} disabled={busy || !valid}
+            style={{ height: 38, padding: "0 20px", borderRadius: 10, border: 0, background: valid ? "#EF4444" : "#E5E7EB", color: valid ? "#FFFFFF" : "#9CA3AF", fontSize: 13, fontWeight: 800, cursor: valid ? "pointer" : "not-allowed", boxShadow: "0 2px 6px rgba(239, 68, 68, 0.25)" }}>
+            {busy ? "Memproses..." : "Ya, Batalkan"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

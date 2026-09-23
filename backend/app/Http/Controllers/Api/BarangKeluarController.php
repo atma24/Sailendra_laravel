@@ -176,7 +176,8 @@ $rowHeader = DB::table('barang_keluar as bk')
     }
 
     // =========================================================================
-    // 3. DELETE OUTBOUND (Ref: hapus_barang_keluar.php)
+    // 3. HAPUS OUTBOUND PER ITEM (hard-delete seperti awal)
+    //    Pembatalan Canceled + catatan hanya untuk per grup via batal().
     // =========================================================================
     public function destroy(Request $request)
     {
@@ -215,6 +216,102 @@ $rowHeader = DB::table('barang_keluar as bk')
             DB::rollBack();
 
             return $this->fail($e->getMessage(), 500);
+        }
+    }
+
+    // =========================================================================
+    // 3b. BATAL OUTBOUND PER GRUP (1 aksi + 1 catatan untuk semua item
+    //     dalam 1 detail: tanggal + driver + mobil + tipe + tujuan + user)
+    // =========================================================================
+    public function batal(Request $request)
+    {
+        $idBarangKeluar = (int) $request->input('id_barang_keluar', 0);
+        $idPenggunaLokasi = trim($request->input('id_pengguna_lokasi', ''));
+        $catatan = trim((string) $request->input('catatan', ''));
+        $namaPengguna = trim((string) ($request->input('nama_pengguna', '') ?: $request->input('diperbarui_oleh', '')));
+
+        if ($idBarangKeluar <= 0) {
+            return $this->fail('id_barang_keluar wajib', 422);
+        }
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('id_pengguna_lokasi wajib', 422);
+        }
+        if ($catatan === '' || mb_strlen($catatan) < 3) {
+            return $this->fail('Catatan pembatalan wajib diisi (minimal 3 karakter).', 422);
+        }
+        if (mb_strlen($catatan) > 250) {
+            return $this->fail('Catatan pembatalan maksimal 250 karakter.', 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $ref = DB::table('barang_keluar')
+                ->where('id_barang_keluar', $idBarangKeluar)
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->lockForUpdate()
+                ->first();
+            if (! $ref) {
+                throw new Exception('Data outbound tidak ditemukan');
+            }
+
+            $ids = DB::table('barang_keluar')
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->where('tanggal_keluar', $ref->tanggal_keluar)
+                ->whereRaw('LOWER(TRIM(COALESCE(nama_driver, ""))) = ?', [strtolower(trim((string) $ref->nama_driver))])
+                ->whereRaw('LOWER(TRIM(COALESCE(no_mobil, ""))) = ?', [strtolower(trim((string) $ref->no_mobil))])
+                ->whereRaw('LOWER(TRIM(COALESCE(tipe_pengeluaran, ""))) = ?', [strtolower(trim((string) $ref->tipe_pengeluaran))])
+                ->whereRaw("COALESCE(tujuan, '') = ?", [trim($ref->tujuan ?? '')])
+                ->where('id_pengguna', $ref->id_pengguna)
+                ->whereRaw("LOWER(TRIM(status)) IN ('draft','pending')")
+                ->pluck('id_barang_keluar')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+
+            if (empty($ids)) {
+                throw new Exception('Tidak ada item Draft/Pending untuk dibatalkan (mungkin sudah Selesai/Canceled).');
+            }
+
+            foreach ($ids as $id) {
+                $this->batalkanSatuOutbound($id, $idPenggunaLokasi, $catatan, $namaPengguna);
+            }
+            DB::commit();
+
+            return $this->ok(['canceled' => count($ids), 'ids' => $ids], 'Outbound dibatalkan ('.count($ids).' item).');
+        } catch (Exception $e) {
+            DB::rollBack();
+
+            return $this->fail($e->getMessage(), 500);
+        }
+    }
+
+    private function batalkanSatuOutbound(int $idBarangKeluar, string $idPenggunaLokasi, string $catatan, string $namaPengguna): void
+    {
+        $row = DB::table('barang_keluar')->where('id_barang_keluar', $idBarangKeluar)
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)->lockForUpdate()->first();
+
+        if (! $row) {
+            throw new Exception('Data outbound tidak ditemukan');
+        }
+        $st = strtolower(trim((string) ($row->status ?? '')));
+        if ($st === 'canceled' || $st === 'cancelled' || $st === 'batal') {
+            throw new Exception('Outbound sudah dibatalkan sebelumnya.');
+        }
+        if (in_array($st, ['confirmed', 'selesai'], true)) {
+            throw new Exception('Outbound yang sudah selesai tidak dapat dibatalkan.');
+        }
+        if (! in_array($st, ['draft', 'pending'], true)) {
+            throw new Exception('Hanya outbound Draft/Pending yang bisa dibatalkan.');
+        }
+
+        DB::table('rencana_keluar_deep')->where('id_barang_keluar', $idBarangKeluar)->where('id_pengguna_lokasi', $idPenggunaLokasi)->delete();
+        $upd = ['status' => 'Canceled', 'catatan' => $catatan, 'diperbarui_pada' => DB::raw('NOW()')];
+        if ($namaPengguna !== '') {
+            $upd['diperbarui_oleh'] = $namaPengguna;
+        }
+        $affected = DB::table('barang_keluar')->where('id_barang_keluar', $idBarangKeluar)->where('id_pengguna_lokasi', $idPenggunaLokasi)->update($upd);
+
+        if ($affected === 0) {
+            throw new Exception('Data outbound gagal dibatalkan');
         }
     }
 
@@ -1351,7 +1448,7 @@ $in = $request->all();
             ->whereRaw("LOWER(TRIM(COALESCE(tipe_pengeluaran, ''))) = ?", [strtolower(trim($header->tipe_pengeluaran))])
             ->whereRaw("COALESCE(tujuan, '') = ?", [trim($header->tujuan ?? '')])
             ->where('id_pengguna', $header->id_pengguna)
-            ->whereNotIn(DB::raw('LOWER(TRIM(status))'), ['confirmed', 'selesai'])
+            ->whereNotIn(DB::raw('LOWER(TRIM(status))'), ['confirmed', 'selesai', 'canceled', 'cancelled'])
             ->pluck('id_barang_keluar')->toArray();
 
         if (empty($idsProses)) {
@@ -1637,7 +1734,7 @@ $in = $request->all();
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, 
             lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
-            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed')), 0) AS jumlah_booking
+            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed', 'Canceled', 'canceled')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') $whereExtra
             ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
@@ -1666,7 +1763,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
-            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed')), 0) AS jumlah_booking
+            COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed', 'Canceled', 'canceled')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
             ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}

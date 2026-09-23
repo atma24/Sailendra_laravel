@@ -36,6 +36,7 @@ const statusStyle = (s: string): { bg: string; color: string } => {
   const st = (s || "").toLowerCase();
   if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
   if (st === "selesai" || st === "confirmed") return { bg: "#d1fae5", color: "#065f46" };
+  if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c" };
   return { bg: "#e5e7eb", color: "#4b5563" };
 };
 
@@ -69,6 +70,7 @@ const STATUS_OPTIONS = [
   { v: "Draft", label: "Draft" },
   { v: "Pending", label: "Pending" },
   { v: "Selesai", label: "Selesai" },
+  { v: "Canceled", label: "Canceled" },
 ];
 
 export default function OutboundDriverPage() {
@@ -135,23 +137,27 @@ export default function OutboundDriverPage() {
     if (!driverMap[nama]) {
       driverMap[nama] = {
         nama_driver: nama, total_item: 0, total_qty: 0,
-        no_mobil: row.no_mobil || "", status: row.status || "", _semua_selesai: true,
-      };
+        no_mobil: row.no_mobil || "", status: row.status || "", _semua_selesai: true, _semua_batal: true,
+      } as DriverItem & { _semua_batal: boolean };
     }
     driverMap[nama].total_item++;
     driverMap[nama].total_qty += angka(row.jumlah);
     if (!driverMap[nama].no_mobil && row.no_mobil) driverMap[nama].no_mobil = row.no_mobil;
     const st = (row.status || "").toLowerCase();
     if (st !== "selesai" && st !== "confirmed") driverMap[nama]._semua_selesai = false;
+    if (st !== "canceled" && st !== "cancelled" && st !== "batal") (driverMap[nama] as unknown as Record<string, boolean>)._semua_batal = false;
   });
 
   Object.values(driverMap).forEach((d) => {
-    if (d._semua_selesai) d.status = "Selesai";
+    const semuaBatal = (d as unknown as Record<string, boolean>)._semua_batal;
+    if (semuaBatal) d.status = "Canceled";
+    else if (d._semua_selesai) d.status = "Selesai";
     else if (!d.status) d.status = "Draft";
     delete (d as Record<string, unknown>)._semua_selesai;
+    delete (d as Record<string, unknown>)._semua_batal;
   });
 
-  const statusCounts = { Draft: 0, Pending: 0, Selesai: 0 };
+  const statusCounts = { Draft: 0, Pending: 0, Selesai: 0, Canceled: 0 };
   Object.values(driverMap).forEach((d) => {
     if (statusCounts[d.status as keyof typeof statusCounts] !== undefined) statusCounts[d.status as keyof typeof statusCounts]++;
     else statusCounts.Draft++;

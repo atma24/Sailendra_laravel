@@ -540,6 +540,10 @@ function ManualPicker({ item, lokasiQuery, onPick, onError }: {
   const [batches, setBatches] = useState<BatchRow[]>([]);
   const [loading, setLoading] = useState<LoadKey>(null);
   const [err, setErr] = useState("");
+  const [qLok, setQLok] = useState("");
+  const [qBlock, setQBlock] = useState("");
+  const [qLine, setQLine] = useState("");
+  const [qBatch, setQBatch] = useState("");
 
   const idProduk = item.id_produk || 0;
 
@@ -670,30 +674,47 @@ function ManualPicker({ item, lokasiQuery, onPick, onError }: {
 
           <div>
             <label className="outbound-manual-label">Lokasi</label>
+            <input type="text" className="outbound-picker-search" placeholder="Cari lokasi" value={qLok}
+              onChange={(e) => setQLok(e.target.value)} />
             <select className="outbound-manual-select" value={selLokasi} disabled={loading === "lokasi"} onChange={(e) => handleLokasi(e.target.value)}>
               <option value="">{loading === "lokasi" ? "Memuat lokasi..." : loks.length ? "Pilih Lokasi" : "Pilih Lokasi (klik Pilih Lokasi dulu)"}</option>
-              {loks.map((l) => <option key={l.id_lokasi} value={String(l.id_lokasi)}>{l.nama_lokasi}{l.total_qty !== undefined ? ` (sisa ${l.total_qty})` : ""}</option>)}
+              {loks
+                .filter((l) => qLok.trim() === "" || String(l.nama_lokasi || "").toUpperCase().includes(qLok.trim().toUpperCase()))
+                .map((l) => <option key={l.id_lokasi} value={String(l.id_lokasi)}>{l.nama_lokasi}{l.total_qty !== undefined ? ` (sisa ${l.total_qty})` : ""}</option>)}
             </select>
           </div>
           <div>
             <label className="outbound-manual-label">Block</label>
+            <input type="text" className="outbound-picker-search" placeholder="Cari block" value={qBlock}
+              onChange={(e) => setQBlock(e.target.value)} />
             <select className="outbound-manual-select" value={selBlock} disabled={!selLokasi || loading === "block"} onChange={(e) => handleBlock(e.target.value)}>
               <option value="">{loading === "block" ? "Memuat block..." : !selLokasi ? "Pilih lokasi dulu" : blocks.length ? "Pilih Block" : "Tidak ada block"}</option>
-              {blocks.map((b) => <option key={b.id_block} value={String(b.id_block)}>Block {b.kode_block}{b.total_qty !== undefined ? ` (sisa ${b.total_qty})` : ""}</option>)}
+              {blocks
+                .filter((b) => qBlock.trim() === "" || String(b.kode_block || "").toUpperCase().includes(qBlock.trim().toUpperCase()))
+                .map((b) => <option key={b.id_block} value={String(b.id_block)}>Block {b.kode_block}{b.total_qty !== undefined ? ` (sisa ${b.total_qty})` : ""}</option>)}
             </select>
           </div>
           <div>
             <label className="outbound-manual-label">Line</label>
+            <input type="text" className="outbound-picker-search" placeholder="Cari line" value={qLine}
+              onChange={(e) => setQLine(e.target.value)} />
             <select className="outbound-manual-select" value={lineVal} disabled={!selBlock || loading === "line"} onChange={(e) => handleLine(e.target.value)}>
               <option value="">{loading === "line" ? "Memuat line..." : !selBlock ? "Pilih block dulu" : lines.length ? "Pilih Line" : "Tidak ada line"}</option>
-              {lines.map((l) => <option key={l.id_line} value={String(l.id_line)}>Line {l.nomor_line}{l.total_qty !== undefined ? ` (sisa ${l.total_qty})` : ""}</option>)}
+              {lines
+                .filter((l) => qLine.trim() === "" || String(l.nomor_line || "").toUpperCase().includes(qLine.trim().toUpperCase()))
+                .map((l) => <option key={l.id_line} value={String(l.id_line)}>Line {l.nomor_line}{l.total_qty !== undefined ? ` (sisa ${l.total_qty})` : ""}</option>)}
             </select>
           </div>
           <div>
             <label className="outbound-manual-label">Batch</label>
+            <input type="text" className="outbound-picker-search" placeholder="Cari batch / BB" value={qBatch}
+              onChange={(e) => setQBatch(e.target.value)} />
             <select className="outbound-manual-select" value={batchVal} disabled={!(item.id_line > 0) || loading === "batch"} onChange={(e) => handleBatch(e.target.value)}>
               <option value="">{loading === "batch" ? "Memuat batch..." : !(item.id_line > 0) ? "Pilih line dulu" : batches.length ? "Pilih Batch" : "Tidak ada batch"}</option>
-              {batches.map((b, i) => <option key={`${b.batch}__${b.best_before || "-"}__${i}`} value={String(i)}>{b.batch} | BB {b.best_before || "-"}{b.qty_sisa !== undefined ? ` | Sisa ${b.qty_sisa}` : ""}</option>)}
+              {batches
+                .map((b, i) => ({ ...b, _idx: i }))
+                .filter((b) => qBatch.trim() === "" || `${b.batch} ${b.best_before || ""}`.toUpperCase().includes(qBatch.trim().toUpperCase()))
+                .map((b) => <option key={`${b.batch}__${b.best_before || "-"}__${b._idx}`} value={String(b._idx)}>{b.batch} | BB {b.best_before || "-"}{b.qty_sisa !== undefined ? ` | Sisa ${b.qty_sisa}` : ""}</option>)}
             </select>
           </div>
 

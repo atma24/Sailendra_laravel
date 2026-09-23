@@ -28,7 +28,13 @@ const angka = (v: unknown) => {
 };
 const dateOnly = (v: unknown) => String(v ?? "").slice(0, 10);
 
-function PagedTanggal({ items, emptyMsg, resetKey, section }: { items: TanggalItem[]; emptyMsg: string; resetKey: string; section?: string }) {
+const OUT_ACCENT: Record<string, { card: string; icon: string }> = {
+  primary: { card: "accent-primary", icon: "#1D4ED8" },
+  secondary: { card: "accent-secondary", icon: "#D97706" },
+  foc: { card: "accent-foc", icon: "#DB2777" },
+};
+
+function PagedTanggal({ items, emptyMsg, resetKey, section, accent }: { items: TanggalItem[]; emptyMsg: string; resetKey: string; section?: string; accent?: string }) {
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [resetKey]);
   if (items.length === 0) {
@@ -37,14 +43,15 @@ function PagedTanggal({ items, emptyMsg, resetKey, section }: { items: TanggalIt
   const total = totalPagesOf(items.length, PAGE_SIZE);
   const paged = paginate(items, page, PAGE_SIZE);
   const tipeParam = section ? `?tipe=${section}` : "";
+  const acc = OUT_ACCENT[String(accent || section || "primary").toLowerCase()] || OUT_ACCENT.primary;
   return (
     <>
       <div className="outbound-grid">
         {paged.map((item) => (
-          <Link key={item.tanggal} className="outbound-card outbound-date-card"
+          <Link key={item.tanggal} className={`outbound-card outbound-date-card ${acc.card}`}
             href={`/outbound/driver/${encodeURIComponent(item.tanggal)}${tipeParam}`}>
             <div className="outbound-card-top">
-              <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
+              <i className="bi bi-calendar3" style={{ color: acc.icon, fontSize: 16 }}></i>
               <div>
                 <div className="outbound-date-title">{item.tanggal}</div>
                 <div className="outbound-meta">{item.total_item} item · {item.total_qty} qty</div>
@@ -68,9 +75,13 @@ const css = `
 .outbound-search-input:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
 .outbound-add-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
 .outbound-add-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
+.outbound-page { scroll-behavior: smooth; }
 .outbound-toolbar-right { display: flex; gap: 7px; }
 .outbound-grid { display: flex; flex-direction: column; gap: 7px; }
-.outbound-date-card { padding: 8px; text-decoration: none; color: inherit; display: block; }
+.outbound-date-card { padding: 8px 8px 8px 11px; text-decoration: none; color: inherit; display: block; border-left-width: 3px; }
+.outbound-date-card.accent-primary { border-left-color: #3B82F6; }
+.outbound-date-card.accent-secondary { border-left-color: #F59E0B; }
+.outbound-date-card.accent-foc { border-left-color: #EC4899; }
 .outbound-date-card:hover { transform: translateY(-1px); border-color: rgba(25,25,112,.18); box-shadow: 0 8px 20px rgba(15,23,42,0.06); }
 .outbound-card-top { display: flex; align-items: center; gap: 8px; }
 .outbound-date-title { font-size: 12px; font-weight: 900; color: var(--text-main); letter-spacing: -0.2px; }
@@ -79,11 +90,30 @@ const css = `
 .outbound-section-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; }
 .outbound-section-divider-line { flex: 1; height: 1px; background: #e5e7eb; }
 .outbound-section-divider-label { font-size: 11px; font-weight: 900; color: #7c3aed; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
-.outbound-section-count { font-size: 10px; font-weight: 800; color: #9ca3af; background: #f3f4f6; padding: 2px 8px; border-radius: 10px; }
+.outbound-section-count { font-size: 10px; font-weight: 800; color: #374151; background: rgba(255,255,255,.85); border: 1px solid rgba(0,0,0,.06); padding: 2px 8px; border-radius: 10px; }
 .outbound-3col { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; align-items: start; }
-.outbound-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-.outbound-col-head { font-size: 12px; font-weight: 900; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
-@media (max-width: 1024px) { .outbound-3col { grid-template-columns: 1fr; } }
+.outbound-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; scroll-margin-top: 12px; }
+.outbound-col-head { font-size: 12px; font-weight: 900; color: var(--text-main); display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; border: 1px solid #e9edf5; background: #f8faff; }
+.outbound-col-head .tipe-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+.outbound-col-head.tipe-primary { background: #EFF6FF; border-color: #BFDBFE; color: #1D4ED8; }
+.outbound-col-head.tipe-primary .tipe-dot { background: #1D4ED8; }
+.outbound-col-head.tipe-secondary { background: #FFFBEB; border-color: #FDE68A; color: #92400E; }
+.outbound-col-head.tipe-secondary .tipe-dot { background: #D97706; }
+.outbound-col-head.tipe-foc { background: #FDF2F8; border-color: #F9A8D4; color: #9D174D; }
+.outbound-col-head.tipe-foc .tipe-dot { background: #DB2777; }
+.outbound-chip-nav { display: none; }
+@media (max-width: 1024px) {
+  .outbound-3col { grid-template-columns: 1fr; gap: 18px; }
+  .outbound-col { scroll-margin-top: 108px; }
+  .outbound-chip-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px; position: sticky; top: 8px; z-index: 30; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); border: 1px solid #e9edf5; border-radius: 12px; scrollbar-width: none; }
+  .outbound-chip-nav::-webkit-scrollbar { display: none; }
+  .outbound-chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 850; text-decoration: none; padding: 6px 11px; border-radius: 999px; border: 1px solid; }
+  .outbound-chip .tipe-dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+  .outbound-chip.chip-primary { color: #1D4ED8; background: #EFF6FF; border-color: #BFDBFE; }
+  .outbound-chip.chip-secondary { color: #92400E; background: #FFFBEB; border-color: #FDE68A; }
+  .outbound-chip.chip-foc { color: #9D174D; background: #FDF2F8; border-color: #F9A8D4; }
+  .outbound-col-head { position: sticky; top: 60px; z-index: 20; box-shadow: 0 4px 14px rgba(15,23,42,.07); }
+}
 `;
 
 export default function OutboundTanggalPage() {
@@ -276,36 +306,46 @@ export default function OutboundTanggalPage() {
         </div>
       </div>
 
+      {/* === Chip navigasi antar seksi (mobile only, sticky) === */}
+      <nav className="outbound-chip-nav" aria-label="Navigasi seksi outbound">
+        <a className="outbound-chip chip-primary" href="#seksi-ob-primary"><span className="tipe-dot"></span>Primary · {primaryList.length}</a>
+        <a className="outbound-chip chip-secondary" href="#seksi-ob-secondary"><span className="tipe-dot"></span>Secondary · {secondaryList.length}</a>
+        <a className="outbound-chip chip-foc" href="#seksi-ob-foc"><span className="tipe-dot"></span>FOC · {focList.length}</a>
+      </nav>
+
       {/* === 3 KOLOM: Primary+Pemusnahan | Secondary | FOC === */}
       <div className="outbound-3col">
         {/* KOLOM KIRI: Primary + Pemusnahan */}
-        <div className="outbound-col">
-          <div className="outbound-col-head">
-            <i className="bi bi-truck" style={{ color: "var(--primary)" }}></i>
+        <div className="outbound-col" id="seksi-ob-primary">
+          <div className="outbound-col-head tipe-primary">
+            <span className="tipe-dot"></span>
+            <i className="bi bi-truck"></i>
             Primary
             <span className="outbound-section-count">{primaryList.length}</span>
           </div>
-          <PagedTanggal items={primaryList} emptyMsg="Tidak ada data outbound primary." resetKey={`${search}|${keyword}|${primaryRows.length}`} section="primary" />
+          <PagedTanggal items={primaryList} emptyMsg="Tidak ada data outbound primary." resetKey={`${search}|${keyword}|${primaryRows.length}`} section="primary" accent="primary" />
         </div>
 
         {/* KOLOM TENGAH: Secondary */}
-        <div className="outbound-col">
-          <div className="outbound-col-head">
-            <i className="bi bi-arrow-repeat" style={{ color: "var(--primary)" }}></i>
+        <div className="outbound-col" id="seksi-ob-secondary">
+          <div className="outbound-col-head tipe-secondary">
+            <span className="tipe-dot"></span>
+            <i className="bi bi-arrow-repeat"></i>
             Secondary
             <span className="outbound-section-count">{secondaryList.length}</span>
           </div>
-          <PagedTanggal items={secondaryList} emptyMsg="Tidak ada data outbound secondary." resetKey={`${search}|${keyword}|${secondaryRows.length}`} section="secondary" />
+          <PagedTanggal items={secondaryList} emptyMsg="Tidak ada data outbound secondary." resetKey={`${search}|${keyword}|${secondaryRows.length}`} section="secondary" accent="secondary" />
         </div>
 
         {/* KOLOM KANAN: FOC */}
-        <div className="outbound-col">
-          <div className="outbound-col-head">
-            <i className="bi bi-gift" style={{ color: "var(--primary)" }}></i>
+        <div className="outbound-col" id="seksi-ob-foc">
+          <div className="outbound-col-head tipe-foc">
+            <span className="tipe-dot"></span>
+            <i className="bi bi-gift"></i>
             FOC
             <span className="outbound-section-count">{focList.length}</span>
           </div>
-          <PagedTanggal items={focList} emptyMsg="Tidak ada data outbound FOC." resetKey={`${search}|${keyword}|${focRows.length}`} section="foc" />
+          <PagedTanggal items={focList} emptyMsg="Tidak ada data outbound FOC." resetKey={`${search}|${keyword}|${focRows.length}`} section="foc" accent="foc" />
         </div>
       </div>
 

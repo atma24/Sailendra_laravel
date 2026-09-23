@@ -232,6 +232,10 @@ export default function LineEditModal({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
   const [transferLines, setTransferLines] = useState<TransferLine[]>([]);
+  const [plantQ, setPlantQ] = useState<Record<string, string>>({});
+  const [qLokTujuan, setQLokTujuan] = useState("");
+  const [qBlockTujuan, setQBlockTujuan] = useState("");
+  const [qLineTujuan, setQLineTujuan] = useState("");
 
   const idLokasiTujuan = angka(lokasiTujuan);
   const idBlockTujuan = angka(blockTujuan);
@@ -575,6 +579,13 @@ export default function LineEditModal({
 
                         <div style={{ marginTop: 8 }}>
                           <label className="lg-label">Plant</label>
+                          <input
+                            type="text"
+                            className="lg-picker-search"
+                            placeholder="Cari plant"
+                            value={plantQ[String(idStok)] || ""}
+                            onChange={(e) => setPlantQ((m) => ({ ...m, [String(idStok)]: e.target.value }))}
+                          />
                           <select
                             className="lg-input lg-select bb-row-plant"
                             style={{ height: 34, fontSize: 11 }}
@@ -582,7 +593,13 @@ export default function LineEditModal({
                             onChange={(e) => setBbRows((rs) => rs.map((r) => (r.id_stok === idStok ? { ...r, plant: e.target.value } : r)))}
                           >
                             <option value="">-- Plant --</option>
-                            {plantOptions.map((p) => (
+                            {plantOptions
+                              .filter((p) => {
+                                const qq = (plantQ[String(idStok)] || "").trim().toUpperCase();
+                                if (!qq) return true;
+                                return `${p.id_plant} - ${p.nama_plant || ""}`.toUpperCase().includes(qq);
+                              })
+                              .map((p) => (
                               <option key={p.id_plant} value={p.id_plant}>
                                 {p.id_plant} - {p.nama_plant || ""}
                               </option>
@@ -692,6 +709,13 @@ export default function LineEditModal({
 
                 <div className="lg-field">
                   <label className="lg-label">Ke</label>
+                  <input
+                    type="text"
+                    className="lg-picker-search"
+                    placeholder="Cari lokasi tujuan"
+                    value={qLokTujuan}
+                    onChange={(e) => setQLokTujuan(e.target.value)}
+                  />
                   <select
                     className="lg-select"
                     style={{ marginBottom: 8 }}
@@ -703,7 +727,9 @@ export default function LineEditModal({
                     }}
                   >
                     <option value="">Lokasi tujuan</option>
-                    {lokasiList.map((l) => (
+                    {lokasiList
+                      .filter((l) => qLokTujuan.trim() === "" || getLokasiLabel(l).includes(qLokTujuan.trim().toUpperCase()))
+                      .map((l) => (
                       <option key={l.id_lokasi} value={l.id_lokasi}>
                         {getLokasiLabel(l)}
                       </option>
@@ -711,6 +737,14 @@ export default function LineEditModal({
                   </select>
 
                   <div className="lg-origin-grid">
+                    <div>
+                      <input
+                        type="text"
+                        className="lg-picker-search"
+                        placeholder="Cari block"
+                        value={qBlockTujuan}
+                        onChange={(e) => setQBlockTujuan(e.target.value)}
+                      />
                     <select
                       className="lg-select"
                       value={blockTujuan}
@@ -721,13 +755,23 @@ export default function LineEditModal({
                       }}
                     >
                       <option value="">Block tujuan</option>
-                      {blockTujuanOptions.map((b) => (
+                      {blockTujuanOptions
+                        .filter((b) => qBlockTujuan.trim() === "" || String(b.kode_block || "").toUpperCase().includes(qBlockTujuan.trim().toUpperCase()))
+                        .map((b) => (
                         <option key={b.id_block} value={b.id_block}>
                           Block {norm(b.kode_block).toUpperCase()}
                         </option>
                       ))}
                     </select>
-
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        className="lg-picker-search"
+                        placeholder="Cari line"
+                        value={qLineTujuan}
+                        onChange={(e) => setQLineTujuan(e.target.value)}
+                      />
                     <select
                       className="lg-select"
                       value={lineTujuan}
@@ -735,12 +779,15 @@ export default function LineEditModal({
                       onChange={(e) => setLineTujuan(e.target.value)}
                     >
                       <option value="">Line tujuan</option>
-                      {lineTujuanOptions.map((l) => (
+                      {lineTujuanOptions
+                        .filter((l) => qLineTujuan.trim() === "" || getLineLabel(l).toUpperCase().includes(qLineTujuan.trim().toUpperCase()))
+                        .map((l) => (
                         <option key={l.id_line} value={l.id_line}>
                           {getLineLabel(l)}
                         </option>
                       ))}
                     </select>
+                    </div>
                   </div>
                 </div>
 

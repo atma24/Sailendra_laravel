@@ -39,14 +39,16 @@ const angka = (v: unknown) => {
 const STATUS_OPTIONS = [
   { v: "", label: "Semua" },
   { v: "Draft", label: "Draft" },
-  { v: "Pending", label: "Pending" },
   { v: "Selesai", label: "Selesai" },
+  { v: "Canceled", label: "Canceled" },
 ];
 
 const statusStyle = (s: string): { bg: string; color: string } => {
   const st = (s || "").toLowerCase();
-  if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
   if (st === "selesai") return { bg: "#d1fae5", color: "#065f46" };
+  if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c" };
+  // Legacy Pending (data lama): tetap kuning agar mudah dikenali.
+  if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
   return { bg: "#e5e7eb", color: "#4b5563" };
 };
 
@@ -83,10 +85,10 @@ export default function InboundDriverPage() {
 
   const tanggal = decodeURIComponent(params.tanggal || "");
   const lok = searchParams.get("lok") || "";
+  const statusFilter = searchParams.get("status") || "";
   const [rows, setRows] = useState<BmRow[]>([]);
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "");
   const sumberFilter = searchParams.get("sumber") || "";
   const tipeFilter = searchParams.get("tipe") || "";
   const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
@@ -143,7 +145,7 @@ export default function InboundDriverPage() {
     if (kw !== "" && !nama.toLowerCase().includes(kw)) return;
     const key = `${nama}::${ship}`;
     if (!shipMap[key]) {
-      shipMap[key] = { nama_driver: nama, shipment_id: ship, total_item: 0, total_qty: 0, no_mobil: row.no_mobil || "", no_dn: row.no_dn || "", status: row.status || "", _semua_selesai: true };
+      shipMap[key] = { nama_driver: nama, shipment_id: ship, total_item: 0, total_qty: 0, no_mobil: row.no_mobil || "", no_dn: row.no_dn || "", status: row.status || "", _semua_selesai: true, _semua_batal: true } as ShipmentItem & { _semua_batal: boolean };
     }
     shipMap[key].total_item++;
     shipMap[key].total_qty += angka(row.jumlah);
@@ -151,15 +153,20 @@ export default function InboundDriverPage() {
     if (!shipMap[key].no_dn && row.no_dn) shipMap[key].no_dn = row.no_dn;
     const st = (row.status || "").toLowerCase();
     if (st !== "selesai") shipMap[key]._semua_selesai = false;
+    if (st !== "canceled" && st !== "cancelled" && st !== "batal") (shipMap[key] as unknown as Record<string, boolean>)._semua_batal = false;
   });
 
   Object.values(shipMap).forEach((d) => {
-    if (d._semua_selesai) d.status = "Selesai";
+    const semuaBatal = (d as unknown as Record<string, boolean>)._semua_batal;
+    if (semuaBatal) d.status = "Canceled";
+    else if (d._semua_selesai) d.status = "Selesai";
     else if (!d.status) d.status = "Draft";
     delete (d as Record<string, unknown>)._semua_selesai;
+    delete (d as Record<string, unknown>)._semua_batal;
   });
 
-  const statusCounts = { Draft: 0, Pending: 0, Selesai: 0 };
+  // Pending legacy: tidak ada chip lagi, tapi shipment lama tetap dihitung agar tidak bocor ke Draft.
+  const statusCounts = { Draft: 0, Selesai: 0, Pending: 0, Canceled: 0 };
   Object.values(shipMap).forEach((d) => {
     if (statusCounts[d.status as keyof typeof statusCounts] !== undefined) statusCounts[d.status as keyof typeof statusCounts]++;
     else statusCounts.Draft++;

@@ -150,9 +150,15 @@ const css = `
 
 const statusStyle = (s: string): { bg: string; color: string; border: string } => {
   const st = (s || "").toLowerCase();
-  if (st === "pending") return { bg: "#e0f2fe", color: "#0284c7", border: "1px solid #bae6fd" };
   if (st === "selesai" || st === "confirmed") return { bg: "#dcfce7", color: "#16a34a", border: "1px solid #bbf7d0" };
-  return { bg: "#fef3c7", color: "#ca8a04", border: "1px solid #fde047" }; 
+  if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca" };
+  // Legacy Pending (data lama): biru agar mudah dikenali.
+  if (st === "pending") return { bg: "#e0f2fe", color: "#0284c7", border: "1px solid #bae6fd" };
+  return { bg: "#fef3c7", color: "#ca8a04", border: "1px solid #fde047" };
+};
+const isCanceledStatus = (s: unknown) => {
+  const st = String(s ?? "").trim().toLowerCase();
+  return st === "canceled" || st === "cancelled" || st === "batal";
 };
 
 export default function InboundDetailPage() {
@@ -197,10 +203,51 @@ export default function InboundDetailPage() {
 
   const [confirmAll, setConfirmAll] = useState(false);
   const [confirmOne, setConfirmOne] = useState<BmRow | null>(null);
+  const [catatanBatal, setCatatanBatal] = useState("");
 
   const waktuMulaiRef = useRef<Date | null>(null);
   const [draftBb, setDraftBb] = useState<Record<number, string>>({});
   const [draftCatatan, setDraftCatatan] = useState<Record<number, string>>({});
+  // Autosave Draft (BB + catatan) agar tahan refresh: debounce per item ke /barang-masuk/update.
+  const draftSaveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const [draftSaveState, setDraftSaveState] = useState<Record<number, "saving" | "saved" | "error">>({});
+
+  const queueDraftAutosave = (id: number, patch: { best_before?: string; catatan?: string }) => {
+    if (!session) return;
+    setDraftSaveState((s) => ({ ...s, [id]: "saving" }));
+    if (draftSaveTimers.current[id]) clearTimeout(draftSaveTimers.current[id]);
+    draftSaveTimers.current[id] = setTimeout(async () => {
+      try {
+        await apiPost("/barang-masuk/update", {
+          id_barang_masuk: id,
+          id_pengguna_lokasi: aktifLokasiId(session),
+          nama_pengguna: session.user.username,
+          ...patch,
+        });
+        setDraftSaveState((s) => ({ ...s, [id]: "saved" }));
+        setRows((prev) =>
+          prev.map((r) =>
+            r.id_barang_masuk === id
+              ? {
+                  ...r,
+                  ...(patch.best_before !== undefined ? { best_before: patch.best_before } : {}),
+                  ...(patch.catatan !== undefined ? { catatan: patch.catatan } : {}),
+                }
+              : r
+          )
+        );
+      } catch {
+        setDraftSaveState((s) => ({ ...s, [id]: "error" }));
+      }
+    }, 700);
+  };
+
+  useEffect(() => {
+    const timers = draftSaveTimers.current;
+    return () => {
+      Object.values(timers).forEach((t) => clearTimeout(t));
+    };
+  }, []);
 
   const [hTanggal, setHTanggal] = useState("");
   const [hMobil, setHMobil] = useState("");
@@ -253,14 +300,22 @@ export default function InboundDetailPage() {
         setPlants((pr.data || []).sort((a, b) => String(a.id_plant).localeCompare(String(b.id_plant))));
         setProdukList((prodRes.data || []).sort((a, b) => angka(a.id_produk) - angka(b.id_produk)));
 
-        // Pre-fill draftBb dari best_before yang sudah ada
+        // Pre-fill draftBb + draftCatatan dari nilai yang sudah tersimpan (hasil autosave)
         const bbMap: Record<number, string> = {};
+        const ctMap: Record<number, string> = {};
         fetchedRows.forEach((row: BmRow) => {
-          if ((row.status || "").toLowerCase() === "draft" && norm(row.best_before) && norm(row.best_before) !== "9999-12-31") {
+          if ((row.status || "").toLowerCase() !== "draft") return;
+          if (norm(row.best_before) && norm(row.best_before) !== "9999-12-31") {
             bbMap[row.id_barang_masuk] = norm(row.best_before).slice(0, 10);
+          }
+          // Catatan sistem (Auto dari Outbound / Upload OTM) jangan masuk ke input editable.
+          const ct = norm(row.catatan);
+          if (ct && ct !== "Upload OTM Inbound" && !ct.startsWith("Auto dari Outbound")) {
+            ctMap[row.id_barang_masuk] = ct;
           }
         });
         if (Object.keys(bbMap).length > 0) setDraftBb(bbMap);
+        if (Object.keys(ctMap).length > 0) setDraftCatatan(ctMap);
 
         // Inisialisasi Timer
         const reqShip = !shipment || shipment === "Tanpa Shipment" ? "" : shipment.trim();
@@ -329,14 +384,17 @@ export default function InboundDetailPage() {
   const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${backQsStr ? `?${backQsStr}` : ""}`;
 
   const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
-  const hasPending = items.some(i => (i.status || "").toLowerCase() === "pending");
-  const isSelesaiAll = items.every(i => (i.status || "selesai").toLowerCase() === "selesai");
+  // Legacy: shipment lama masih bisa berstatus Pending sebelum migrasi ke alur langsung Selesai.
+  const hasPendingLegacy = items.some(i => (i.status || "").toLowerCase() === "pending");
+  const isSelesaiAll = items.length > 0 && items.every(i => (i.status || "selesai").toLowerCase() === "selesai");
+  const isCanceledAll = items.length > 0 && items.every((i) => isCanceledStatus(i.status));
+  const canBatalkan = canCrud && items.length > 0 && !isSelesaiAll && !isCanceledAll && (hasDraft || hasPendingLegacy);
   const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
-  
-  const globalStatus = hasDraft ? 'Draft' : hasPending ? 'Pending' : 'Selesai';
+
+  const globalStatus = isCanceledAll ? 'Canceled' : hasDraft ? 'Draft' : hasPendingLegacy ? 'Pending' : 'Selesai';
   const ss = statusStyle(globalStatus);
 
-  const getTimerPayload = (aksi: "submit" | "konfirmasi") => {
+  const getTimerPayload = () => {
     let waktuMulaiStr: string | undefined = undefined;
     let durasiDetik: number | undefined = undefined;
 
@@ -345,12 +403,8 @@ export default function InboundDetailPage() {
       const d = waktuMulaiRef.current;
       waktuMulaiStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
-      if (aksi === "konfirmasi") {
-         const waktuSelesai = new Date();
-         durasiDetik = Math.floor((waktuSelesai.getTime() - d.getTime()) / 1000);
-      } else {
-         durasiDetik = 0;
-      }
+      const waktuSelesai = new Date();
+      durasiDetik = Math.floor((waktuSelesai.getTime() - d.getTime()) / 1000);
     }
     return { waktu_mulai_input: waktuMulaiStr, durasi_detik: durasiDetik };
   };
@@ -388,7 +442,7 @@ export default function InboundDetailPage() {
          return { id_barang_masuk: i.id_barang_masuk, best_before: bb };
       });
       
-      const timerData = getTimerPayload("submit");
+      const timerData = getTimerPayload();
 
       await apiPost('/barang-masuk/submit', {
          shipment_id: first.shipment_id || "",
@@ -397,8 +451,8 @@ export default function InboundDetailPage() {
          waktu_mulai_input: timerData.waktu_mulai_input,
          durasi_detik: timerData.durasi_detik
       });
-      
-      notify("success", "Booking lokasi berhasil! Status berubah menjadi Pending.");
+
+      notify("success", "Konfirmasi berhasil! Status berubah menjadi Selesai, stok telah ditambahkan.");
       setTimeout(() => window.location.reload(), 1500);
     } catch (e: any) {
       notify("error", e.message || "Gagal melakukan submit booking.");
@@ -407,27 +461,10 @@ export default function InboundDetailPage() {
     }
   };
 
-  const revertToDraft = async () => {
-    setBusy(true);
-    try {
-      await apiPost('/barang-masuk/update', {
-        aksi: 'revert_to_draft',
-        shipment_id: first.shipment_id || "",
-        id_pengguna_lokasi: aktifLokasiId(session),
-      });
-      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Berhasil dikembalikan ke Draft.", type: "success" }));
-      window.location.reload();
-    } catch (e) {
-      notify("error", (e as Error).message || "Gagal revert ke Draft.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const konfirmasiPending = async () => {
     setBusy(true);
     try {
-      const timerData = getTimerPayload("konfirmasi");
+      const timerData = getTimerPayload();
 
       await apiPost('/barang-masuk/konfirmasi', {
          shipment_id: first.shipment_id || "",
@@ -548,6 +585,12 @@ export default function InboundDetailPage() {
     } finally { setBusy(false); }
   };
 
+  const openBatalkan = () => {
+    setCatatanBatal("");
+    setConfirmOne(null);
+    setConfirmAll(true);
+  };
+
   const hapusSatu = async () => {
     if (!confirmOne) return;
     setBusy(true);
@@ -561,18 +604,25 @@ export default function InboundDetailPage() {
     } finally { setBusy(false); }
   };
 
-  const hapusSemua = async () => {
-    if (!items.length) return;
+  const batalkanSemua = async () => {
+    if (!items.length || !first) return;
+    if (norm(catatanBatal).length < 3) {
+      notify("error", "Catatan pembatalan wajib diisi (minimal 3 karakter).");
+      return;
+    }
     setBusy(true);
     try {
-      for (const item of items) {
-        await apiPost("/barang-masuk/hapus", { id_barang_masuk: item.id_barang_masuk });
-      }
-      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Semua item inbound berhasil dihapus.", type: "success" }));
+      await apiPost("/barang-masuk/batal", {
+        shipment_id: first.shipment_id || "",
+        id_pengguna_lokasi: aktifLokasiId(session),
+        nama_pengguna: session.user.username,
+        catatan: norm(catatanBatal).slice(0, 250),
+      });
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Inbound berhasil dibatalkan.", type: "success" }));
       setConfirmAll(false);
       router.push(backHref);
     } catch (e) {
-      toast((e as Error).message || "Sebagian item tidak bisa dihapus karena sudah dipakai.", "error");
+      toast((e as Error).message || "Inbound tidak bisa dibatalkan.", "error");
     } finally { setBusy(false); }
   };
 
@@ -664,33 +714,26 @@ export default function InboundDetailPage() {
               </div>
             </div>
 
-            {!isSelesaiAll && (
+            {!isSelesaiAll && !isCanceledAll && (
               <div className="id-actions" style={{ marginTop: 8 }}>
-                {canCrud && items.length > 0 && (
-                  <button type="button" className="id-delete-all" onClick={() => setConfirmAll(true)}>
-                    <i className="bi bi-trash"></i>
-                    <span>Hapus Semua ({items.length})</span>
+                {canBatalkan && (
+                  <button type="button" className="id-delete-all" onClick={openBatalkan}>
+                    <i className="bi bi-x-circle"></i>
+                    <span>Batalkan ({items.length})</span>
                   </button>
                 )}
-                {canCrud && (
-                  <button type="button" className={`id-step-btn ${hasPending && !hasDraft ? "id-step-next" : ""}`}
-                    disabled={!(hasPending && !hasDraft)} onClick={() => (hasPending && !hasDraft) && revertToDraft()}>
-                    <i className="bi bi-file-earmark-text-fill"></i>
-                    <span>Draft</span>
-                  </button>
-                )}
-                {canCrud && (
-                  <button type="button" className={`id-step-btn ${hasDraft ? "id-step-next" : ""}`}
+                {canCrud && hasDraft && (
+                  <button type="button" className="id-step-btn id-step-next"
                     disabled={!hasDraft} onClick={() => hasDraft && submitDraftBooking()}>
-                    <i className="bi bi-hourglass-split"></i>
-                    <span>Submit Booking</span>
-                  </button>
-                )}
-                {(canCrud || session.user.role === "Forklift") && (
-                  <button type="button" className={`id-step-btn ${hasPending && !hasDraft ? "id-step-next" : ""}`}
-                    disabled={!(hasPending && !hasDraft)} onClick={() => (hasPending && !hasDraft) && konfirmasiPending()}>
                     <i className="bi bi-check-circle-fill"></i>
                     <span>Konfirmasi Inbound</span>
+                  </button>
+                )}
+                {(canCrud || session.user.role === "Forklift") && !hasDraft && hasPendingLegacy && (
+                  <button type="button" className="id-step-btn id-step-next"
+                    onClick={() => konfirmasiPending()}>
+                    <i className="bi bi-check-circle-fill"></i>
+                    <span>Konfirmasi Inbound (Pending lama)</span>
                   </button>
                 )}
               </div>
@@ -701,7 +744,7 @@ export default function InboundDetailPage() {
 
       <div className="id-item-title-row">
         <h3 className="id-section-title" style={{ margin: 0 }}>Item</h3>
-        {canCrud && !isSelesaiAll && (
+        {canCrud && !isSelesaiAll && !isCanceledAll && (
           <button type="button" className="id-add-item-btn" onClick={openAddItem}>
             <i className="bi bi-plus-lg"></i>
             Tambah Item
@@ -725,21 +768,20 @@ export default function InboundDetailPage() {
                     {norm(item.nama_produk) || "-"}
                   </div>
                   <div className="id-item-icons">
-                    {canCrud && (
+                    {canCrud && !isCanceledStatus(item.status) && (
                       <button type="button" className="id-icon-btn" title="Edit item" onClick={() => openItem(item)}>
                         <i className="bi bi-pencil-fill"></i>
                       </button>
                     )}
-                    {canCrud ? (
-                      <button type="button" className="id-icon-btn" title="Hapus item" onClick={() => setConfirmOne(item)}>
-                        <i className="bi bi-trash"></i>
-                      </button>
-                    ) : (
-                      <button type="button" className="id-icon-btn" disabled style={{ opacity: 0.4, cursor: "not-allowed" }}>
+                    {canCrud && (itemStatus === "draft" || itemStatus === "pending") && (
+                      <button type="button" className="id-icon-btn" title="Hapus item" onClick={() => { setConfirmAll(false); setConfirmOne(item); }}>
                         <i className="bi bi-trash"></i>
                       </button>
                     )}
                     {itemStatus === 'selesai' && <span className="id-check"><i className="bi bi-check-lg"></i></span>}
+                    {isCanceledStatus(item.status) && (
+                      <span className="status-badge" style={statusStyle("Canceled")}>Canceled</span>
+                    )}
                   </div>
                 </div>
 
@@ -748,7 +790,14 @@ export default function InboundDetailPage() {
                   <div className="id-text-value">{angka(item.jumlah)} {norm(item.satuan)}</div>
                 </div>
 
-                {itemStatus !== 'draft' && (
+                {isCanceledStatus(item.status) && (
+                  <div className="id-rencana-box" style={{ background: "#fef2f2", borderColor: "#fecaca" }}>
+                    <div className="id-rencana-title" style={{ color: "#b91c1c" }}>Alasan pembatalan:</div>
+                    <div className="id-rencana-line">{norm(item.catatan) || "-"}</div>
+                  </div>
+                )}
+
+                {itemStatus !== 'draft' && !isCanceledStatus(item.status) && (
                   <div className="id-rencana-box">
                     <div className="id-rencana-title">Lokasi Penyimpanan:</div>
                     <div className="id-rencana-line">
@@ -763,24 +812,43 @@ export default function InboundDetailPage() {
                 {itemStatus === 'draft' && (
                   <div style={{ marginTop: 8, borderTop: '1px dashed #dbe3f5', paddingTop: 8 }}>
                     <label className="id-text-label" style={{marginBottom: 4}}>Isi Best Before</label>
-                    <input 
-                      type={(isItemReject || noBatch) ? "text" : "date"} 
+                    <input
+                      type={(isItemReject || noBatch) ? "text" : "date"}
                       className="draft-bb-input"
-                      value={(isItemReject || noBatch) ? "9999/99/99" : (draftBb[item.id_barang_masuk] || "")} 
+                      value={(isItemReject || noBatch) ? "9999/99/99" : (draftBb[item.id_barang_masuk] || "")}
                       disabled={isItemReject || noBatch}
                       placeholder={noBatch ? "Produk Tanpa BB" : "Pilih Best Before"}
-                      onChange={(e) => setDraftBb({...draftBb, [item.id_barang_masuk]: e.target.value})} 
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setDraftBb({ ...draftBb, [item.id_barang_masuk]: v });
+                        // Autosave hanya untuk tanggal valid; ketikan parsial cukup disimpan lokal dulu.
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(v)) queueDraftAutosave(item.id_barang_masuk, { best_before: v });
+                        else setDraftSaveState((s) => ({ ...s, [item.id_barang_masuk]: "saving" }));
+                      }}
                     />
-                    {(["SECONDARY", "FOC"].includes((item.tipe_penerimaan || "").toUpperCase())) && (
+                    {draftSaveState[item.id_barang_masuk] === "saving" && (
+                      <div style={{ marginTop: 4, fontSize: 10, fontWeight: 750, color: "#6b7280" }}>Menyimpan…</div>
+                    )}
+                    {draftSaveState[item.id_barang_masuk] === "saved" && (
+                      <div style={{ marginTop: 4, fontSize: 10, fontWeight: 750, color: "#16a34a" }}>Tersimpan otomatis</div>
+                    )}
+                    {draftSaveState[item.id_barang_masuk] === "error" && (
+                      <div style={{ marginTop: 4, fontSize: 10, fontWeight: 750, color: "#DC2626" }}>Gagal tersimpan otomatis — coba isi ulang</div>
+                    )}
+                    {((["SECONDARY", "FOC"].includes((item.tipe_penerimaan || "").toUpperCase()))) && (
                       <div style={{ marginTop: 6 }}>
                         <label className="id-text-label" style={{marginBottom: 4}}>Catatan (wajib jika qty 0)</label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           className="draft-bb-input"
                           value={draftCatatan[item.id_barang_masuk] || ""}
                           placeholder="Isi catatan jika qty 0"
                           maxLength={250}
-                          onChange={(e) => setDraftCatatan({...draftCatatan, [item.id_barang_masuk]: e.target.value})} 
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setDraftCatatan({ ...draftCatatan, [item.id_barang_masuk]: v });
+                            queueDraftAutosave(item.id_barang_masuk, { catatan: v });
+                          }}
                         />
                       </div>
                     )}
@@ -798,21 +866,19 @@ export default function InboundDetailPage() {
           <div className="dialog-box">
             <h3 className="dialog-title">Tambah Item Baru</h3>
             <div className="id-modal-note">
-              Item baru akan ditambahkan dengan status <strong>Draft</strong>. Lakukan "Submit Booking" setelah selesai menambahkan item ini.
+              Item baru akan ditambahkan dengan status <strong>Draft</strong>. Lakukan "Konfirmasi Inbound" setelah selesai menambahkan item ini.
             </div>
             <div className="dialog-grid">
               <div className="dialog-field dialog-field-full">
                 <label>Pilih Produk</label>
-                <select value={aProduk} onChange={(e) => {
-                  const p = produkList.find((x) => x.id_produk === angka(e.target.value));
-                  setAProduk(angka(e.target.value));
-                  setASatuan(p?.satuan || "");
-                }}>
-                  <option value="0">-- Pilih Produk --</option>
-                  {produkList.map((p) => (
-                    <option key={p.id_produk} value={p.id_produk}>{p.id_produk} - {p.nama_produk}</option>
-                  ))}
-                </select>
+                <ProdukPicker
+                  produkList={produkList}
+                  value={aProduk}
+                  onChange={(p) => {
+                    setAProduk(p.id_produk);
+                    setASatuan(p.satuan || "");
+                  }}
+                />
               </div>
               <div className="dialog-field dialog-field-full">
                 <label>Jumlah ({aSatuan || "PCS"})</label>
@@ -906,15 +972,59 @@ export default function InboundDetailPage() {
       )}
 
       {confirmAll && (
-        <ConfirmDialog title="Hapus Semua Item"
-          message={`Hapus semua item inbound (<strong>${items.length}</strong>)?`}
-          onCancel={() => setConfirmAll(false)} onOk={hapusSemua} busy={busy} />
+        <BatalDialog
+          title="Batalkan Inbound"
+          message={`Batalkan seluruh item inbound (<strong>${items.length}</strong>)? Tindakan ini mengubah status menjadi <strong>Canceled</strong> dan tidak menghapus riwayat.`}
+          catatan={catatanBatal}
+          onCatatan={setCatatanBatal}
+          onCancel={() => setConfirmAll(false)} onOk={batalkanSemua} busy={busy} />
       )}
       {confirmOne && (
         <ConfirmDialog title="Hapus Item"
-          message={`Hapus item <strong>${norm(confirmOne.nama_produk)}</strong>?`}
+          message={`Hapus item <strong>${norm(confirmOne.nama_produk)}</strong>? Data akan dihapus permanen.`}
           onCancel={() => setConfirmOne(null)} onOk={hapusSatu} busy={busy} />
       )}
+    </div>
+  );
+}
+
+function BatalDialog({ title, message, catatan, onCatatan, onCancel, onOk, busy }: {
+  title: string; message: string; catatan: string; onCatatan: (v: string) => void; onCancel: () => void; onOk: () => void; busy?: boolean;
+}) {
+  const valid = catatan.trim().length >= 3;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1050, background: "rgba(15, 23, 42, 0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "#FFFFFF", borderRadius: 18, width: "100%", maxWidth: 440, boxShadow: "0 25px 50px -12px rgba(15, 23, 42, 0.25)", overflow: "hidden" }}>
+        <div style={{ padding: "20px 22px 14px", display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: "#FEF2F2", color: "#EF4444", border: "1px solid #FCA5A5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+            <i className="bi bi-x-circle"></i>
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", letterSpacing: "-0.2px" }}>{title}</div>
+        </div>
+        <div style={{ padding: "0 22px 20px", fontSize: 13, fontWeight: 600, color: "#475569", lineHeight: 1.5 }}
+          dangerouslySetInnerHTML={{ __html: message }} />
+        <div style={{ padding: "0 22px 20px" }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 800, color: "#0F172A", marginBottom: 6 }}>
+            Catatan pembatalan <span style={{ color: "#EF4444" }}>*</span>
+          </label>
+          <textarea value={catatan} onChange={(e) => onCatatan(e.target.value)} maxLength={250} rows={3}
+            placeholder="Wajib diisi, contoh: Driver batal datang / salah input shipment..."
+            style={{ width: "100%", border: "1px solid #CBD5E1", borderRadius: 10, padding: "10px 12px", fontSize: 13, fontWeight: 600, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+          {!valid && (
+            <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: "#B91C1C" }}>Catatan wajib diisi (minimal 3 karakter).</div>
+          )}
+        </div>
+        <div style={{ padding: "14px 22px", background: "#F8FAFC", borderTop: "1px solid #E2E8F0", display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
+          <button type="button" onClick={onCancel} disabled={busy}
+            style={{ height: 38, padding: "0 16px", borderRadius: 10, border: "1px solid #CBD5E1", background: "#FFFFFF", color: "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+            Batal
+          </button>
+          <button type="button" onClick={onOk} disabled={busy || !valid}
+            style={{ height: 38, padding: "0 20px", borderRadius: 10, border: 0, background: valid ? "#EF4444" : "#E5E7EB", color: valid ? "#FFFFFF" : "#9CA3AF", fontSize: 13, fontWeight: 800, cursor: valid ? "pointer" : "not-allowed", boxShadow: "0 2px 6px rgba(239, 68, 68, 0.25)" }}>
+            {busy ? "Memproses..." : "Ya, Batalkan"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -944,6 +1054,44 @@ function ConfirmDialog({ title, message, onCancel, onOk, busy }: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProdukPicker({ produkList, value, onChange }: {
+  produkList: Produk[]; value: number; onChange: (p: Produk) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const selected = produkList.find((x) => x.id_produk === value);
+  const selectedLabel = selected ? `${selected.id_produk} - ${selected.nama_produk}` : "";
+  const filtered = produkList.filter((p) => {
+    const label = `${p.id_produk} - ${p.nama_produk}`.toUpperCase();
+    return q.trim() === "" || label.includes(q.trim().toUpperCase());
+  });
+  return (
+    <div className="inbound-picker-wrap">
+      <button type="button" className="inbound-picker-button" onClick={() => setOpen((o) => !o)}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selectedLabel || "-- Pilih Produk --"}
+        </span>
+        <i className="bi bi-search"></i>
+      </button>
+      {open && (
+        <div className="inbound-picker-panel show">
+          <input type="text" className="inbound-picker-search" placeholder="Cari ID atau nama produk" value={q}
+            onChange={(e) => setQ(e.target.value)} autoFocus />
+          <div className="inbound-option-list">
+            {filtered.map((p) => (
+              <button key={p.id_produk} type="button" className={`inbound-option ${value === p.id_produk ? "selected" : ""}`}
+                onClick={() => { onChange(p); setOpen(false); setQ(""); }}>
+                <span className="inbound-option-label">{p.id_produk} - {p.nama_produk}</span>
+              </button>
+            ))}
+            {!filtered.length && <div className="inbound-empty-result">Produk tidak ditemukan</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

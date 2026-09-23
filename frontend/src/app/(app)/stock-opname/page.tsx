@@ -142,6 +142,16 @@ const css = `
 .so-btn-excel:hover { background: #0e6b37; color: #fff; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(16,124,65,0.18); }
 .so-btn-pdf { background: #c0392b; color: #fff; }
 .so-btn-pdf:hover { background: #a93226; color: #fff; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(192,57,43,0.18); }
+.so-picker-wrap { position: relative; min-width: 180px; }
+.so-picker-button { width: 100%; min-height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 11px; font-weight: 700; color: #172033; outline: none; display: flex; align-items: center; justify-content: space-between; gap: 7px; cursor: pointer; font-family: inherit; }
+.so-picker-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.so-picker-panel { display: none; position: absolute; left: 0; right: 0; min-width: 220px; top: calc(100% + 5px); z-index: 100; background: #FFFFFF; border: 1px solid #e2e7f0; border-radius: 8px; box-shadow: 0 10px 24px rgba(15,23,42,0.12); padding: 8px; }
+.so-picker-panel.show { display: block; }
+.so-picker-search { width: 100%; height: 31px; border-radius: 6px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 11px; outline: none; margin-bottom: 6px; box-sizing: border-box; }
+.so-option-list { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.so-option { border: 0; outline: 0; width: 100%; text-align: left; background: #FFFFFF; color: #172033; border-radius: 6px; padding: 8px 10px; font-size: 11px; font-weight: 700; display: flex; align-items: flex-start; cursor: pointer; font-family: inherit; }
+.so-option:hover, .so-option.selected { background: #eef2ff; color: #191970; }
+.so-empty-result { padding: 8px; color: #8a93a3; font-size: 11px; font-weight: 700; text-align: center; }
 `;
 
 export default function StockOpnamePage() {
@@ -632,10 +642,11 @@ export default function StockOpnamePage() {
                       {manualRows.map((r, i) => (
                         <tr key={r._uid}>
                           <td>
-                            <select className="so-form-input" value={r.id_produk} onChange={(e) => updManual(i, { id_produk: Number(e.target.value) || "" })}>
-                              <option value="">-- Pilih Produk --</option>
-                              {produkList.map((p) => <option key={p.id_produk} value={p.id_produk}>{p.nama_produk}</option>)}
-                            </select>
+                            <ProdukPicker
+                              produkList={produkList}
+                              value={r.id_produk}
+                              onChange={(id) => updManual(i, { id_produk: id === 0 ? "" : id })}
+                            />
                           </td>
                           <td><input type="text" className="so-input so-printblank" placeholder="Misal: A-1" value={r.lokasi_block} onChange={(e) => updManual(i, { lokasi_block: e.target.value })} /></td>
                           <td><input type="text" className="so-input so-printblank" placeholder="Misal: 2026-12-31" value={r.best_before} onChange={(e) => updManual(i, { best_before: e.target.value })} /></td>
@@ -776,6 +787,42 @@ export default function StockOpnamePage() {
             ) : (
               <div className="so-empty">Pilih batch dari daftar perbandingan.</div>
             )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProdukPicker({ produkList, value, onChange }: {
+  produkList: ProdukRow[]; value: number | ""; onChange: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const selected = produkList.find((x) => x.id_produk === value);
+  const selectedLabel = selected ? `${selected.id_produk} - ${selected.nama_produk}` : "";
+  const filtered = produkList.filter((p) => {
+    const label = `${p.id_produk} - ${p.nama_produk}`.toUpperCase();
+    return q.trim() === "" || label.includes(q.trim().toUpperCase());
+  });
+  return (
+    <div className="so-picker-wrap">
+      <button type="button" className="so-picker-button" onClick={() => setOpen((o) => !o)}>
+        <span className="so-picker-text">{selectedLabel || "-- Pilih Produk --"}</span>
+        <i className="bi bi-search"></i>
+      </button>
+      {open && (
+        <div className="so-picker-panel show">
+          <input type="text" className="so-picker-search" placeholder="Cari ID atau nama produk" value={q}
+            onChange={(e) => setQ(e.target.value)} autoFocus />
+          <div className="so-option-list">
+            {filtered.map((p) => (
+              <button key={p.id_produk} type="button" className={`so-option ${value === p.id_produk ? "selected" : ""}`}
+                onClick={() => { onChange(p.id_produk); setOpen(false); setQ(""); }}>
+                <span>{p.id_produk} - {p.nama_produk}</span>
+              </button>
+            ))}
+            {!filtered.length && <div className="so-empty-result">Produk tidak ditemukan</div>}
           </div>
         </div>
       )}

@@ -172,6 +172,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/barang-keluar/import', [BarangKeluarController::class, 'importHistorical']);
     Route::post('/barang-keluar/update', [BarangKeluarController::class, 'update']);
     Route::post('/barang-keluar/hapus', [BarangKeluarController::class, 'destroy']);
+    Route::post('/barang-keluar/batal', [BarangKeluarController::class, 'batal']);
 
     Route::post('/barang-masuk/upload', [App\Http\Controllers\Api\BarangMasukController::class, 'uploadInboundFile']);
     Route::post('/barang-masuk/submit', [BarangMasukController::class, 'submitDraft']);
@@ -182,6 +183,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/barang-masuk/preview', [BarangMasukController::class, 'preview']);
     Route::post('/barang-masuk/update', [BarangMasukController::class, 'update']);
     Route::post('/barang-masuk/hapus', [BarangMasukController::class, 'destroy']);
+    Route::post('/barang-masuk/batal', [BarangMasukController::class, 'batal']);
 
     Route::get('/laporan/barang-keluar', [LaporanController::class, 'exportBarangKeluar']);
     Route::get('/laporan/barang-masuk', [LaporanController::class, 'exportBarangMasuk']);
