@@ -99,6 +99,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/layout-gudang/ubah-plant-line', [LayoutGudangController::class, 'ubahPlantLine']);
         Route::post('/layout-gudang/ubah-bb-jumlah-line', [LayoutGudangController::class, 'ubahBbJumlahLine']);
         Route::post('/layout-gudang/transfer-stok-line', [LayoutGudangController::class, 'transferStokLine']);
+        Route::post('/layout-gudang/rapikan-deep', [LayoutGudangController::class, 'rapikanDeepSeLine']);
         Route::post('/layout-gudang/prioritas-lokasi-produk', [LayoutGudangController::class, 'prioritasLokasiProduk']);
 
         // Pengaturan Produk (urutan blok + FEFO per lokasi)
@@ -147,6 +148,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/layout-gudang/ambil-plant-line', [LayoutGudangController::class, 'ambilPlantLine']);
     Route::get('/layout-gudang/ambil-ringkasan-deep', [LayoutGudangController::class, 'ambilRingkasanDeep']);
     Route::get('/layout-gudang/cek-kapasitas-deep', [LayoutGudangController::class, 'cekKapasitasDeep']);
+    Route::get('/layout-gudang/deteksi-fragmentasi', [LayoutGudangController::class, 'deteksiFragmentasi']);
 
     Route::get('/mutasi', [MutasiController::class, 'history']);
     Route::get('/mutasi/bb-line', [MutasiController::class, 'getBestBefore']);

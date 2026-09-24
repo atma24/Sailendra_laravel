@@ -7,7 +7,7 @@ import LineEditModal, { type BbItem, type EditLine } from "@/components/LineEdit
 import UploadModal from "@/components/UploadModal";
 
 type LokasiRow = { id_lokasi: number; nama_lokasi?: string; kategori?: string };
-type BlockRow = { id_block: number; kode_block: string };
+type BlockRow = { id_block: number; kode_block: string; id_lokasi?: number };
 type LokProfile = { id_pengguna_lokasi: string; nama_pengguna_lokasi: string };
 
 type Deep = {
@@ -40,6 +40,9 @@ type LayoutBlock = {
   total_terpakai: number;
   line: Line[];
 };
+type PecahDeep = { id_deep: number; level: string; deep: number; terisi: number; kapasitas: number };
+type PecahGroup = { id_produk: number; best_before: string; deeps: PecahDeep[]; saran: string };
+type FragInfo = { id_line: number; label_line: string; pecah: PecahGroup[]; gantung: boolean; total_l1: number; total_l2plus: number };
 
 const css = `
 .warehouse-page { display: flex; flex-direction: column; gap: 7px; }
@@ -129,6 +132,10 @@ const css = `
 }
 .line-total { font-size: 10px; font-weight: 700; color: var(--text-soft); }
 .line-total strong { color: var(--text-main); font-weight: 900; }
+.frag-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.frag-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 8px; font-size: 9px; font-weight: 900; border: 1px solid transparent; white-space: nowrap; }
+.frag-pecah { color: #B7791F; background: rgba(249, 168, 37, 0.14); border-color: rgba(249, 168, 37, 0.45); }
+.frag-gantung { color: #C62828; background: rgba(211, 47, 47, 0.10); border-color: rgba(211, 47, 47, 0.45); }
 
 .line-edit-btn {
   width: 25px; height: 25px; border: 0; outline: 0; border-radius: 8px;
@@ -339,6 +346,24 @@ const buildBbItems = (line: Line): BbItem[] => {
   return Object.values(map);
 };
 
+const buildDeepItems = (line: Line) => {
+  const out: { id_deep: number; level: string | number; deep: number; terpakai: number; kapasitas: number; best_before: string; id_produk: number }[] = [];
+  (line.level || []).forEach((level) => {
+    (level.deep || []).forEach((d) => {
+      out.push({
+        id_deep: angka(d.id_deep),
+        level: (level.level as string | number) ?? "",
+        deep: angka(d.deep),
+        terpakai: angka(d.terpakai),
+        kapasitas: angka(d.kapasitas),
+        best_before: String(d.best_before ?? "").trim(),
+        id_produk: angka(d.id_produk),
+      });
+    });
+  });
+  return out;
+};
+
 export default function LayoutGudangPage() {
   const session = useSession();
   const isMulti = !!session && isMultiRole(session.user.role);
@@ -348,6 +373,7 @@ export default function LayoutGudangPage() {
   const [lokasiList, setLokasiList] = useState<LokasiRow[]>([]);
   const [idLokasi, setIdLokasi] = useState(0);
   const [blockList, setBlockList] = useState<BlockRow[]>([]);
+  const [allBlockList, setAllBlockList] = useState<BlockRow[]>([]);
   const [idBlock, setIdBlock] = useState(0);
   const [layoutBlocks, setLayoutBlocks] = useState<LayoutBlock[]>([]);
   const [layoutError, setLayoutError] = useState("");
@@ -363,6 +389,7 @@ export default function LayoutGudangPage() {
   const [refresh, setRefresh] = useState(0);
   const [showUpload, setShowUpload] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [fragMap, setFragMap] = useState<Record<number, FragInfo>>({});
 
   useEffect(() => {
     if (!session || !isMulti) return;
@@ -466,6 +493,25 @@ export default function LayoutGudangPage() {
     };
   }, [penggunaLokasiFinal, idLokasi]);
 
+  // Semua block lintas lokasi (GALLON/SPS/XWH) khusus untuk dropdown transfer antar lokasi.
+  // blockList tetap terfilter per tab aktif untuk tampilan layout.
+  useEffect(() => {
+    if (!penggunaLokasiFinal) return;
+    let cancelled = false;
+    const params = new URLSearchParams({
+      id_pengguna_lokasi: penggunaLokasiFinal,
+    });
+    apiGet<BlockRow[]>(`/block?${params.toString()}`)
+      .then((r) => {
+        if (cancelled) return;
+        setAllBlockList(r.data || []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [penggunaLokasiFinal, refresh]);
+
   useEffect(() => {
     if (!penggunaLokasiFinal || !idLokasi || !idBlock) return;
     let cancelled = false;
@@ -492,6 +538,24 @@ export default function LayoutGudangPage() {
       cancelled = true;
     };
   }, [penggunaLokasiFinal, idLokasi, idBlock, refresh]);
+
+  useEffect(() => {
+    if (!penggunaLokasiFinal) return;
+    let cancelled = false;
+    apiGet<FragInfo[]>(`/layout-gudang/deteksi-fragmentasi?id_pengguna_lokasi=${encodeURIComponent(penggunaLokasiFinal)}`)
+      .then((r) => {
+        if (cancelled) return;
+        const m: Record<number, FragInfo> = {};
+        (r.data || []).forEach((f) => {
+          m[f.id_line] = f;
+        });
+        setFragMap(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [penggunaLokasiFinal, refresh]);
 
   if (!session) return null;
 
@@ -671,13 +735,31 @@ export default function LayoutGudangPage() {
                       Total: <strong>{angka(line.total_terpakai)}</strong> /{" "}
                       <strong>{angka(line.total_kapasitas)}</strong>
                     </div>
+                    {(() => {
+                      const f = fragMap[angka(line.id_line)];
+                      if (!f || ((!f.pecah || !f.pecah.length) && !f.gantung)) return null;
+                      return (
+                        <div className="frag-badges">
+                          {!!f.pecah?.length && (
+                            <span className="frag-badge frag-pecah" title={f.pecah.map((p) => `BB ${p.best_before}: ${p.deeps.map((x) => `L${x.level}/D${x.deep}=${x.terisi}`).join(", ")}`).join(" | ")}>
+                              <i className="bi bi-exclamation-triangle-fill"></i> Pecah: 1 tanggal di {f.pecah.reduce((n, p) => n + p.deeps.length, 0)} palet
+                            </span>
+                          )}
+                          {!!f.gantung && (
+                            <span className="frag-badge frag-gantung" title={`L1=${f.total_l1}, L2+=${f.total_l2plus}. Bawah kosong-atas isi, turunkan dulu.`}>
+                              <i className="bi bi-arrow-down-circle-fill"></i> Gantung: bawah kosong
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {SUPERVISOR_ROLES.includes(session.user.role) && (
                     <button
                       type="button"
                       className="line-edit-btn"
-                      title="Ubah BB dan Transfer Stok"
+                      title="Ubah BB, Transfer & Rapikan Stok"
                       onClick={() =>
                         setEdit({
                           idLine: angka(line.id_line),
@@ -686,6 +768,9 @@ export default function LayoutGudangPage() {
                           product: String(line.nama_produk || "").trim() || "-",
                           total: angka(line.total_terpakai),
                           bbItems: buildBbItems(line),
+                          deepItems: buildDeepItems(line),
+                          idLokasiAsal: angka(idLokasi),
+                          idBlockAsal: angka(selectedBlock?.id_block),
                         })
                       }
                     >
@@ -726,11 +811,13 @@ export default function LayoutGudangPage() {
                                 const terpakai = angka(d.terpakai);
                                 const cls = statusClass(d.status, terpakai, kap);
                                 const persen = kap > 0 && terpakai > 0 ? Math.min(100, Math.max(0, (terpakai / kap) * 100)) : 0;
+                                const bbInfo = String(d.best_before ?? "").trim();
+                                const batchInfo = String(d.batch ?? d.batch_produk ?? "").trim();
                                 return (
                                   <div
                                     key={d.id_deep}
                                     className={`deep-cell ${cls}`}
-                                    title={`${statusLabel(d.status)} | ${terpakai}/${kap}`}
+                                    title={`Deep ${d.id_deep} | L${angka(level.level)}/D${angka(d.deep)} | ${statusLabel(d.status)} | ${terpakai}/${kap}${bbInfo ? ` | BB ${bbInfo}` : ""}${batchInfo ? ` | ${batchInfo}` : ""} — 1 kotak = 1 palet, pecah antar palet itu normal sebelum dirapikan`}
                                     onClick={() => openDetail(d, line)}
                                   >
                                     <div className="deep-fill" style={{ width: `${persen}%` }}></div>
@@ -815,7 +902,8 @@ export default function LayoutGudangPage() {
           edit={edit}
           session={session}
           lokasiList={lokasiList}
-          blockList={blockList}
+          blockList={allBlockList.length ? allBlockList : blockList}
+          idPenggunaLokasi={penggunaLokasiFinal}
           onClose={() => setEdit(null)}
           onChanged={() => {
             setEdit(null);

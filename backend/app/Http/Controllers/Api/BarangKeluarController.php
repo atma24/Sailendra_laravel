@@ -17,6 +17,9 @@ class BarangKeluarController extends Controller
     use ApiResponse;
     use ExcelReader;
 
+    /** Cache per-request MIN best_before release per scope (stok fisik, konsisten layout). */
+    private array $cacheMinBbRelease = [];
+
     // =========================================================================
     // 1. GET LIST OUTBOUND (Ref: ambil_barang_keluar.php)
     // =========================================================================
@@ -120,14 +123,9 @@ $rowHeader = DB::table('barang_keluar as bk')
             $rows = DB::table('barang_keluar as bk')
                 ->leftJoin('pengguna as p', 'p.id_pengguna', '=', 'bk.id_pengguna')
                 ->leftJoin('pengguna as pu', 'pu.id_pengguna', '=', 'bk.diperbarui_oleh')
-                ->where('bk.id_pengguna_lokasi', $idPenggunaLokasi)
-                ->where('bk.tanggal_keluar', $rowHeader->tanggal_keluar)
-                ->whereRaw("LOWER(TRIM(COALESCE(bk.nama_driver, ''))) = ?", [strtolower(trim($rowHeader->nama_driver))])
-                ->whereRaw("LOWER(TRIM(COALESCE(bk.no_mobil, ''))) = ?", [strtolower(trim($rowHeader->no_mobil))])
-                ->whereRaw("LOWER(TRIM(COALESCE(bk.tipe_pengeluaran, ''))) = ?", [strtolower(trim($rowHeader->tipe_pengeluaran))])
-                ->whereRaw("COALESCE(bk.tujuan, '') = ?", [trim($rowHeader->tujuan ?? '')])
-                ->where('bk.id_pengguna', $rowHeader->id_pengguna)
-                ->select('bk.*', 'p.username AS dibuat_oleh', 'pu.username AS diperbarui_nama')
+                ->where('bk.id_pengguna_lokasi', $idPenggunaLokasi);
+            $rows = $this->terapkanFilterGrupOutbound($rows, $rowHeader, 'bk');
+            $rows = $rows->select('bk.*', 'p.username AS dibuat_oleh', 'pu.username AS diperbarui_nama')
                 ->orderBy('bk.id_barang_keluar', 'ASC')
                 ->get();
 
@@ -221,7 +219,7 @@ $rowHeader = DB::table('barang_keluar as bk')
 
     // =========================================================================
     // 3b. BATAL OUTBOUND PER GRUP (1 aksi + 1 catatan untuk semua item
-    //     dalam 1 detail: tanggal + driver + mobil + tipe + tujuan + user)
+    //     dalam 1 GIN: lokasi + tanggal + gin_no + tipe)
     // =========================================================================
     public function batal(Request $request)
     {
@@ -254,14 +252,9 @@ $rowHeader = DB::table('barang_keluar as bk')
                 throw new Exception('Data outbound tidak ditemukan');
             }
 
-            $ids = DB::table('barang_keluar')
-                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                ->where('tanggal_keluar', $ref->tanggal_keluar)
-                ->whereRaw('LOWER(TRIM(COALESCE(nama_driver, ""))) = ?', [strtolower(trim((string) $ref->nama_driver))])
-                ->whereRaw('LOWER(TRIM(COALESCE(no_mobil, ""))) = ?', [strtolower(trim((string) $ref->no_mobil))])
-                ->whereRaw('LOWER(TRIM(COALESCE(tipe_pengeluaran, ""))) = ?', [strtolower(trim((string) $ref->tipe_pengeluaran))])
-                ->whereRaw("COALESCE(tujuan, '') = ?", [trim($ref->tujuan ?? '')])
-                ->where('id_pengguna', $ref->id_pengguna)
+            $idsQuery = DB::table('barang_keluar');
+            $idsQuery = $this->terapkanFilterGrupOutbound($idsQuery, $ref, '');
+            $ids = $idsQuery
                 ->whereRaw("LOWER(TRIM(status)) IN ('draft','pending')")
                 ->pluck('id_barang_keluar')
                 ->map(fn ($v) => (int) $v)
@@ -1015,6 +1008,7 @@ public function store(Request $request)
             $items = [[
                 'id_produk' => (int) $in['id_produk'], 'jumlah' => (int) $in['jumlah'], 'satuan' => $in['satuan'] ?? '',
                 'id_line' => (int) ($in['id_line'] ?? 0), 'batch' => $in['batch'] ?? '', 'best_before' => $in['best_before'] ?? '',
+                'id_lokasi' => $in['id_lokasi'] ?? 0, 'kategori_lokasi' => $in['kategori_lokasi'] ?? ($in['lokasi'] ?? ''),
             ]];
         }
         if (empty($items)) {
@@ -1044,6 +1038,7 @@ public function store(Request $request)
             }
 
             $itemsOut = [];
+            [$idLokasiDefault, $kategoriDefault] = $this->normalisasiLokasiOutbound($in);
             foreach ($items as $it) {
                 $idProduk = (int) $it['id_produk'];
                 $jumlah = (int) $it['jumlah'];
@@ -1064,12 +1059,18 @@ public function store(Request $request)
                 $batchManual = trim($it['batch'] ?? '');
                 $bestBeforeManual = trim($it['best_before'] ?? '');
                 $pakaiManual = ($idLineManual > 0 && $batchManual !== '');
+                // Scope per-lokasi (SPS vs XWH): per-item override, fallback ke header.
+                [$idLokasiItem, $kategoriItem] = $this->normalisasiLokasiOutbound(is_array($it) ? $it : []);
+                if ($idLokasiItem <= 0 && $kategoriItem === '') {
+                    $idLokasiItem = $idLokasiDefault;
+                    $kategoriItem = $kategoriDefault;
+                }
 
                 $rencana = [];
                 if ($pakaiManual) {
                     $rencana = $this->buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $idLineManual, $batchManual, $bestBeforeManual, $tipePengeluaran);
                 } elseif ($statusInput !== 'Draft') {
-                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran);
+                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran, $idLokasiItem, $kategoriItem);
                 }
 
                 if (empty($rencana) && $statusInput !== 'Draft') {
@@ -1271,19 +1272,16 @@ $in = $request->all();
                     throw new Exception('Data tidak ditemukan');
                 }
 
-                $affected = DB::table('barang_keluar')
-                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)->where('tanggal_keluar', $ref->tanggal_keluar)
-                    ->whereRaw('LOWER(TRIM(nama_driver)) = ?', [strtolower(trim($ref->nama_driver))])
-                    ->whereRaw('LOWER(TRIM(no_mobil)) = ?', [strtolower(trim($ref->no_mobil))])
+                $revertQuery = DB::table('barang_keluar');
+                $revertQuery = $this->terapkanFilterGrupOutbound($revertQuery, $ref, '');
+                $affected = $revertQuery
                     ->whereRaw("LOWER(TRIM(status)) = 'pending'")
                     ->update(['status' => 'Draft', 'best_before' => null, 'batch' => null, 'lokasi_block' => null]);
 
-                DB::table('rencana_keluar_deep as r')
-                    ->join('barang_keluar as bk', 'bk.id_barang_keluar', '=', 'r.id_barang_keluar')
-                    ->where('bk.id_pengguna_lokasi', $idPenggunaLokasi)->where('bk.tanggal_keluar', $ref->tanggal_keluar)
-                    ->whereRaw('LOWER(TRIM(bk.nama_driver)) = ?', [strtolower(trim($ref->nama_driver))])
-                    ->whereRaw('LOWER(TRIM(bk.no_mobil)) = ?', [strtolower(trim($ref->no_mobil))])
-                    ->where('bk.status', 'Draft')->delete();
+                $delQuery = DB::table('rencana_keluar_deep as r')
+                    ->join('barang_keluar as bk', 'bk.id_barang_keluar', '=', 'r.id_barang_keluar');
+                $delQuery = $this->terapkanFilterGrupOutbound($delQuery, $ref, 'bk');
+                $delQuery->where('bk.status', 'Draft')->delete();
 
                 DB::commit();
 
@@ -1306,17 +1304,15 @@ $in = $request->all();
 
                 $waktuMulai = ! empty($in['waktu_mulai_input']) ? $in['waktu_mulai_input'] : DB::raw('waktu_mulai_input');
 
-                $affected = DB::table('barang_keluar')
-                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)->where('tanggal_keluar', $ref->tanggal_keluar)
-                    ->whereRaw('LOWER(TRIM(nama_driver)) = ?', [strtolower(trim($ref->nama_driver))])
-                    ->whereRaw('LOWER(TRIM(no_mobil)) = ?', [strtolower(trim($ref->no_mobil))])
+                $submitQuery = DB::table('barang_keluar');
+                $submitQuery = $this->terapkanFilterGrupOutbound($submitQuery, $ref, '');
+                $affected = $submitQuery
                     ->where('status', 'Draft')
                     ->update(['status' => 'Pending', 'waktu_mulai_input' => $waktuMulai]);
 
-                $items = DB::table('barang_keluar')->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                    ->where('tanggal_keluar', $ref->tanggal_keluar)
-                    ->whereRaw('LOWER(TRIM(nama_driver)) = ?', [strtolower(trim($ref->nama_driver))])
-                    ->whereRaw('LOWER(TRIM(no_mobil)) = ?', [strtolower(trim($ref->no_mobil))])
+                $itemsQuery = DB::table('barang_keluar');
+                $itemsQuery = $this->terapkanFilterGrupOutbound($itemsQuery, $ref, '');
+                $items = $itemsQuery
                     ->where('status', 'Pending')->orderBy('id_barang_keluar', 'ASC')->get();
 
                 $stokBookingSementara = [];
@@ -1425,14 +1421,52 @@ $in = $request->all();
             return $this->fail('Tidak ada field yang diubah');
         }
 
-        DB::table('barang_keluar')->where('id_barang_keluar', $idBarangKeluar)->where('id_pengguna_lokasi', $idPenggunaLokasi)->update($updateData);
+        // Update se-grup (1 GIN) agar sibling tidak tertinggal dan grup tidak pecah.
+        // gin_no sendiri tidak bisa diubah lewat sini (immutable identitas grup).
+        $refHeader = DB::table('barang_keluar')->where('id_barang_keluar', $idBarangKeluar)->where('id_pengguna_lokasi', $idPenggunaLokasi)->first();
+        if (! $refHeader) {
+            return $this->fail('Data outbound tidak ditemukan', 404);
+        }
+        $grupQuery = DB::table('barang_keluar');
+        $grupQuery = $this->terapkanFilterGrupOutbound($grupQuery, $refHeader, '');
+        $idsGrup = $grupQuery->pluck('id_barang_keluar')->map(fn ($v) => (int) $v)->all();
+        if (empty($idsGrup)) {
+            $idsGrup = [$idBarangKeluar];
+        }
+        DB::table('barang_keluar')->where('id_pengguna_lokasi', $idPenggunaLokasi)->whereIn('id_barang_keluar', $idsGrup)->update($updateData);
 
-        return $this->ok(['id_barang_keluar' => $idBarangKeluar], 'Outbound berhasil diperbarui');
+        return $this->ok(['id_barang_keluar' => $idBarangKeluar, 'updated' => count($idsGrup)], 'Outbound berhasil diperbarui ('.count($idsGrup).' item).');
     }
 
     // =========================================================================
     // PRIVATE METHODS & CORE LOGICS
     // =========================================================================
+
+    /**
+     * Filter grup outbound: 1 shipment = 1 GIN.
+     * Kunci grup = id_pengguna_lokasi + tanggal_keluar + gin_no + tipe.
+     * - id_pengguna (pembuat) SENGAJA tidak dipakai: item susulan oleh user
+     *   berbeda harus tetap satu grup (bug: list 3 vs detail 2).
+     * - gin_no kosong (legacy) fallback ke driver+mobil+tujuan (tanpa user).
+     * - Data lama dibiarkan apa adanya; helper ini hanya menyatukan cara baca.
+     */
+    private function terapkanFilterGrupOutbound($q, $ref, string $alias = 'bk')
+    {
+        $p = $alias !== '' ? $alias.'.' : '';
+        $q->where($p.'id_pengguna_lokasi', $ref->id_pengguna_lokasi)
+            ->where($p.'tanggal_keluar', $ref->tanggal_keluar)
+            ->whereRaw("LOWER(TRIM(COALESCE({$p}tipe_pengeluaran, ''))) = ?", [strtolower(trim((string) ($ref->tipe_pengeluaran ?? '')))]);
+        $gin = strtolower(trim((string) ($ref->gin_no ?? '')));
+        if ($gin !== '') {
+            $q->whereRaw("LOWER(TRIM(COALESCE({$p}gin_no, ''))) = ?", [$gin]);
+        } else {
+            $q->whereRaw("LOWER(TRIM(COALESCE({$p}nama_driver, ''))) = ?", [strtolower(trim((string) ($ref->nama_driver ?? '')))])
+                ->whereRaw("LOWER(TRIM(COALESCE({$p}no_mobil, ''))) = ?", [strtolower(trim((string) ($ref->no_mobil ?? '')))])
+                ->whereRaw("LOWER(TRIM(COALESCE({$p}tujuan, ''))) = ?", [strtolower(trim((string) ($ref->tujuan ?? '')))]);
+        }
+
+        return $q;
+    }
 
     private function konfirmasiOutbound($idBarangKeluar, $idPenggunaLokasi, $waktuMulai = null, $durasi = null)
     {
@@ -1441,13 +1475,9 @@ $in = $request->all();
             return $this->fail('Data outbound tidak ditemukan', 404);
         }
 
-        $idsProses = DB::table('barang_keluar')
-            ->where('id_pengguna_lokasi', $idPenggunaLokasi)->where('tanggal_keluar', $header->tanggal_keluar)
-            ->whereRaw("LOWER(TRIM(COALESCE(nama_driver, ''))) = ?", [strtolower(trim($header->nama_driver))])
-            ->whereRaw("LOWER(TRIM(COALESCE(no_mobil, ''))) = ?", [strtolower(trim($header->no_mobil))])
-            ->whereRaw("LOWER(TRIM(COALESCE(tipe_pengeluaran, ''))) = ?", [strtolower(trim($header->tipe_pengeluaran))])
-            ->whereRaw("COALESCE(tujuan, '') = ?", [trim($header->tujuan ?? '')])
-            ->where('id_pengguna', $header->id_pengguna)
+        $idsProsesQuery = DB::table('barang_keluar');
+        $idsProsesQuery = $this->terapkanFilterGrupOutbound($idsProsesQuery, $header, '');
+        $idsProses = $idsProsesQuery
             ->whereNotIn(DB::raw('LOWER(TRIM(status))'), ['confirmed', 'selesai', 'canceled', 'cancelled'])
             ->pluck('id_barang_keluar')->toArray();
 
@@ -1705,19 +1735,20 @@ $in = $request->all();
         }
     }
 
-    private function buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $tipePengeluaran = 'Primary')
+    private function buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $tipePengeluaran = 'Primary', $idLokasi = 0, $kategoriLokasi = '')
     {
-        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, [], $tipePengeluaran);
+        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, [], $tipePengeluaran, $idLokasi, $kategoriLokasi);
     }
 
-    private function buatRencanaFefoEditSelesai($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara = [], $tipePengeluaran = 'Primary')
+    private function buatRencanaFefoEditSelesai($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara = [], $tipePengeluaran = 'Primary', $idLokasi = 0, $kategoriLokasi = '')
     {
-        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran);
+        return $this->eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $idLokasi, $kategoriLokasi);
     }
 
-    private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary')
+    private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary', $idLokasi = 0, $kategoriLokasi = '')
     {
         $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
+        $scope = $this->scopeLokasiOutbound($idLokasi, $kategoriLokasi);
         $whereExtra = '';
         $params = [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk];
         if ($batch !== '') {
@@ -1729,6 +1760,8 @@ $in = $request->all();
             $whereExtra .= ' AND sgd.best_before = ? ';
             $params[] = $bestBefore;
         }
+        // Cek dulu di mana saja yang release (BB tertua), baru urutan blok.
+        $minBbRelease = $this->minBbReleaseScope($idPenggunaLokasi, $idProduk, $tipePengeluaran, $idLokasi, $kategoriLokasi, $batch, $bestBefore);
 
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
@@ -1736,11 +1769,11 @@ $in = $request->all();
             lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
             COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed', 'Canceled', 'canceled')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
-WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') $whereExtra
-            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
+WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') {$scope['sql']} $whereExtra
+            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk, $minBbRelease)}
         ";
 
-        return $this->prosesRencanaDariQuery($sql, $params, $jumlahButuh, []);
+        return $this->prosesRencanaDariQuery($sql, array_merge($params, $scope['params']), $jumlahButuh, []);
     }
 
     private function buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $idLine, $batch, $bestBeforeManual = '', $tipePengeluaran = 'Primary')
@@ -1757,19 +1790,22 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         return $this->prosesRencanaDariQuery($sql, [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk, $idLine, $batch, $batch, $bestBeforeManual, $bestBeforeManual], $jumlahButuh, []);
     }
 
-    private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran)
+    private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $idLokasi = 0, $kategoriLokasi = '')
     {
         $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
+        $scope = $this->scopeLokasiOutbound($idLokasi, $kategoriLokasi);
+        // Cek dulu di mana saja yang release (BB tertua), baru urutan blok.
+        $minBbRelease = $this->minBbReleaseScope($idPenggunaLokasi, $idProduk, $tipePengeluaran, $idLokasi, $kategoriLokasi);
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
             COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed', 'Canceled', 'canceled')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
-WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
-            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
+WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') {$scope['sql']}
+            ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk, $minBbRelease)}
         ";
 
-        return $this->prosesRencanaDariQuery($sql, [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk], $jumlahButuh, $stokBookingSementara);
+        return $this->prosesRencanaDariQuery($sql, array_merge([$idPenggunaLokasi, $idPenggunaLokasi, $idProduk], $scope['params']), $jumlahButuh, $stokBookingSementara);
     }
 
     private function prosesRencanaDariQuery($sql, $params, $jumlahButuh, $stokBookingSementara)
@@ -1959,6 +1995,19 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         }
     }
 
+    /**
+     * Cek apakah produk sudah ada di grup GIN yang sama (cegah tambah ganda).
+     * Mengembalikan row duplikat atau null. Baris Canceled diabaikan.
+     */
+    private function cariDuplikatProdukDalamGrup($ref, int $idProduk)
+    {
+        $q = DB::table('barang_keluar')->where('id_produk', $idProduk)
+            ->whereNotIn(DB::raw('LOWER(TRIM(status))'), ['canceled', 'cancelled', 'batal']);
+        $q = $this->terapkanFilterGrupOutbound($q, $ref, '');
+
+        return $q->first(['id_barang_keluar', 'nama_produk', 'jumlah', 'status']);
+    }
+
     private function tambahItemBaruDraft($idRef, $idLokasi, $idPengguna, $idProduk, $jumlah, $satuan)
     {
         $old = DB::table('barang_keluar')->where('id_barang_keluar', $idRef)->where('id_pengguna_lokasi', $idLokasi)->first();
@@ -1972,6 +2021,10 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
 
         DB::beginTransaction();
         try {
+            $duplikat = $this->cariDuplikatProdukDalamGrup($old, $idProduk);
+            if ($duplikat) {
+                throw new Exception('Produk "'.$duplikat->nama_produk.'" sudah ada di GIN ini ('.$duplikat->jumlah.' - '.$duplikat->status.'). Gunakan Edit Item, bukan Tambah Item.');
+            }
             $idBaru = DB::table('barang_keluar')->insertGetId([
                 'gin_no' => $old->gin_no, 'id_pengguna_lokasi' => $idLokasi, 'id_pengguna' => $idPengguna,
                 'id_produk' => $idProduk, 'nama_produk' => $namaProduk,
@@ -2006,6 +2059,10 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
 
         DB::beginTransaction();
         try {
+            $duplikat = $this->cariDuplikatProdukDalamGrup($old, $idProduk);
+            if ($duplikat) {
+                throw new Exception('Produk "'.$duplikat->nama_produk.'" sudah ada di GIN ini ('.$duplikat->jumlah.' - '.$duplikat->status.'). Gunakan Edit Item, bukan Tambah Item.');
+            }
             $rencana = $this->buatRencanaFefoEditSelesai($idLokasi, $idProduk, $jumlah, [], trim($old->tipe_pengeluaran ?? 'Primary'));
 
             $bestBefore = $rencana[0]['best_before'] ?? null;
@@ -2065,16 +2122,78 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
     }
 
     /**
-     * ORDER BY lengkap untuk rencana outbound: urutan blok per produk,
-     * lalu FEFO (best_before) kecuali produk diset ikut_fefo=0.
+     * MIN best_before (stok fisik) dalam scope outbound yang sama.
+     * Dipakai sebagai acuan release-first di ORDER BY: release = BB tertua.
+     * Sengaja pakai fisik (jumlah>0) agar konsisten dengan label hold/release
+     * di layout; proteksi booking orang lain tetap di prosesRencanaDariQuery
+     * (jumlah - jumlah_booking), jadi tidak akan nabrak booking.
+     * Return null bila tidak relevan (ikut_fefo=0 / tanpa_batch / stok kosong).
      */
-    private function orderRencanaOutbound($idPenggunaLokasi, $idProduk)
+    private function minBbReleaseScope($idPenggunaLokasi, $idProduk, $tipePengeluaran = 'Primary', $idLokasi = 0, $kategoriLokasi = '', $batch = '', $bestBefore = ''): ?string
+    {
+        $idProduk = (int) $idProduk;
+        if ($idProduk <= 0) {
+            return null;
+        }
+        $set = PengaturanProduk::untuk((string) $idPenggunaLokasi, $idProduk);
+        if (! $set['ikut_fefo'] || PengaturanProduk::isTanpaBatch($idProduk)) {
+            return null;
+        }
+
+        $key = implode('|', [(string) $idPenggunaLokasi, $idProduk, $tipePengeluaran, (int) $idLokasi, strtoupper(trim((string) $kategoriLokasi)), $batch, $bestBefore]);
+        if (array_key_exists($key, $this->cacheMinBbRelease)) {
+            return $this->cacheMinBbRelease[$key];
+        }
+
+        $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
+        $scope = $this->scopeLokasiOutbound($idLokasi, $kategoriLokasi);
+        $params = [$idPenggunaLokasi, $idPenggunaLokasi, $idProduk];
+        $whereExtra = '';
+        if ($batch !== '') {
+            $whereExtra .= ' AND (sg.batch = ? OR COALESCE(sgd.batch, sg.batch) = ?) ';
+            $params[] = $batch;
+            $params[] = $batch;
+        }
+        if ($bestBefore !== '' && $bestBefore !== '0000-00-00') {
+            $whereExtra .= ' AND sgd.best_before = ? ';
+            $params[] = $bestBefore;
+        }
+
+        $min = null;
+        try {
+            $row = DB::selectOne("
+                SELECT MIN(sgd.best_before) AS bb
+                FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
+WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') {$scope['sql']} $whereExtra
+            ", array_merge($params, $scope['params']));
+            $min = $row->bb ?? null;
+        } catch (\Throwable $e) {
+            $min = null;
+        }
+
+        $min = (is_string($min) && preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $min)) ? $min : null;
+        $this->cacheMinBbRelease[$key] = $min;
+
+        return $min;
+    }
+
+    /**
+     * ORDER BY lengkap untuk rencana outbound: release (BB tertua dalam
+     * scope) dulu, lalu urutan blok per produk, lalu FEFO (best_before)
+     * kecuali produk diset ikut_fefo=0.
+     */
+    private function orderRencanaOutbound($idPenggunaLokasi, $idProduk, $minBbRelease = null)
     {
         $set = PengaturanProduk::untuk((string) $idPenggunaLokasi, (int) $idProduk);
         $orderBlok = $this->prioritasBlokFefoSql('bl', 'lk', $set['urutan_blok']);
         $orderFefo = $set['ikut_fefo'] ? 'sgd.best_before IS NULL, sgd.best_before ASC, ' : '';
+        $orderRelease = '';
+        if ($set['ikut_fefo'] && is_string($minBbRelease) && preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $minBbRelease) && ! PengaturanProduk::isTanpaBatch((int) $idProduk)) {
+            $quoted = DB::getPdo()->quote($minBbRelease);
+            $orderRelease = "(sgd.best_before = {$quoted}) DESC, ";
+        }
 
-        return "{$orderBlok}, {$orderFefo}lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC";
+        return "{$orderRelease}{$orderBlok}, {$orderFefo}lk.nama_lokasi ASC, bl.kode_block ASC, CAST(ln.nomor_line AS UNSIGNED) ASC, CAST(dp.deep AS UNSIGNED) DESC, CAST(REPLACE(UPPER(lv.level), 'L', '') AS UNSIGNED) DESC, sgd.id_detail_stok ASC";
     }
 
     private function filterLokasiOutboundNormal($aliasBlock = 'bl', $aliasLokasi = 'lk')
@@ -2085,6 +2204,46 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
     private function filterLokasiOutboundPemusnahan($aliasBlock = 'bl', $aliasLokasi = 'lk')
     {
         return " AND (UPPER(REPLACE($aliasBlock.kode_block, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE($aliasLokasi.nama_lokasi, ' ', '')) LIKE '%REJECT%' OR UPPER(REPLACE(COALESCE($aliasLokasi.kategori, ''), ' ', '')) LIKE '%REJECT%') ";
+    }
+
+    /**
+     * Scope FEFO per lokasi: SPS (internal) vs XWH (eksternal) dipisah.
+     * $idLokasi = b.id_lokasi (2=SPS, 3=XWH). $kategori = GALLON/SPS/XWH.
+     * Default 0/'' = global (perilaku lama, backward-compat).
+     *
+     * @return array{sql: string, params: array}
+     */
+    private function scopeLokasiOutbound($idLokasi = 0, $kategoriLokasi = ''): array
+    {
+        $idLokasi = (int) $idLokasi;
+        if ($idLokasi > 0) {
+            return ['sql' => ' AND bl.id_lokasi = ? ', 'params' => [$idLokasi]];
+        }
+        $kat = strtoupper(trim((string) $kategoriLokasi));
+        if (in_array($kat, ['GALLON', 'SPS', 'XWH'], true)) {
+            return ['sql' => ' AND UPPER(TRIM(COALESCE(lk.kategori, lk.nama_lokasi, \'\'))) = ? ', 'params' => [$kat]];
+        }
+
+        return ['sql' => '', 'params' => []];
+    }
+
+    /**
+     * Normalisasi input lokasi dari request outbound.
+     * Dukung id_lokasi (int), kategori_lokasi / lokasi (SPS/XWH/GALLON atau id).
+     */
+    private function normalisasiLokasiOutbound(array $in): array
+    {
+        $idLokasi = (int) ($in['id_lokasi'] ?? 0);
+        $kat = trim((string) ($in['kategori_lokasi'] ?? $in['lokasi'] ?? ''));
+        if ($idLokasi <= 0 && ctype_digit($kat) && (int) $kat > 0) {
+            $idLokasi = (int) $kat;
+            $kat = '';
+        }
+        if ($idLokasi <= 0 && is_numeric($in['id_lokasi'] ?? null)) {
+            $idLokasi = (int) $in['id_lokasi'];
+        }
+
+        return [$idLokasi, $kat];
     }
 
     // =========================================================================

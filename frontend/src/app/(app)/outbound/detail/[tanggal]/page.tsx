@@ -165,6 +165,8 @@ export default function OutboundDetailPage() {
   const [produkList, setProdukList] = useState<Produk[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [driverRowCount, setDriverRowCount] = useState(0);
+  const [driverGins, setDriverGins] = useState<string[]>([]);
   const [toasts, setToasts] = useState<{ id: number; type: string; msg: string }[]>([]);
   const toastSeq = useRef(0);
 
@@ -247,7 +249,32 @@ export default function OutboundDetailPage() {
         };
         const tipeRows = rows.filter(matchTipe);
         const myRows = tipeRows.filter((x) => (norm(x.nama_driver) || "Tanpa nama driver") === driver);
-        const firstId = angka(myRows[0]?.id_barang_keluar);
+        if (!cancelled) {
+          setDriverRowCount(myRows.length);
+          setDriverGins(Array.from(new Set(myRows.map((x) => norm(x.gin_no) || "-"))));
+        }
+        // Anchor stabil per GIN: 1 shipment = 1 GIN. Kalau driver yang sama
+        // punya beberapa GIN, pilih grup GIN terbesar (atau ?gin= bila ada)
+        // agar detail tidak campur antar shipment.
+        const ginKey = (x: BkDetail) => norm(x.gin_no).toLowerCase();
+        const ginParam = (searchParams.get("gin") || "").trim().toLowerCase();
+        let anchorRows = myRows;
+        if (ginParam) {
+          const f = myRows.filter((x) => ginKey(x) === ginParam);
+          if (f.length > 0) anchorRows = f;
+        } else if (myRows.length > 1) {
+          const groups: Record<string, BkDetail[]> = {};
+          myRows.forEach((x) => {
+            const k = ginKey(x) || "(tanpa-gin)";
+            (groups[k] = groups[k] || []).push(x);
+          });
+          const keys = Object.keys(groups);
+          if (keys.length > 1) {
+            keys.sort((a, b) => groups[b].length - groups[a].length);
+            anchorRows = groups[keys[0]];
+          }
+        }
+        const firstId = angka(anchorRows[0]?.id_barang_keluar);
 
         const [pr] = await Promise.all([
           apiGet<Produk[]>("/produk?limit=2000"),
@@ -255,7 +282,7 @@ export default function OutboundDetailPage() {
         if (firstId > 0) {
           const dsp = new URLSearchParams();
           dsp.append("id_barang_keluar", String(firstId));
-          dsp.append("id_pengguna_lokasi", String(myRows[0]?.id_pengguna_lokasi || idPenggunaLokasi()));
+          dsp.append("id_pengguna_lokasi", String(anchorRows[0]?.id_pengguna_lokasi || idPenggunaLokasi()));
           const d = await apiGet<{ data: BkDetail; items: BkDetail[] }>(`/barang-keluar/detail?${dsp.toString()}`);
           if (!cancelled) {
             const fetchedHeader = d.data?.data || null;
@@ -300,6 +327,11 @@ export default function OutboundDetailPage() {
   const canBatalkan = (isDraft || isPending) && canCrud && items.length > 0;
   const firstId = angka(header?.id_barang_keluar || items[0]?.id_barang_keluar || 0);
   const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
+  // Selisih list vs detail: list menghitung per driver, detail per GIN.
+  // Kalau driver yang sama punya >1 GIN, sebagian row memang milik shipment lain.
+  const shownGins = new Set(items.map((it) => norm(it.gin_no).toLowerCase()));
+  const hiddenGins = driverGins.filter((g) => !shownGins.has(g.toLowerCase()));
+  const hiddenCount = Math.max(0, driverRowCount - items.length);
   // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan keluar permanen).
   const adaAutoInbound = items.some((it) => ["SECONDARY", "FOC"].includes(String(it.tipe_pengeluaran || "").trim().toUpperCase()));
   const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `${lok ? "&" : "?"}tipe=${tipeFilter}` : ""}`;
@@ -446,6 +478,7 @@ export default function OutboundDetailPage() {
         nama_driver: driver,
         no_mobil: norm(header?.no_mobil),
         tipe_pengeluaran: norm(header?.tipe_pengeluaran),
+        gin_no: norm(header?.gin_no),
       };
       if (isSelesai) {
         payload.aksi = "tambah_item_selesai";
@@ -702,6 +735,22 @@ export default function OutboundDetailPage() {
           </button>
         )}
       </div>
+
+      {hiddenCount > 0 && (
+        <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "#fffbeb", border: "1px solid #fde68a", display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#fef3c7", color: "#92400e", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <i className="bi bi-exclamation-triangle-fill" style={{ fontSize: 14 }}></i>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#92400e", marginBottom: 2 }}>
+              Ada {hiddenCount} item driver yang sama di luar grup GIN ini{hiddenGins.length > 0 ? ` (GIN: ${hiddenGins.join(", ")})` : ""}.
+            </div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280" }}>
+              Jangan tambah duplikat — item tersebut milik shipment/GIN lain. Buka daftar driver untuk melihat grupnya.
+            </div>
+          </div>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="od-card od-empty">Detail outbound tidak ditemukan.</div>

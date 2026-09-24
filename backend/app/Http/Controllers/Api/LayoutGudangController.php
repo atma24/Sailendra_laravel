@@ -78,7 +78,9 @@ class LayoutGudangController extends Controller
 
         $produkLine = $this->ambilProdukLineMap($idPenggunaLokasi, $idLokasi, $idBlock);
         $bbLineMap = $this->ambilBbLineMap($idPenggunaLokasi, $idLokasi, $idBlock);
-        $globalMinByProduct = $this->ambilGlobalMinBb($idPenggunaLokasi);
+        // FEFO per-lokasi: SPS (internal) dan XWH (eksternal) punya MIN best_before
+        // masing-masing agar stok XWH yang lebih tua tidak menahan release di SPS.
+        $minBbPerLokasi = $this->ambilMinBbPerLokasi($idPenggunaLokasi, $idLokasi);
 
         $byBlock = [];
         foreach ($rows as $row) {
@@ -157,6 +159,7 @@ class LayoutGudangController extends Controller
         $out = [];
         foreach ($byBlock as $block) {
             $isSpecialBlock = in_array(strtoupper(trim($block['kode_block'])), ['BS', 'BAD', 'BADSTOCK', 'REJECT']);
+            $idLokasiBlock = (int) ($block['id_lokasi'] ?? 0);
             $rows2 = [];
 
             foreach ($block['line'] as $lineId => $line) {
@@ -182,8 +185,11 @@ class LayoutGudangController extends Controller
                         $pidDeep = (int) ($deep['id_produk'] ?? 0);
                         $bbProdDeep = $deep['min_bb_deep'];
 
-                        $bbRef = ($pidDeep > 0 && isset($globalMinByProduct[$pidDeep]))
-                            ? $globalMinByProduct[$pidDeep]
+                        // Acuan FEFO = MIN per produk per lokasi (b.id_lokasi),
+                        // bukan global per gudang. Jadi release SPS tidak ikut
+                        // tertahan oleh stok XWH yang lebih tua (dan sebaliknya).
+                        $bbRef = ($pidDeep > 0 && isset($minBbPerLokasi[$pidDeep][$idLokasiBlock]))
+                            ? $minBbPerLokasi[$pidDeep][$idLokasiBlock]
                             : null;
 
                         $bbFinal = null;
@@ -391,7 +397,14 @@ class LayoutGudangController extends Controller
         return $map;
     }
 
-    private function ambilGlobalMinBb(string $idPenggunaLokasi): array
+    /**
+     * MIN best_before FEFO per produk per lokasi (b.id_lokasi).
+     * SPS (id_lokasi=2, internal) dan XWH (id_lokasi=3, eksternal) dipisah
+     * agar release di satu lokasi tidak tertahan stok lebih tua di lokasi lain.
+     *
+     * @return array<int, array<int, string>> map[id_produk][id_lokasi] = best_before
+     */
+    private function ambilMinBbPerLokasi(string $idPenggunaLokasi, int $idLokasiFilter = 0): array
     {
         $q = DB::table('stok_gudang as sh')
             ->join('stok_gudang_deep as sd', fn ($j) => $j
@@ -410,20 +423,42 @@ class LayoutGudangController extends Controller
                 ->on('b.id_block', '=', 'ln.id_block')
                 ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi'))
             ->where('sh.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->when($idLokasiFilter > 0, fn ($qq) => $qq->where('b.id_lokasi', $idLokasiFilter))
             ->where('sh.jumlah_sisa', '>', 0)
             ->where('sd.jumlah', '>', 0)
             ->whereNotIn(DB::raw('UPPER(TRIM(b.kode_block))'), ['BS', 'BAD', 'BADSTOCK', 'REJECT'])
             ->where('sh.status', '!=', 'qi')
-            ->select('sh.id_produk')
+            ->select('sh.id_produk', 'b.id_lokasi')
             ->selectRaw('MIN(sh.best_before) AS bb')
-            ->groupBy('sh.id_produk')
+            ->groupBy('sh.id_produk', 'b.id_lokasi')
             ->get();
 
         $map = [];
         foreach ($q as $row) {
             $pid = (int) $row->id_produk;
-            if ($pid > 0 && ! empty($row->bb)) {
-                $map[$pid] = $row->bb;
+            $lid = (int) $row->id_lokasi;
+            if ($pid > 0 && $lid > 0 && ! empty($row->bb)) {
+                $map[$pid][$lid] = $row->bb;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * @deprecated Dipakai sebelum FEFO per-lokasi. Dipertahankan agar
+     * pemanggil lama tidak pecah; mengembalikan MIN global per produk
+     * (gabungan semua lokasi).
+     */
+    private function ambilGlobalMinBb(string $idPenggunaLokasi): array
+    {
+        $perLokasi = $this->ambilMinBbPerLokasi($idPenggunaLokasi, 0);
+        $map = [];
+        foreach ($perLokasi as $pid => $perLok) {
+            $vals = array_values(array_filter($perLok));
+            if (! empty($vals)) {
+                sort($vals);
+                $map[$pid] = $vals[0];
             }
         }
 
@@ -1891,6 +1926,371 @@ class LayoutGudangController extends Controller
         } catch (\Throwable $e) {
             return $this->fail($e->getMessage() ?: 'Terjadi kesalahan');
         }
+    }
+
+    /**
+     * Rapikan pecahan dalam 1 line: pindah qty dari deep asal ke deep tujuan.
+     * Syarat: se-line, se-produk, se-best_before (tanggal), status normal,
+     * deep tujuan kosong atau hanya berisi BB yang sama.
+     */
+    public function rapikanDeepSeLine(Request $request)
+    {
+        if ($request->method() !== 'POST') {
+            return $this->fail('Metode harus POST');
+        }
+
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
+        $idDeepAsal = (int) $request->input('id_deep_asal', 0);
+        $idDeepTujuan = (int) $request->input('id_deep_tujuan', 0);
+        $idProduk = (int) $request->input('id_produk', 0);
+        $bestBefore = trim((string) $request->input('best_before'));
+        $qty = (int) $request->input('qty', 0);
+        $idPengguna = (int) $request->input('id_pengguna', 0);
+        $catatan = trim((string) $request->input('catatan', 'Rapikan pecahan se-line'));
+
+        if ($idPenggunaLokasi === '' || $idDeepAsal <= 0 || $idDeepTujuan <= 0 || $idProduk <= 0 || $bestBefore === '' || $idPengguna <= 0) {
+            return $this->fail('Parameter belum lengkap (id_pengguna_lokasi, id_deep_asal, id_deep_tujuan, id_produk, best_before, id_pengguna wajib)');
+        }
+
+        if ($idDeepAsal === $idDeepTujuan) {
+            return $this->fail('Deep asal dan tujuan tidak boleh sama');
+        }
+
+        try {
+            return DB::transaction(function () use (
+                $idPenggunaLokasi, $idDeepAsal, $idDeepTujuan, $idProduk, $bestBefore, $qty, $idPengguna, $catatan
+            ) {
+                $deeps = DB::table('deep as d')
+                    ->join('level as lv', fn ($j) => $j
+                        ->on('lv.id_level', '=', 'd.id_level')
+                        ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
+                    ->join('line as ln', fn ($j) => $j
+                        ->on('ln.id_line', '=', 'lv.id_line')
+                        ->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi'))
+                    ->join('block as b', fn ($j) => $j
+                        ->on('b.id_block', '=', 'ln.id_block')
+                        ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi'))
+                    ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('d.id_deep', [$idDeepAsal, $idDeepTujuan])
+                    ->select('d.id_deep', 'd.kapasitas', 'lv.id_line', 'lv.level', 'd.deep', 'ln.nomor_line', 'b.kode_block')
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id_deep');
+
+                if (! isset($deeps[$idDeepAsal]) || ! isset($deeps[$idDeepTujuan])) {
+                    throw new \Exception('Deep asal atau tujuan tidak ditemukan pada lokasi aktif');
+                }
+
+                $asal = $deeps[$idDeepAsal];
+                $tujuan = $deeps[$idDeepTujuan];
+
+                if ((int) $asal->id_line !== (int) $tujuan->id_line) {
+                    throw new \Exception('Rapikan hanya boleh dalam 1 line yang sama. Beda line pakai transfer-stok-line.');
+                }
+
+                $kapTujuan = (int) $tujuan->kapasitas;
+
+                $isiTujuan = DB::table('stok_gudang_deep as sgd')
+                    ->join('stok_gudang as sg', fn ($j) => $j
+                        ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('sgd.id_deep', $idDeepTujuan)
+                    ->where('sgd.jumlah', '>', 0)
+                    ->select('sg.id_produk', 'sgd.best_before', 'sg.status')
+                    ->selectRaw('SUM(sgd.jumlah) AS total')
+                    ->groupBy('sg.id_produk', 'sgd.best_before', 'sg.status')
+                    ->lockForUpdate()
+                    ->get();
+
+                $totalIsiTujuan = 0;
+                foreach ($isiTujuan as $row) {
+                    $totalIsiTujuan += (int) $row->total;
+                    if ((int) $row->id_produk !== $idProduk || trim((string) $row->best_before) !== $bestBefore) {
+                        throw new \Exception('Deep tujuan berisi produk/tanggal lain. Hanya boleh gabung jika produk dan tanggal (best before) sama.');
+                    }
+                    if (trim((string) $row->status) !== 'normal') {
+                        throw new \Exception('Deep tujuan berstatus QI. Tidak boleh dirapikan.');
+                    }
+                }
+
+                $sisaSpace = $kapTujuan - $totalIsiTujuan;
+                if ($sisaSpace <= 0) {
+                    throw new \Exception('Deep tujuan sudah penuh');
+                }
+
+                $sumberRows = DB::table('stok_gudang_deep as sgd')
+                    ->join('stok_gudang as sg', fn ($j) => $j
+                        ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('sgd.id_deep', $idDeepAsal)
+                    ->where('sg.id_produk', $idProduk)
+                    ->where('sgd.best_before', $bestBefore)
+                    ->where('sgd.jumlah', '>', 0)
+                    ->where('sg.status', 'normal')
+                    ->orderBy('sg.created_at')
+                    ->orderBy('sg.id_stok')
+                    ->orderBy('sgd.id_detail_stok')
+                    ->select('sgd.id_detail_stok', 'sgd.id_stok_header', 'sgd.jumlah', 'sgd.batch', 'sg.id_barang_masuk', 'sg.nama_produk', 'sg.satuan')
+                    ->lockForUpdate()
+                    ->get();
+
+                if ($sumberRows->isEmpty()) {
+                    throw new \Exception('Stok asal (produk+tanggal tersebut) tidak ditemukan / berstatus QI');
+                }
+
+                $totalSumber = $sumberRows->sum(fn ($r) => (int) $r->jumlah);
+                $qtyPindah = $qty > 0 ? $qty : min($totalSumber, $sisaSpace);
+                if ($qtyPindah <= 0) {
+                    throw new \Exception('Qty pindah tidak valid');
+                }
+                if ($qtyPindah > $totalSumber) {
+                    throw new \Exception('Qty melebihi stok asal ('.$totalSumber.')');
+                }
+                if ($qtyPindah > $sisaSpace) {
+                    throw new \Exception('Qty melebihi sisa space tujuan ('.$sisaSpace.')');
+                }
+
+                // Header tujuan: pakai header yang sudah ada di deep tujuan bila cocok, else pakai header sumber pertama.
+                $idStokTujuan = null;
+                $existingTujuan = DB::table('stok_gudang_deep as sgd')
+                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('sgd.id_deep', $idDeepTujuan)
+                    ->where('sgd.best_before', $bestBefore)
+                    ->where('sgd.jumlah', '>', 0)
+                    ->orderBy('sgd.id_detail_stok')
+                    ->first();
+
+                if ($existingTujuan) {
+                    $idStokTujuan = (int) $existingTujuan->id_stok_header;
+                } else {
+                    $idStokTujuan = (int) $sumberRows[0]->id_stok_header;
+                }
+
+                $headerTujuan = DB::table('stok_gudang')
+                    ->where('id_stok', $idStokTujuan)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $headerTujuan || (int) $headerTujuan->id_produk !== $idProduk) {
+                    throw new \Exception('Header tujuan tidak valid');
+                }
+
+                $sisa = $qtyPindah;
+                $headerAsalIds = [];
+                foreach ($sumberRows as $src) {
+                    if ($sisa <= 0) {
+                        break;
+                    }
+                    $ambil = min((int) $src->jumlah, $sisa);
+
+                    DB::table('stok_gudang_deep')
+                        ->where('id_detail_stok', $src->id_detail_stok)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->decrement('jumlah', $ambil);
+
+                    $rowTujuan = DB::table('stok_gudang_deep')
+                        ->where('id_stok_header', $idStokTujuan)
+                        ->where('id_deep', $idDeepTujuan)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->first();
+
+                    if ($rowTujuan) {
+                        DB::table('stok_gudang_deep')
+                            ->where('id_detail_stok', $rowTujuan->id_detail_stok)
+                            ->update([
+                                'jumlah' => DB::raw('jumlah + '.$ambil),
+                                'best_before' => $bestBefore,
+                            ]);
+                    } else {
+                        DB::table('stok_gudang_deep')->insert([
+                            'id_pengguna_lokasi' => $idPenggunaLokasi,
+                            'id_stok_header' => $idStokTujuan,
+                            'id_deep' => $idDeepTujuan,
+                            'jumlah' => $ambil,
+                            'best_before' => $bestBefore,
+                            'batch' => $src->batch ?? $headerTujuan->batch,
+                            'lokasi_block' => $tujuan->kode_block.'-'.(int) $tujuan->nomor_line,
+                            'created_at' => now(),
+                        ]);
+                    }
+
+                    $headerAsalIds[(int) $src->id_stok_header] = (int) $src->id_stok_header;
+                    $sisa -= $ambil;
+                }
+
+                if ($sisa > 0) {
+                    throw new \Exception('Rapikan belum terpenuhi sepenuhnya, dibatalkan');
+                }
+
+                DB::table('stok_gudang_deep')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('id_deep', [$idDeepAsal, $idDeepTujuan])
+                    ->where('jumlah', '<=', 0)
+                    ->delete();
+
+                $headerIds = array_unique(array_merge(array_values($headerAsalIds), [$idStokTujuan]));
+                foreach ($headerIds as $hid) {
+                    $total = (int) DB::table('stok_gudang_deep')
+                        ->where('id_stok_header', $hid)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->sum('jumlah');
+                    DB::table('stok_gudang')
+                        ->where('id_stok', $hid)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->update(['jumlah_sisa' => $total]);
+                }
+
+                $labelLine = $tujuan->kode_block.'-'.(int) $tujuan->nomor_line;
+                DB::table('mutasi')->insert([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'id_pengguna' => $idPengguna,
+                    'id_produk' => $idProduk,
+                    'lokasi_sumber' => $labelLine.' / L'.$asal->level.' / D'.$asal->deep,
+                    'lokasi_tujuan' => $labelLine.' / L'.$tujuan->level.' / D'.$tujuan->deep,
+                    'jumlah' => $qtyPindah,
+                    'best_before' => $bestBefore,
+                    'jenis_mutasi' => 'RAPIKAN',
+                    'satuan' => $headerTujuan->satuan ?? 'BOX',
+                    'catatan' => $catatan,
+                    'created_at' => now(),
+                ]);
+
+                $sumAsal = (int) DB::table('stok_gudang_deep')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_deep', $idDeepAsal)
+                    ->sum('jumlah');
+                $sumTujuan = (int) DB::table('stok_gudang_deep')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_deep', $idDeepTujuan)
+                    ->sum('jumlah');
+
+                return $this->okMessage('Berhasil rapikan pecahan se-line ('.$qtyPindah.' pcs).', [
+                    'qty_pindah' => $qtyPindah,
+                    'asal' => ['id_deep' => $idDeepAsal, 'sisa' => $sumAsal, 'kapasitas' => (int) $asal->kapasitas],
+                    'tujuan' => ['id_deep' => $idDeepTujuan, 'sisa' => $sumTujuan, 'kapasitas' => $kapTujuan],
+                ]);
+            });
+        } catch (\Throwable $e) {
+            return $this->fail($e->getMessage() ?: 'Terjadi kesalahan');
+        }
+    }
+
+    /**
+     * Deteksi pecahan (1 produk+tanggal di >1 deep parsial se-line)
+     * dan gantung (L1 kosong tapi L2 berisi).
+     */
+    public function deteksiFragmentasi(Request $request)
+    {
+        $idPenggunaLokasi = trim((string) $request->query('id_pengguna_lokasi'));
+        $idLine = (int) $request->query('id_line', 0);
+
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('id_pengguna_lokasi wajib');
+        }
+
+        $deeps = DB::table('deep as d')
+            ->join('level as lv', fn ($j) => $j
+                ->on('lv.id_level', '=', 'd.id_level')
+                ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
+            ->join('line as ln', fn ($j) => $j
+                ->on('ln.id_line', '=', 'lv.id_line')
+                ->on('ln.id_pengguna_lokasi', '=', 'lv.id_pengguna_lokasi'))
+            ->join('block as b', fn ($j) => $j
+                ->on('b.id_block', '=', 'ln.id_block')
+                ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi'))
+            ->leftJoin('stok_gudang_deep as sgd', fn ($j) => $j
+                ->on('sgd.id_deep', '=', 'd.id_deep')
+                ->on('sgd.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
+            ->leftJoin('stok_gudang as sg', fn ($j) => $j
+                ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+            ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->when($idLine > 0, fn ($q) => $q->where('ln.id_line', $idLine))
+            ->select(
+                'ln.id_line', 'b.kode_block', 'ln.nomor_line',
+                'lv.level', 'd.id_deep', 'd.deep', 'd.kapasitas',
+                'sg.id_produk', 'sgd.best_before'
+            )
+            ->selectRaw('COALESCE(SUM(sgd.jumlah),0) AS terisi')
+            ->groupBy('ln.id_line', 'b.kode_block', 'ln.nomor_line', 'lv.level', 'd.id_deep', 'd.deep', 'd.kapasitas', 'sg.id_produk', 'sgd.best_before')
+            ->orderBy('b.kode_block')
+            ->orderBy('ln.nomor_line')
+            ->orderBy('lv.level')
+            ->orderBy('d.deep')
+            ->get();
+
+        $perLine = [];
+        foreach ($deeps as $r) {
+            $lid = (int) $r->id_line;
+            if (! isset($perLine[$lid])) {
+                $perLine[$lid] = [
+                    'id_line' => $lid,
+                    'label_line' => $r->kode_block.'-'.$r->nomor_line,
+                    'total_l1' => 0,
+                    'total_l2plus' => 0,
+                    'partials' => [],
+                    'cells' => [],
+                ];
+            }
+            $terisi = (int) $r->terisi;
+            $kap = (int) $r->kapasitas;
+            $lvl = strtoupper(trim((string) $r->level));
+            $lvlNum = (int) preg_replace('/[^0-9]/', '', $lvl);
+            if ($lvlNum <= 1) {
+                $perLine[$lid]['total_l1'] += $terisi;
+            } else {
+                $perLine[$lid]['total_l2plus'] += $terisi;
+            }
+            $perLine[$lid]['cells'][] = [
+                'id_deep' => (int) $r->id_deep,
+                'level' => $r->level,
+                'deep' => (int) $r->deep,
+                'terisi' => $terisi,
+                'kapasitas' => $kap,
+                'id_produk' => $r->id_produk ? (int) $r->id_produk : null,
+                'best_before' => $r->best_before,
+            ];
+            if ($terisi > 0 && $terisi < $kap && $r->id_produk && $r->best_before) {
+                $key = $r->id_produk.'|'.$r->best_before;
+                if (! isset($perLine[$lid]['partials'][$key])) {
+                    $perLine[$lid]['partials'][$key] = ['id_produk' => (int) $r->id_produk, 'best_before' => $r->best_before, 'deeps' => []];
+                }
+                $perLine[$lid]['partials'][$key]['deeps'][] = [
+                    'id_deep' => (int) $r->id_deep,
+                    'level' => $r->level,
+                    'deep' => (int) $r->deep,
+                    'terisi' => $terisi,
+                    'kapasitas' => $kap,
+                ];
+            }
+        }
+
+        $hasil = [];
+        foreach ($perLine as $lid => $info) {
+            $pecah = [];
+            foreach ($info['partials'] as $key => $g) {
+                if (count($g['deeps']) > 1) {
+                    $g['saran'] = 'Gabungkan ke 1 deep (produk+tanggal sama)';
+                    $pecah[] = $g;
+                }
+            }
+            $gantung = $info['total_l1'] <= 0 && $info['total_l2plus'] > 0;
+            if ($pecah || $gantung) {
+                $hasil[] = [
+                    'id_line' => $info['id_line'],
+                    'label_line' => $info['label_line'],
+                    'pecah' => $pecah,
+                    'gantung' => $gantung,
+                    'total_l1' => $info['total_l1'],
+                    'total_l2plus' => $info['total_l2plus'],
+                ];
+            }
+        }
+
+        return $this->ok($hasil, count($hasil).' line perlu dirapikan');
     }
 
     private function transferLineInfo(string $idPenggunaLokasi, int $idLine): ?array
