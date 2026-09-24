@@ -219,9 +219,7 @@ class MutasiController extends Controller
         $lokasi_sumber = $this->normalize_line_label($lineSumber['label']);
         $lokasi_tujuan = $this->normalize_line_label($lineTujuan['label']);
 
-        if ($this->is_gallon_sps_transfer_blocked($lineSumber, $lineTujuan)) {
-            return $this->fail('GALLON dan SPS tidak bisa saling transfer.', 422);
-        }
+        // Antar lokasi (GALLON/SPS/XWH) dibebaskan. Logika reject tidak diubah.
 
         if (($lineSumber['mode'] ?? '') !== $rule['source_mode']) {
             return $this->fail('Lokasi sumber tidak sesuai dengan jenis mutasi.');
@@ -825,23 +823,8 @@ class MutasiController extends Controller
 
     private function is_gallon_sps_transfer_blocked($lineSumber, $lineTujuan)
     {
-        $sumber = strtoupper(trim($lineSumber['kategori'] ?? $lineSumber['nama_lokasi'] ?? ''));
-        $tujuan = strtoupper(trim($lineTujuan['kategori'] ?? $lineTujuan['nama_lokasi'] ?? ''));
-
-        if (strpos($sumber, 'GALLON') !== false) {
-            $sumber = 'GALLON';
-        }
-        if (strpos($sumber, 'SPS') !== false) {
-            $sumber = 'SPS';
-        }
-        if (strpos($tujuan, 'GALLON') !== false) {
-            $tujuan = 'GALLON';
-        }
-        if (strpos($tujuan, 'SPS') !== false) {
-            $tujuan = 'SPS';
-        }
-
-        return ($sumber === 'GALLON' && $tujuan === 'SPS') || ($sumber === 'SPS' && $tujuan === 'GALLON');
+        // Antar lokasi dibebaskan: GALLON/SPS/XWH boleh saling transfer.
+        return false;
     }
 
     private function get_source_rows($idPenggunaLokasi, $idLine, $idProduk, $bestBefore, $statusFilter = null)

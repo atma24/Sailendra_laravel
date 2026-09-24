@@ -282,10 +282,7 @@ useEffect(() => {
     if (!isQa && (!keLabel || !keLine)) { notify("error", "Pilih lokasi tujuan terlebih dahulu."); return false; }
     if (!isQa && String(dariLine) === String(keLine)) { notify("error", "Lokasi sumber dan lokasi tujuan tidak boleh sama."); return false; }
     if (norm(catatan) === "") { notify("error", "Catatan wajib diisi."); return false; }
-    const isGallonSps = (a: number, b: number) =>
-      (lokasiLabel(a).includes("GALLON") && lokasiLabel(b).includes("SPS")) ||
-      (lokasiLabel(a).includes("SPS") && lokasiLabel(b).includes("GALLON"));
-    if (!isQa && isGallonSps(dariLokasi, keLokasi)) { notify("error", "GALLON dan SPS tidak bisa saling transfer mutasi."); return false; }
+    // Antar lokasi (GALLON/SPS/XWH) dibebaskan.
     return true;
   };
 

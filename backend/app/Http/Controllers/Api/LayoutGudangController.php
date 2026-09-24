@@ -1642,9 +1642,7 @@ class LayoutGudangController extends Controller
         $isSpecialTarget = strpos($targetText, 'bad') !== false || strpos($targetText, 'reject') !== false;
         $isRejectTarget = strpos($targetText, 'reject') !== false;
 
-        if ($this->isGallonSpsBlocked($lineAsalInfo, $lineTujuanInfo)) {
-            return $this->fail('GALLON dan SPS tidak bisa saling transfer.');
-        }
+        // Antar lokasi (GALLON/SPS/XWH) dibebaskan. Logika reject tidak diubah.
 
         try {
             return DB::transaction(function () use (
@@ -2310,10 +2308,8 @@ class LayoutGudangController extends Controller
 
     private function isGallonSpsBlocked(?array $asal, ?array $tujuan): bool
     {
-        $a = $this->normalizeTransferLabel($asal);
-        $b = $this->normalizeTransferLabel($tujuan);
-
-        return ($a === 'GALLON' && $b === 'SPS') || ($a === 'SPS' && $b === 'GALLON');
+        // Antar lokasi dibebaskan: GALLON/SPS/XWH boleh saling transfer.
+        return false;
     }
 
     private function normalizeTransferLabel(?array $row): string

@@ -199,18 +199,9 @@ const norm = (v: unknown) => String(v ?? "").toString().trim();
 const getLokasiLabel = (item: LokasiRow) =>
   norm(item.kategori || item.nama_lokasi || "-").toUpperCase();
 
-const normKategori = (label: unknown) => {
-  const t = String(label ?? "").toUpperCase();
-  if (t.includes("GALLON")) return "GALLON";
-  if (t.includes("SPS")) return "SPS";
-  if (t.includes("XWH")) return "XWH";
-  return t;
-};
-
-const isGallonSpsBlocked = (a: unknown, b: unknown) => {
-  const na = normKategori(a);
-  const nb = normKategori(b);
-  return (na === "GALLON" && nb === "SPS") || (na === "SPS" && nb === "GALLON");
+const isGallonSpsBlocked = (_a: unknown, _b: unknown) => {
+  // Antar lokasi (GALLON/SPS/XWH) dibebaskan.
+  return false;
 };
 
 const getLineLabel = (item: TransferLine) => {
@@ -645,26 +636,7 @@ export default function LineEditModal({
       return;
     }
 
-    // Aturan antar lokasi: SPS ↔ XWH dibebaskan, GALLON ↔ SPS tetap diblokir.
-    const idLokasiAsal =
-      angka(edit.idLokasiAsal) > 0
-        ? angka(edit.idLokasiAsal)
-        : (() => {
-            const srcLine = transferLines.find((l) => l.id_line === edit.idLine);
-            const srcBlock = blockList.find((b) => b.id_block === srcLine?.id_block);
-            return angka(srcBlock?.id_lokasi);
-          })();
-    const labelAsal = getLokasiLabel(
-      lokasiList.find((l) => angka(l.id_lokasi) === idLokasiAsal) || ({} as LokasiRow)
-    );
-    const labelTujuan = getLokasiLabel(
-      lokasiList.find((l) => angka(l.id_lokasi) === idLokasiTujuan) || ({} as LokasiRow)
-    );
-    if (isGallonSpsBlocked(labelAsal, labelTujuan)) {
-      notify("error", "Transfer ditolak", "GALLON dan SPS tidak bisa saling transfer.");
-      return;
-    }
-
+    // Antar lokasi (GALLON/SPS/XWH) dibebaskan.
     setBusy(true);
     try {
       await apiPost("/layout-gudang/transfer-stok-line", {
