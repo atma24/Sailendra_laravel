@@ -528,8 +528,9 @@ export default function InboundFormPage() {
           </div>
           <div>
             <label className="inbound-label">Shipment ID{butuhShipmentDn(tipe) && <span className="inbound-req">*</span>}</label>
-            <input type="text" className={`inbound-input ${errShipment ? "input-error" : ""}`} value={shipmentId} onChange={(e) => { setShipmentId(e.target.value); if (errShipment) setErrShipment(""); }} placeholder={butuhShipmentDn(tipe) ? "Shipment ID" : "Shipment ID (opsional)"} maxLength={30} />
+            <input type="text" className={`inbound-input ${errShipment ? "input-error" : ""}`} value={shipmentId} onChange={(e) => { setShipmentId(e.target.value); if (errShipment) setErrShipment(""); }} placeholder={butuhShipmentDn(tipe) ? "Shipment ID" : (tipe === "Secondary" || tipe === "FOC" ? "Kosongkan = otomatis (MANUAL-…)" : "Shipment ID (opsional)")} maxLength={30} />
             {errShipment && <div className="inbound-field-err">{errShipment}</div>}
+            {!errShipment && (tipe === "Secondary" || tipe === "FOC") && <div className="inbound-field-err" style={{ color: "#64748B", fontWeight: 600 }}>Bila dikosongkan, Shipment ID dibuat otomatis.</div>}
           </div>
           <div>
             <label className="inbound-label">No DN{butuhShipmentDn(tipe) && <span className="inbound-req">*</span>}</label>

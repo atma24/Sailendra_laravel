@@ -86,7 +86,7 @@ class BarangMasukController extends Controller
 
         // Enrich ritase untuk Secondary auto dari outbound (pure lookup, tanpa tulis catatan).
         // Sumber: barang_keluar.ritase via GIN (catatan "Auto dari Outbound GIN {gin_no}")
-        // atau via shipment AUTO-OB{id} untuk GIN kosong.
+        // atau via shipment "AUTO-INBOUND {id_barang_keluar}" untuk GIN kosong.
         foreach ($rows as $r) {
             $r->ritase = null;
         }
@@ -108,7 +108,7 @@ class BarangMasukController extends Controller
                 }
                 if ($ginRaw === null || $ginRaw === '' || $ginRaw === '-') {
                     $ship = trim((string) ($r->shipment_id ?? ''));
-                    if (preg_match('/^AUTO-OB(\d+)$/i', $ship, $ms)) {
+                    if (preg_match('/^AUTO-INBOUND[\s-]+(\d+)$/i', $ship, $ms)) {
                         $obIds[] = (int) $ms[1];
                         $ginRawByRow[$key] = null;
                         continue;
@@ -158,7 +158,7 @@ class BarangMasukController extends Controller
                     }
                 }
                 $ship = trim((string) ($r->shipment_id ?? ''));
-                if (preg_match('/^AUTO-OB(\d+)$/i', $ship, $ms)) {
+                if (preg_match('/^AUTO-INBOUND[\s-]+(\d+)$/i', $ship, $ms)) {
                     $oid = (int) $ms[1];
                     if (array_key_exists($oid, $ritaseByObId)) {
                         $r->ritase = $ritaseByObId[$oid];
@@ -403,6 +403,11 @@ class BarangMasukController extends Controller
         }
         if ($tipePenerimaan === 'Secondary' || $tipePenerimaan === 'REJECT' || $tipePenerimaan === 'FOC') {
             $noDn = '';
+        }
+        // Manual (Secondary/FOC) tanpa shipment_id -> generate MANUAL-<tanggal>-<urut>.
+        // (Batch form sudah mengisi ini sekali; guard ini untuk pemanggilan standalone.)
+        if ($shipmentId === '' && in_array($tipePenerimaan, ['Secondary', 'FOC'], true)) {
+            $shipmentId = $this->generateManualShipmentId($tanggalMasuk);
         }
 
         if ($batch === '') {
@@ -667,6 +672,23 @@ class BarangMasukController extends Controller
         ];
         $header = array_intersect_key($in, array_flip($headerKeys));
 
+        // Auto-generate shipment_id untuk manual (Secondary/FOC) yang dikosongkan.
+        // Dibuat SEKALI di level batch agar semua item berbagi 1 shipment_id
+        // (jangan sampai pecah jadi banyak detail di frontend).
+        $tipeBatch = trim((string) ($header['tipe_penerimaan'] ?? ''));
+        if ($tipeBatch === '' && is_array($items)) {
+            $firstItem = reset($items);
+            if (is_array($firstItem)) {
+                $tipeBatch = trim((string) ($firstItem['tipe_penerimaan'] ?? ''));
+            }
+        }
+        if (trim((string) ($header['shipment_id'] ?? '')) === ''
+            && in_array($tipeBatch, ['Secondary', 'FOC'], true)) {
+            $header['shipment_id'] = $this->generateManualShipmentId(
+                trim((string) ($header['tanggal_masuk'] ?? ''))
+            );
+        }
+
         $hasil = [];
         try {
             DB::transaction(function () use ($header, $items, &$hasil) {
@@ -839,6 +861,32 @@ class BarangMasukController extends Controller
         }
 
         return $this->ok(['items' => $hasil], 'Inbound disimpan ('.count($hasil).' item).');
+    }
+
+    /**
+     * Bangun shipment_id otomatis untuk inbound manual (Secondary/FOC) yang
+     * dikosongkan user. Format: MANUAL-<YYYYMMDD>-<urut>, urut per tanggal
+     * berdasarkan jumlah shipment MANUAL pada tanggal tersebut + 1.
+     */
+    private function generateManualShipmentId(string $tanggal): string
+    {
+        $tgl = $tanggal !== '' ? $tanggal : date('Y-m-d');
+        $tglKey = str_replace('-', '', $tgl);
+        $prefix = 'MANUAL-'.$tglKey.'-';
+
+        $jumlah = DB::table('barang_masuk')
+            ->where('shipment_id', 'like', $prefix.'%')
+            ->distinct()
+            ->count('shipment_id');
+
+        $urut = $jumlah + 1;
+
+        // Hindari tabrakan bila ada nomor yang terlewat/tidak berurutan.
+        while (DB::table('barang_masuk')->where('shipment_id', $prefix.str_pad((string) $urut, 3, '0', STR_PAD_LEFT))->exists()) {
+            $urut++;
+        }
+
+        return $prefix.str_pad((string) $urut, 3, '0', STR_PAD_LEFT);
     }
 
     // =========================================================================

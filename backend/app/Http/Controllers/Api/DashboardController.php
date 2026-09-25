@@ -228,6 +228,7 @@ class DashboardController extends Controller
                 WHEN $kategoriExpr IN ('BAD STOCK','BADSTOCK') OR $lokasiExpr LIKE 'BAD STOCK-%' OR $lokasiExpr LIKE 'BADSTOCK-%' OR $lokasiExpr LIKE 'BS-%' THEN 'bad'
                 WHEN $kategoriExpr = 'REJECT' OR $lokasiExpr LIKE 'REJECT-%' THEN 'reject'
                 WHEN $kategoriExpr = 'RECEH' OR $lokasiExpr LIKE 'RECEH-%' THEN 'receh'
+                WHEN $kategoriExpr = 'MOBIL' OR $lokasiExpr LIKE 'MOBIL-%' THEN 'mobil'
                 WHEN $kategoriExpr = 'FESTIVE' OR $lokasiExpr LIKE 'FESTIVE-%' THEN 'festive'
                 WHEN $kategoriExpr = 'TRANSIT' OR $lokasiExpr LIKE 'TRANSIT-%' THEN 'transit'
                 WHEN $kategoriExpr = 'HOLD' OR $lokasiExpr LIKE 'HOLD-%' THEN 'hold'
@@ -238,7 +239,7 @@ class DashboardController extends Controller
         $zonaQuery = $this->withLokasiFilter($zonaQuery, 'sd.id_pengguna_lokasi', $filter);
         $zonaRows = $zonaQuery->groupBy(DB::raw('zona'))->get();
 
-        $zones = ['normal' => 0, 'bad' => 0, 'reject' => 0, 'receh' => 0, 'festive' => 0, 'transit' => 0, 'hold' => 0, 'qi' => 0];
+        $zones = ['normal' => 0, 'bad' => 0, 'reject' => 0, 'receh' => 0, 'mobil' => 0, 'festive' => 0, 'transit' => 0, 'hold' => 0, 'qi' => 0];
         foreach ($zonaRows as $row) {
             $zones[$row->zona] = (int) $row->qty;
         }

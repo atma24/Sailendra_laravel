@@ -48,10 +48,14 @@ type Produk = {
   persen: number;
 };
 
+// Preferensi urutan kartu kategori. Kategori lokasi baru (di luar daftar ini)
+// otomatis ditaruh setelahnya secara alfabetis (lihat urutKatFull), jadi
+// menambah lokasi baru tidak perlu ubah baris ini.
 const CAT_ORDER = ["GALLON", "SPS", "XWH", "LAINNYA"];
 
 export const STOCK_ZONES: [string, string][] = [
   ["receh", "Stock Receh"],
+  ["mobil", "Stock Mobil"],
   ["bad", "Bad Stock"],
   ["reject", "Stock Reject"],
   ["festive", "Stock Festive"],
@@ -129,6 +133,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
   const [list, setList] = useState<ListRow[]>([]);
   const [kapsRows, setKapsRows] = useState<KapRow[]>([]);
   const [totalKapRak, setTotalKapRak] = useState(0);
+  const [totalKapReguler, setTotalKapReguler] = useState(0);
   const [semuaKat, setSemuaKat] = useState<string[]>([]);
   const [totalSemua, setTotalSemua] = useState<TotalSemuaRow | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -146,6 +151,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
       case "normal": return "linear-gradient(90deg, #16a34a, #4ade80)"; // Hijau cerah untuk Goodstock
       case "qi": return "linear-gradient(90deg, #ca8a04, #facc15)"; // Kuning untuk QI
       case "bad": return "linear-gradient(90deg, #dc2626, #f87171)"; // Merah untuk Badstock
+      case "mobil": return "linear-gradient(90deg, #6d28d9, #a78bfa)"; // Violet untuk Stock Mobil
       default: return "linear-gradient(90deg, #191970, #77a7ff)"; // Default Biru
     }
   };
@@ -228,11 +234,12 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
         // Load kapasitas juga untuk zona selain reject supaya bar bisa ngitung persen
         if (showBar) {
           if (isNormal) {
-            const [lr, kr, tr, kt, kl] = await Promise.all([
+            const [lr, kr, tr, kt, kreg, kl] = await Promise.all([
               apiGet<ListRow[]>(`/stok?zona=${zona}&${b}`),
               apiGet<KapRow[]>(`/stok?mode=kapasitas_produk&${b}`),
               apiGet<TotalSemuaRow[]>(`/stok?mode=total_semua&${b}`).catch(() => ({ data: [] as TotalSemuaRow[] })),
               apiGet<{ total_kapasitas: number }[]>(`/stok?mode=kapasitas_total&${b}`).catch(() => ({ data: [] as { total_kapasitas: number }[] })),
+              apiGet<{ total_kapasitas: number }[]>(`/stok?mode=kapasitas_reguler&${b}`).catch(() => ({ data: [] as { total_kapasitas: number }[] })),
               apiGet<{ kategori_lokasi: string }[]>(`/stok?mode=kategori_layout&${b}`).catch(() => ({ data: [] as { kategori_lokasi: string }[] })),
             ]);
             if (cancelled) return;
@@ -241,6 +248,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
             const t = (tr.data || [])[0] as TotalSemuaRow | undefined;
             setTotalSemua(t ? { total_qty: angka(t.total_qty), qty_qi: angka(t.qty_qi), qty_bad: angka(t.qty_bad) } : null);
             setTotalKapRak(angka((kt.data || [])[0]?.total_kapasitas));
+            setTotalKapReguler(angka((kreg.data || [])[0]?.total_kapasitas));
             setSemuaKat((kl.data || []).map((r) => norm(r.kategori_lokasi)).filter((c) => c !== ""));
           } else {
             const [lr, kr, kt, kl] = await Promise.all([
@@ -254,6 +262,7 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
             setKapsRows(kr.data || []);
             setTotalSemua(null);
             setTotalKapRak(angka((kt.data || [])[0]?.total_kapasitas));
+            setTotalKapReguler(0);
             setSemuaKat((kl.data || []).map((r) => norm(r.kategori_lokasi)).filter((c) => c !== ""));
           }
         } else {
@@ -339,33 +348,26 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
 
   const sumQty = (p: Produk[]) => p.reduce((s, x) => s + x.qty, 0);
   const sumQa = (p: Produk[]) => p.reduce((s, x) => s + x.qty_qi, 0);
-  // qty_bad dari API adalah MAX per id_produk yang diduplikasi per baris kategori,
-  // jadi jumlahkan unik per id_produk agar tidak double-count.
-  const sumBad = (p: Produk[]) => {
-    const m = new Map<number, number>();
-    p.forEach((x) => { m.set(x.id_produk, Math.max(m.get(x.id_produk) || 0, x.qty_bad)); });
-    let s = 0; m.forEach((v) => { s += v; });
-    return s;
-  };
   const sumKap = (p: Produk[]) => p.reduce((s, x) => s + x.kapasitas, 0);
   const tQ = sumQty(filtered);
-  // Gabungan di halaman normal = total semua zona (termasuk bad/reject/dll) agar sama
-  // dengan Total Stok Fisik dashboard. Di halaman zona khusus, gab = total zona tsb.
-  // Gabungan: pembilang = total stok (semua zona di halaman normal,
-  // zona tsb di halaman zona khusus), penyebut = TOTAL kapasitas rak gudang
-  // (bukan kapasitas prioritas produk) agar persennya jujur.
-  const gab = isNormal && totalSemua
+  // Card "ALL" di halaman normal = total semua zona (termasuk bad/reject/receh/mobil/dll)
+  // agar sama dengan Total Stok Fisik dashboard.
+  const all = isNormal && totalSemua
     ? { qty: totalSemua.total_qty, qa: totalSemua.qty_qi, bad: totalSemua.qty_bad, kap: totalKapRak, persen: persen(totalSemua.total_qty, totalKapRak) }
-    : { qty: tQ, qa: sumQa(filtered), bad: sumBad(filtered), kap: totalKapRak, persen: persen(tQ, totalKapRak) };
+    : { qty: tQ, qa: sumQa(filtered), bad: 0, kap: totalKapRak, persen: persen(tQ, totalKapRak) };
+  // Card "Reguler" = stok lokasi reguler saja. Di zona=normal, total_qty API = Good + QI
+  // (blok khusus & bad sudah dikecualikan backend), jadi reguler = Good saja = tQ - QI.
+  const regulerQty = Math.max(0, tQ - sumQa(filtered));
+  // Card Reguler: pembilang = stok reguler (Good), penyebut = kapasitas rak blok REGULER saja
+  // (blok khusus mobil/transit/receh/bad dll tidak ikut dihitung).
+  const reguler = { qty: regulerQty, kap: totalKapReguler, persen: persen(regulerQty, totalKapReguler) };
 
   const groupTotal = (c: string) => {
     const p = byCatFull[c] || []; const qty = sumQty(p); const kap = sumKap(p);
-    const qa = sumQa(p); const bad = sumBad(p);
-    // Di halaman normal: total_qty = stok lokasi normal saja, qty_bad terpisah.
-    // Tampilkan gabungan (normal + bad), cukup beri tanda BAD. QI sudah termasuk di qty.
-    // Di halaman zona khusus: qty sudah = stok zona tsb, jangan ditambah bad lagi.
-    const disp = isNormal ? qty + bad : qty;
-    return { qty, qa, bad, kap, disp, persen: persen(disp, kap) };
+    const qa = sumQa(p);
+    // Card kategori = Reguler + QI (satu angka gabungan). Bad tidak dihitung
+    // dan tidak ditampilkan lagi di card kategori.
+    return { qty, qa, bad: 0, kap, disp: qty, persen: persen(qty, kap) };
   };
 
   const sections = detail.reduce<{ parent: string; blocks: Record<string, { total: number; rows: { bb: string; qty: number; status: string }[] }> }[]>((acc, d) => {
@@ -430,7 +432,6 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0, fontSize: 9, fontWeight: 900, color: "#8a93a3" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#16a34a", display: "inline-block" }} />Good</span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#ca8a04", display: "inline-block" }} />QI</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 999, background: "#dc2626", display: "inline-block" }} />Bad</span>
           </div>
         )}
       </div>
@@ -438,18 +439,35 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
       {/* Menampilkan kotak summary jika showBar true (berlaku buat normal, qa, bad) */}
       {showBar && (
         <div className="stock-summary-grid">
-          <div className="stock-summary-card wide">
-            <div className="stock-summary-top"><div className="stock-summary-title">Gabungan</div><div className="stock-percent-pill">{gab.persen}%</div></div>
-            <div className="stock-progress">{isNormal && totalSemua ? barFill(Math.max(0, gab.qty - gab.bad), gab.qa, gab.bad, gab.kap) : barFill(gab.qty, gab.qa, gab.bad, gab.kap)}</div>
-            <div className="stock-summary-bottom">Stok: {num(gab.qty)} / {num(gab.kap)} {gab.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(gab.bad)}</span>}{isNormal && totalSemua && gab.qa > 0 && <span style={{ color: "#B45309" }}> · QI {num(gab.qa)}</span>}</div>
-          </div>
+          {isNormal ? (
+            <>
+              {/* Card Reguler: stok lokasi reguler saja (Good), tanpa blok khusus. */}
+              <div className="stock-summary-card wide">
+                <div className="stock-summary-top"><div className="stock-summary-title">Reguler</div><div className="stock-percent-pill">{reguler.persen}%</div></div>
+                <div className="stock-progress">{barFill(reguler.qty, 0, 0, reguler.kap)}</div>
+                <div className="stock-summary-bottom">Stok: {num(reguler.qty)} / {num(reguler.kap)}</div>
+              </div>
+              {/* Card ALL: total seluruh stok semua zona (sama dengan Total Stok Fisik dashboard). */}
+              <div className="stock-summary-card wide">
+                <div className="stock-summary-top"><div className="stock-summary-title">ALL</div><div className="stock-percent-pill">{all.persen}%</div></div>
+                <div className="stock-progress">{barFill(all.qty, all.qa, 0, all.kap)}</div>
+                <div className="stock-summary-bottom">Stok: {num(all.qty)} / {num(all.kap)}{all.qa > 0 && <span style={{ color: "#B45309" }}> · QI {num(all.qa)}</span>}{all.bad > 0 && <span style={{ color: "#B91C1C" }}> · Bad {num(all.bad)}</span>}</div>
+              </div>
+            </>
+          ) : (
+            <div className="stock-summary-card wide">
+              <div className="stock-summary-top"><div className="stock-summary-title">Gabungan</div><div className="stock-percent-pill">{all.persen}%</div></div>
+              <div className="stock-progress">{barFill(all.qty, all.qa, 0, all.kap)}</div>
+              <div className="stock-summary-bottom">Stok: {num(all.qty)} / {num(all.kap)}{all.qa > 0 && <span style={{ color: "#B45309" }}> · QI {num(all.qa)}</span>}</div>
+            </div>
+          )}
           {catsFull.map((c) => {
             const s = groupTotal(c);
             return (
               <div key={c} className={"stock-summary-card" + (s.persen >= 60 ? " wide" : "")}>
                 <div className="stock-summary-top"><div className="stock-summary-title">{c}</div><div className="stock-percent-pill">{s.persen}%</div></div>
-                <div className="stock-progress">{barFill(s.qty, s.qa, s.bad, s.kap)}</div>
-                <div className="stock-summary-bottom">Stok: {num(s.disp)} / {num(s.kap)} {s.bad > 0 && <span style={{ color: "#B91C1C" }}>· Bad {num(s.bad)}</span>}</div>
+                <div className="stock-progress">{barFill(s.qty, s.qa, 0, s.kap)}</div>
+                <div className="stock-summary-bottom">Stok: {num(s.disp)} / {num(s.kap)}</div>
               </div>
             );
           })}
@@ -489,21 +507,20 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
             <div className="stock-category-title">{c}</div>
             <div className="stock-product-grid">
               {byCat[c].map((p) => {
-                // Angka tampil = normal + bad (satu angka, badge BAD sebagai tanda).
-                // QI sudah termasuk di qty. Di halaman zona khusus jangan ditambah lagi.
-                const disp = isNormal ? p.qty + p.qty_bad : p.qty;
+                // Halaman normal: angka = stok lokasi reguler (Good + QI), bad dipisah ke halaman Bad Stock.
+                // Halaman zona khusus: qty sudah = stok zona tsb.
+                const disp = p.qty;
                 const persenD = persen(disp, p.kapasitas);
                 return (
                 <div key={p.id_produk} className="stock-product-card" onClick={() => openModal(p.id_produk, p.nama_produk)}>
                   <div className="stock-product-name" title={p.nama_produk} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.nama_produk}</span>
                     {p.qty_qi > 0 && <span style={{ flexShrink: 0, background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 900 }}>QI</span>}
-                    {p.qty_bad > 0 && <span style={{ flexShrink: 0, background: "#FEE2E2", color: "#B91C1C", border: "1px solid rgba(220,38,38,0.55)", borderRadius: 6, padding: "1px 6px", fontSize: 9, fontWeight: 900 }}>BAD</span>}
                   </div>
                   {/* Menampilkan progress bar di product item jika showBar true */}
-                  {showBar && <div className="stock-progress">{barFill(p.qty, p.qty_qi, p.qty_bad, p.kapasitas)}</div>}
+                  {showBar && <div className="stock-progress">{barFill(p.qty, p.qty_qi, 0, p.kapasitas)}</div>}
                   <div className="stock-product-meta">
-                    <span>Stok: {num(disp)} {p.satuan}{p.qty_bad > 0 && <span style={{ color: "#B91C1C" }}> · Bad {num(p.qty_bad)}</span>}</span>
+                    <span>Stok: {num(disp)} {p.satuan}</span>
                     {/* Menampilkan kapasitas dan persentase di product item jika showBar true */}
                     {showBar && <span className="stock-product-muted">{num(disp)} / {num(p.kapasitas)} &nbsp; {persenD}%</span>}
                   </div>
@@ -566,6 +583,12 @@ export function StockView({ zona = "normal" }: { zona?: string }) {
                                   {r.status === "normal" && <span style={{ background: "#E7F6EC", color: "#15803D", border: "1px solid rgba(22,163,74,0.5)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>GOOD</span>}
                                   {r.status === "qi" && <span style={{ background: "#FFFDCC", color: "#B45309", border: "1px solid rgba(255,214,0,0.6)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>QI</span>}
                                   {r.status === "bad" && <span style={{ background: "#FEE2E2", color: "#B91C1C", border: "1px solid rgba(220,38,38,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>BAD</span>}
+                                  {r.status === "mobil" && <span style={{ background: "#EDE9FE", color: "#6D28D9", border: "1px solid rgba(139,92,246,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>MOBIL</span>}
+                                  {r.status === "receh" && <span style={{ background: "#FEF3C7", color: "#B45309", border: "1px solid rgba(245,158,11,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>RECEH</span>}
+                                  {r.status === "transit" && <span style={{ background: "#E0F2FE", color: "#0369A1", border: "1px solid rgba(14,165,233,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>TRANSIT</span>}
+                                  {r.status === "festive" && <span style={{ background: "#E0E7FF", color: "#3730A3", border: "1px solid rgba(99,102,241,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>FESTIVE</span>}
+                                  {r.status === "hold" && <span style={{ background: "#F1F5F9", color: "#475569", border: "1px solid rgba(100,116,139,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>HOLD</span>}
+                                  {r.status === "reject" && <span style={{ background: "#FEE2E2", color: "#DC2626", border: "1px solid rgba(239,68,68,0.55)", borderRadius: 6, padding: "0 5px", fontSize: 9, fontWeight: 900 }}>REJECT</span>}
                                 </span>
                                 <span style={{ fontWeight: 850 }}>{num(r.qty)}</span>
                               </div>

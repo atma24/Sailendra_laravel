@@ -50,7 +50,7 @@ const css = `
 .warehouse-card { background: #FFFFFF; border: 1px solid #e9edf5; border-radius: 11px; box-shadow: none; }
 .warehouse-tabs-card { padding: 7px; }
 
-.warehouse-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; width: 100%; }
+.warehouse-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 7px; width: 100%; }
 .warehouse-tab {
   text-decoration: none; border-radius: 8px; padding: 7px 12px;
   background: #f3f5fb; color: var(--text-soft); font-size: 11px; font-weight: 850;

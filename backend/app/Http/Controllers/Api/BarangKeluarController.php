@@ -1543,7 +1543,9 @@ $in = $request->all();
                 })
                 ->values();
 
-            $fallbackShipment = 'AUTO-OB'.(int) $header->id_barang_keluar;
+            // Format shipment auto-inbound dibedakan dari jalur manual (MANUAL-*).
+            // Bila GIN ada: "AUTO-INBOUND {GIN}"; jika GIN kosong: "AUTO-INBOUND {id_barang_keluar}".
+            $fallbackShipment = 'AUTO-INBOUND '.(int) $header->id_barang_keluar;
             $grupPerGin = [];
             foreach ($itemsSelesai as $bk) {
                 $ginRaw = trim((string) ($bk->gin_no ?? ''));
@@ -1552,7 +1554,7 @@ $in = $request->all();
                     $shipmentKey = $fallbackShipment;
                     $ginLabel = '-';
                 } else {
-                    $shipmentKey = 'AUTO-'.$ginBersih;
+                    $shipmentKey = 'AUTO-INBOUND '.$ginBersih;
                     $ginLabel = $ginRaw;
                 }
                 if (! isset($grupPerGin[$shipmentKey])) {
@@ -2207,8 +2209,11 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
     }
 
     /**
-     * Scope FEFO per lokasi: SPS (internal) vs XWH (eksternal) dipisah.
-     * $idLokasi = b.id_lokasi (2=SPS, 3=XWH). $kategori = GALLON/SPS/XWH.
+     * Scope FEFO per lokasi: tiap lokasi punya kolam FEFO sendiri (mis. SPS internal
+     * vs XWH eksternal dipisah) agar release di satu lokasi tidak tertahan stok lebih
+     * tua di lokasi lain.
+     * $idLokasi = b.id_lokasi (bebas, lokasi apa pun yang terdaftar).
+     * $kategori = kategori/nama lokasi apa pun yang ada di tabel `lokasi`.
      * Default 0/'' = global (perilaku lama, backward-compat).
      *
      * @return array{sql: string, params: array}
@@ -2220,8 +2225,15 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             return ['sql' => ' AND bl.id_lokasi = ? ', 'params' => [$idLokasi]];
         }
         $kat = strtoupper(trim((string) $kategoriLokasi));
-        if (in_array($kat, ['GALLON', 'SPS', 'XWH'], true)) {
-            return ['sql' => ' AND UPPER(TRIM(COALESCE(lk.kategori, lk.nama_lokasi, \'\'))) = ? ', 'params' => [$kat]];
+        if ($kat !== '') {
+            // Lokasi baru fleksibel: kategori apa pun yang terdaftar di tabel `lokasi`
+            // diperlakukan sebagai scope tersendiri (tidak lagi dibatasi GALLON/SPS/XWH).
+            $kategoriValid = \Illuminate\Support\Facades\DB::table('lokasi')
+                ->whereRaw("UPPER(TRIM(COALESCE(NULLIF(kategori, ''), nama_lokasi))) = ?", [$kat])
+                ->exists();
+            if ($kategoriValid) {
+                return ['sql' => ' AND UPPER(TRIM(COALESCE(NULLIF(lk.kategori, \'\'), lk.nama_lokasi, \'\'))) = ? ', 'params' => [$kat]];
+            }
         }
 
         return ['sql' => '', 'params' => []];

@@ -52,14 +52,15 @@ class StokController extends Controller
             'bad' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} IN ('BAD STOCK','BADSTOCK') OR {$loc} LIKE 'BAD STOCK-%' OR {$loc} LIKE 'BADSTOCK-%' OR {$loc} LIKE 'BS-%' ) ",
             'reject' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} = 'REJECT' OR {$loc} LIKE 'REJECT-%' ) ",
             'receh' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} = 'RECEH' OR {$loc} LIKE 'RECEH-%' ) ",
+            'mobil' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} = 'MOBIL' OR {$loc} LIKE 'MOBIL-%' ) ",
             'festive' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} = 'FESTIVE' OR {$loc} LIKE 'FESTIVE-%' ) ",
             'transit' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} = 'TRANSIT' OR {$loc} LIKE 'TRANSIT-%' ) ",
             'hold' => " AND UPPER(COALESCE(sg.status,'')) != 'QI' AND ( {$cat} = 'HOLD' OR {$loc} LIKE 'HOLD-%' ) ",
             'qi' => " AND UPPER(COALESCE(sg.status,'')) = 'QI' ",
-            'normal' => " AND NOT ( {$cat} IN ('BAD STOCK','BADSTOCK','REJECT','RECEH','FESTIVE','TRANSIT','HOLD')"
+            'normal' => " AND NOT ( {$cat} IN ('BAD STOCK','BADSTOCK','REJECT','RECEH','MOBIL','FESTIVE','TRANSIT','HOLD')"
                 ." OR {$loc} LIKE 'BAD STOCK-%' OR {$loc} LIKE 'BADSTOCK-%' OR {$loc} LIKE 'BS-%'"
-                ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'FESTIVE-%'"
-                ." OR {$loc} LIKE 'TRANSIT-%' OR {$loc} LIKE 'HOLD-%' ) ",
+                ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'MOBIL-%'"
+                ." OR {$loc} LIKE 'FESTIVE-%' OR {$loc} LIKE 'TRANSIT-%' OR {$loc} LIKE 'HOLD-%' ) ",
         ];
 
         return $zones[$zona] ?? '';
@@ -101,9 +102,26 @@ class StokController extends Controller
         $cat = "UPPER(TRIM(COALESCE(l.kategori,'')))";
         $loc = "UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line)))";
 
-        return " AND NOT ( {$cat} IN ('REJECT','RECEH','FESTIVE','TRANSIT','HOLD')"
-            ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'FESTIVE-%'"
+        return " AND NOT ( {$cat} IN ('REJECT','RECEH','MOBIL','FESTIVE','TRANSIT','HOLD')"
+            ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'MOBIL-%' OR {$loc} LIKE 'FESTIVE-%'"
             ." OR {$loc} LIKE 'TRANSIT-%' OR {$loc} LIKE 'HOLD-%' ) ";
+    }
+
+    /**
+     * Klausa penyaring "hanya blok reguler" untuk query kapasitas rak.
+     * Mengecualikan seluruh blok khusus (bad + reject/receh/mobil/festive/transit/hold),
+     * memakai alias kolom yang dapat disesuaikan agar bisa dipakai di berbagai query.
+     * Default alias cocok dengan pola helper lain (b/l/ln).
+     */
+    private function khususWhere(string $b = 'b', string $l = 'l', string $ln = 'ln'): string
+    {
+        $cat = "UPPER(TRIM(COALESCE({$l}.kategori,'')))";
+        $loc = "UPPER(TRIM(CONCAT({$b}.kode_block, '-', {$ln}.nomor_line)))";
+
+        return " AND NOT ( {$cat} IN ('BAD STOCK','BADSTOCK','REJECT','RECEH','MOBIL','FESTIVE','TRANSIT','HOLD')"
+            ." OR {$loc} LIKE 'BAD STOCK-%' OR {$loc} LIKE 'BADSTOCK-%' OR {$loc} LIKE 'BS-%'"
+            ." OR {$loc} LIKE 'REJECT-%' OR {$loc} LIKE 'RECEH-%' OR {$loc} LIKE 'MOBIL-%'"
+            ." OR {$loc} LIKE 'FESTIVE-%' OR {$loc} LIKE 'TRANSIT-%' OR {$loc} LIKE 'HOLD-%' ) ";
     }
 
     private function manualBlockFilter(): string
@@ -153,7 +171,7 @@ class StokController extends Controller
             $idProduk = (int) $request->query('id_produk', 0);
             $zonaParam = strtolower(trim((string) $request->query('zona', 'normal')));
 
-            if (! in_array($zonaParam, ['normal', 'bad', 'reject', 'receh', 'festive', 'transit', 'hold', 'qi', 'all'], true)) {
+            if (! in_array($zonaParam, ['normal', 'bad', 'reject', 'receh', 'mobil', 'festive', 'transit', 'hold', 'qi', 'all'], true)) {
                 $zonaParam = 'normal';
             }
             $zona = $zonaParam;
@@ -167,6 +185,7 @@ class StokController extends Controller
                 $rawMode === 'kapasitas' => 'kapasitas',
                 $rawMode === 'kapasitas_produk' => 'kapasitas_produk',
                 $rawMode === 'kapasitas_total' => 'kapasitas_total',
+                $rawMode === 'kapasitas_reguler' => 'kapasitas_reguler',
                 $rawMode === 'kategori_layout' => 'kategori_layout',
                 $rawMode === 'layout_list' => 'layout_list',
                 $rawMode === 'layout_detail' => 'layout_detail',
@@ -234,7 +253,7 @@ class StokController extends Controller
 
         switch ($mode) {
             case 'total_semua':
-                // Total semua zona (termasuk bad/reject/receh/festive/transit/hold/QI),
+                // Total semua zona (termasuk bad/reject/receh/mobil/festive/transit/hold/QI),
                 // definisi sama dengan DashboardController::ringkasanStok total_qty:
                 // SUM(sd.jumlah) tanpa JOIN lokasi, agar orphan tetap kehitung dan cocok dengan dashboard.
                 if ($lokCount === 1) {
@@ -286,6 +305,39 @@ class StokController extends Controller
                     $bind = $lokArr;
                 } else {
                     $sql = 'SELECT COALESCE(SUM(d.kapasitas),0) AS total_kapasitas FROM deep d';
+                    $bind = [];
+                }
+
+                return ['sql' => $sql, 'bind' => $bind];
+
+            case 'kapasitas_reguler':
+                // Total kapasitas rak blok REGULER saja (mengecualikan blok khusus:
+                // bad/reject/receh/mobil/festive/transit/hold). Penyebut persen card "Reguler".
+                $khusus = $this->khususWhere();
+                if ($lokCount === 1) {
+                    $sql = 'SELECT COALESCE(SUM(d.kapasitas),0) AS total_kapasitas FROM deep d'
+                        .' JOIN level lv ON lv.id_level = d.id_level'
+                        .' JOIN line ln ON ln.id_line = lv.id_line'
+                        .' JOIN block b ON b.id_block = ln.id_block'
+                        .' JOIN lokasi l ON l.id_lokasi = b.id_lokasi'
+                        .' WHERE b.id_pengguna_lokasi = ?'.$khusus;
+                    $bind = [$lokArr[0]];
+                } elseif ($lokCount > 1) {
+                    $ph = implode(',', array_fill(0, $lokCount, '?'));
+                    $sql = 'SELECT COALESCE(SUM(d.kapasitas),0) AS total_kapasitas FROM deep d'
+                        .' JOIN level lv ON lv.id_level = d.id_level'
+                        .' JOIN line ln ON ln.id_line = lv.id_line'
+                        .' JOIN block b ON b.id_block = ln.id_block'
+                        .' JOIN lokasi l ON l.id_lokasi = b.id_lokasi'
+                        ." WHERE b.id_pengguna_lokasi IN ($ph)".$khusus;
+                    $bind = $lokArr;
+                } else {
+                    $sql = 'SELECT COALESCE(SUM(d.kapasitas),0) AS total_kapasitas FROM deep d'
+                        .' JOIN level lv ON lv.id_level = d.id_level'
+                        .' JOIN line ln ON ln.id_line = lv.id_line'
+                        .' JOIN block b ON b.id_block = ln.id_block'
+                        .' JOIN lokasi l ON l.id_lokasi = b.id_lokasi'
+                        .' WHERE 1=1'.$khusus;
                     $bind = [];
                 }
 
@@ -545,8 +597,18 @@ class StokController extends Controller
                     return ['error' => 'id_produk wajib untuk mode=detail'];
                 }
                 $detailWhere = $zona === 'normal' ? $this->normalSpecialsWhere() : $zonaWhere;
+                // Label status per baris detail. Urutan prioritas: bad -> qi -> mobil -> receh -> transit -> festive -> hold -> normal.
+                // Dipakai di halaman normal agar stok blok khusus tidak lagi tampil sebagai 'normal/good'.
+                $subLoc = "UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line)))";
+                $subKategori = "UPPER(TRIM(COALESCE(l.kategori,'')))";
                 $statusExpr = "CASE WHEN {$this->badBlockExpr()} THEN 'bad'
                     WHEN UPPER(COALESCE(sg.status,'')) = 'qi' THEN 'qi'
+                    WHEN {$subKategori} = 'MOBIL' OR {$subLoc} LIKE 'MOBIL-%' THEN 'mobil'
+                    WHEN {$subKategori} = 'RECEH' OR {$subLoc} LIKE 'RECEH-%' THEN 'receh'
+                    WHEN {$subKategori} = 'TRANSIT' OR {$subLoc} LIKE 'TRANSIT-%' THEN 'transit'
+                    WHEN {$subKategori} = 'FESTIVE' OR {$subLoc} LIKE 'FESTIVE-%' THEN 'festive'
+                    WHEN {$subKategori} = 'HOLD' OR {$subLoc} LIKE 'HOLD-%' THEN 'hold'
+                    WHEN {$subKategori} = 'REJECT' OR {$subLoc} LIKE 'REJECT-%' THEN 'reject'
                     ELSE 'normal' END";
                 $sql = "SELECT
                     MIN(x.id_stok_header) AS id_stok,
@@ -653,6 +715,10 @@ class StokController extends Controller
             $repeatBind = [];
         }
 
+        // Hanya hitung kapasitas blok reguler (buang blok khusus: mobil/transit/receh/bad/dll),
+        // agar penyebut persen stok reguler tidak tercampur rak blok khusus.
+        $khusus = $this->khususWhere();
+
         $seg = "SELECT
             p.id_produk,
             COALESCE(p.nama_produk, CONCAT('Produk ', p.id_produk)) AS nama_produk,
@@ -666,7 +732,7 @@ class StokController extends Controller
             INNER JOIN line ln ON ln.id_line = lv.id_line
             INNER JOIN block b ON b.id_block = ln.id_block
             INNER JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-            WHERE plp.id_deep IS NOT NULL{$wherePlp}";
+            WHERE plp.id_deep IS NOT NULL{$wherePlp}{$khusus}";
 
         $seg2 = "SELECT
             p.id_produk,
@@ -681,7 +747,7 @@ class StokController extends Controller
             INNER JOIN line ln ON ln.id_line = lv.id_line
             INNER JOIN block b ON b.id_block = ln.id_block
             INNER JOIN lokasi l ON l.id_lokasi = b.id_lokasi
-            WHERE plp.id_deep IS NULL AND plp.id_level IS NOT NULL{$wherePlp}";
+            WHERE plp.id_deep IS NULL AND plp.id_level IS NOT NULL{$wherePlp}{$khusus}";
 
         $seg3 = "SELECT
             p.id_produk,
@@ -696,7 +762,7 @@ class StokController extends Controller
             INNER JOIN block b ON b.id_block = ln.id_block
             INNER JOIN lokasi l ON l.id_lokasi = b.id_lokasi
             INNER JOIN deep d ON d.id_level = lv.id_level
-            WHERE plp.id_deep IS NULL AND plp.id_level IS NULL AND plp.id_line IS NOT NULL{$wherePlp}";
+            WHERE plp.id_deep IS NULL AND plp.id_level IS NULL AND plp.id_line IS NOT NULL{$wherePlp}{$khusus}";
 
         $seg4 = "SELECT
             p.id_produk,
@@ -711,7 +777,7 @@ class StokController extends Controller
             INNER JOIN line ln ON ln.id_block = b.id_block
             INNER JOIN level lv ON lv.id_line = ln.id_line
             INNER JOIN deep d ON d.id_level = lv.id_level
-            WHERE plp.id_deep IS NULL AND plp.id_level IS NULL AND plp.id_line IS NULL AND plp.id_block IS NOT NULL{$wherePlp}";
+            WHERE plp.id_deep IS NULL AND plp.id_level IS NULL AND plp.id_line IS NULL AND plp.id_block IS NOT NULL{$wherePlp}{$khusus}";
 
         $seg5 = "SELECT
             p.id_produk,
@@ -727,7 +793,7 @@ class StokController extends Controller
             INNER JOIN level lv ON lv.id_line = ln.id_line
             INNER JOIN deep d ON d.id_level = lv.id_level
             WHERE plp.id_deep IS NULL AND plp.id_level IS NULL AND plp.id_line IS NULL
-                AND plp.id_block IS NULL AND plp.id_lokasi IS NOT NULL{$wherePlp}";
+                AND plp.id_block IS NULL AND plp.id_lokasi IS NOT NULL{$wherePlp}{$khusus}";
 
         $sql = "SELECT x.id_produk, x.nama_produk, x.kategori_lokasi, x.satuan, SUM(x.kapasitas) AS total_kapasitas
             FROM (
@@ -771,16 +837,39 @@ class StokController extends Controller
             OR UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line))) LIKE 'BS-%'
         )";
 
+        // Blok khusus non-bad (mobil/receh/transit/festive/hold/reject) yang TIDAK boleh
+        // dihitung sebagai goodstock, sejalan dengan zonaWhere('normal').
+        $katExpr = "UPPER(TRIM(COALESCE(l.kategori,'')))";
+        $locExpr = "UPPER(TRIM(CONCAT(b.kode_block, '-', ln.nomor_line)))";
+        $khususCond = "(
+            {$katExpr} IN ('REJECT','RECEH','MOBIL','FESTIVE','TRANSIT','HOLD')
+            OR {$locExpr} LIKE 'REJECT-%' OR {$locExpr} LIKE 'RECEH-%' OR {$locExpr} LIKE 'MOBIL-%'
+            OR {$locExpr} LIKE 'FESTIVE-%' OR {$locExpr} LIKE 'TRANSIT-%' OR {$locExpr} LIKE 'HOLD-%'
+        )";
+
+        // Kategori zona per baris untuk kolom keterangan di Excel.
+        $zonaExpr = "CASE
+            WHEN {$badCond} THEN 'bad'
+            WHEN UPPER(COALESCE(sg.status,'')) = 'QI' THEN 'qi'
+            WHEN {$katExpr} = 'MOBIL' OR {$locExpr} LIKE 'MOBIL-%' THEN 'mobil'
+            WHEN {$katExpr} = 'RECEH' OR {$locExpr} LIKE 'RECEH-%' THEN 'receh'
+            WHEN {$katExpr} = 'TRANSIT' OR {$locExpr} LIKE 'TRANSIT-%' THEN 'transit'
+            WHEN {$katExpr} = 'FESTIVE' OR {$locExpr} LIKE 'FESTIVE-%' THEN 'festive'
+            WHEN {$katExpr} = 'HOLD' OR {$locExpr} LIKE 'HOLD-%' THEN 'hold'
+            WHEN {$katExpr} = 'REJECT' OR {$locExpr} LIKE 'REJECT-%' THEN 'reject'
+            ELSE 'normal' END";
+
         $sql = "SELECT 
             sg.id_produk,
             COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)) AS nama_produk,
             CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi,
             COALESCE(sd.batch, sg.batch, '-') AS batch,
             sd.best_before,
+            {$zonaExpr} AS zona,
             
-            -- Goodstock: bukan QI dan bukan di lokasi Badstock
+            -- Goodstock: bukan QI, bukan Badstock, dan bukan blok khusus (mobil/receh/transit/dll)
             SUM(CASE 
-                WHEN UPPER(COALESCE(sg.status, '')) != 'QI' AND NOT {$badCond} THEN sd.jumlah 
+                WHEN UPPER(COALESCE(sg.status, '')) != 'QI' AND NOT {$badCond} AND NOT {$khususCond} THEN sd.jumlah 
                 ELSE 0 
             END) AS qty_good,
             
@@ -794,7 +883,13 @@ class StokController extends Controller
             SUM(CASE 
                 WHEN {$badCond} THEN sd.jumlah 
                 ELSE 0 
-            END) AS qty_bad
+            END) AS qty_bad,
+            
+            -- Blok khusus non-bad (mobil/receh/transit/festive/hold/reject)
+            SUM(CASE 
+                WHEN UPPER(COALESCE(sg.status, '')) != 'QI' AND NOT {$badCond} AND {$khususCond} THEN sd.jumlah 
+                ELSE 0 
+            END) AS qty_khusus
 
             FROM stok_gudang_deep sd
             JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header
@@ -812,7 +907,8 @@ class StokController extends Controller
                 COALESCE(p.nama_produk, CONCAT('Produk ', sg.id_produk)),
                 CONCAT(b.kode_block, '-', ln.nomor_line), 
                 COALESCE(sd.batch, sg.batch, '-'), 
-                sd.best_before
+                sd.best_before,
+                zona
                 
             ORDER BY nama_produk ASC, lokasi ASC, sd.best_before ASC";
 
@@ -823,11 +919,11 @@ class StokController extends Controller
         $sheet->setTitle('Laporan Stok');
 
         // Headers
-        $headers = ['id_produk', 'nama_produk', 'Lokasi', 'batch', 'best_before', 'jumlah goodstock', 'jumlah QI', 'jumlah badstock'];
+        $headers = ['id_produk', 'nama_produk', 'Lokasi', 'batch', 'best_before', 'zona', 'jumlah goodstock', 'jumlah QI', 'jumlah badstock', 'jumlah blok khusus'];
         $sheet->fromArray($headers, NULL, 'A1');
 
         // Style Header
-        $headerStyle = $sheet->getStyle('A1:H1');
+        $headerStyle = $sheet->getStyle('A1:J1');
         $headerStyle->getFont()->setBold(true)->getColor()->setARGB('FFFFFFFF');
         $headerStyle->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)->getStartColor()->setARGB('FF191970');
 
@@ -839,14 +935,16 @@ class StokController extends Controller
             $sheet->setCellValue('C' . $rowNum, $r->lokasi);
             $sheet->setCellValue('D' . $rowNum, $r->batch);
             $sheet->setCellValue('E' . $rowNum, $r->best_before);
-            $sheet->setCellValue('F' . $rowNum, (int)$r->qty_good);
-            $sheet->setCellValue('G' . $rowNum, (int)$r->qty_qi);
-            $sheet->setCellValue('H' . $rowNum, (int)$r->qty_bad);
+            $sheet->setCellValue('F' . $rowNum, $r->zona);
+            $sheet->setCellValue('G' . $rowNum, (int)$r->qty_good);
+            $sheet->setCellValue('H' . $rowNum, (int)$r->qty_qi);
+            $sheet->setCellValue('I' . $rowNum, (int)$r->qty_bad);
+            $sheet->setCellValue('J' . $rowNum, (int)$r->qty_khusus);
             $rowNum++;
         }
 
         // Auto-size kolom
-        foreach (range('A', 'H') as $col) {
+        foreach (range('A', 'J') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 

@@ -27,8 +27,8 @@ class LokasiController extends Controller
 
     public function store(Request $request)
     {
-        $nama = trim((string) $request->input('nama_lokasi'));
-        $kategori = trim((string) $request->input('kategori'));
+        $nama = $this->normalisasiNama($request->input('nama_lokasi'));
+        $kategori = $this->normalisasiKategori($request->input('kategori'));
 
         if ($nama === '') {
             return $this->fail('nama_lokasi wajib');
@@ -37,7 +37,7 @@ class LokasiController extends Controller
         try {
             $lokasi = Lokasi::create([
                 'nama_lokasi' => $nama,
-                'kategori' => $kategori,
+                'kategori' => $kategori !== '' ? $kategori : $nama,
                 'created_at' => now(),
             ]);
 
@@ -45,6 +45,18 @@ class LokasiController extends Controller
         } catch (\Throwable $e) {
             return $this->fail('Gagal menambah lokasi');
         }
+    }
+
+    /** Normalisasi nama lokasi: trim + maksimum 50 karakter. */
+    private function normalisasiNama(mixed $value): string
+    {
+        return mb_substr(trim((string) $value), 0, 50);
+    }
+
+    /** Normalisasi kategori: trim + UPPERCASE + maksimum 50 karakter (konsisten dgn grouping uppercased). */
+    private function normalisasiKategori(mixed $value): string
+    {
+        return mb_substr(strtoupper(trim((string) $value)), 0, 50);
     }
 
     public function update(Request $request, int $id)
@@ -61,11 +73,15 @@ class LokasiController extends Controller
         }
 
         if ($request->has('nama_lokasi')) {
-            $lokasi->nama_lokasi = $request->input('nama_lokasi');
+            $nama = $this->normalisasiNama($request->input('nama_lokasi'));
+            if ($nama === '') {
+                return $this->fail('nama_lokasi wajib');
+            }
+            $lokasi->nama_lokasi = $nama;
         }
 
         if ($request->has('kategori')) {
-            $lokasi->kategori = $request->input('kategori');
+            $lokasi->kategori = $this->normalisasiKategori($request->input('kategori'));
         }
 
         if (! $lokasi->isDirty()) {

@@ -783,6 +783,7 @@ const ZONAS: [string, string][] = [
   ["bad", "Bad Stock"],
   ["reject", "Reject"],
   ["receh", "Receh"],
+  ["mobil", "Mobil"],
   ["festive", "Festive"],
   ["transit", "Transit"],
   ["hold", "Hold"],
@@ -795,6 +796,7 @@ const ZONA_COLORS = [
   "#DC2626", // Bad Stock - Crimson Red
   "#EF4444", // Reject - Light Red
   "#F59E0B", // Receh - Amber
+  "#8B5CF6", // Mobil - Violet
   "#6366F1", // Festive - Indigo
   "#0EA5E9", // Transit - Sky Blue
   "#64748B", // Hold - Slate
