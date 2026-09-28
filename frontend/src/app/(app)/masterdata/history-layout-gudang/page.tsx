@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, apiGet, apiPost } from "@/lib/api";
-import { isMultiRole, useSession } from "@/lib/auth";
+import { isMultiRole, SUPERVISOR_ROLES, useSession } from "@/lib/auth";
 
 type LokasiRow = { id_lokasi: number; nama_lokasi?: string; kategori?: string };
 type BlockRow = { id_block: number; kode_block: string; id_lokasi?: number };
@@ -198,6 +198,7 @@ const sortDeepsAsc = (deeps: Deep[]) => [...deeps].sort((a, b) => angka(a.deep) 
 export default function HistoryLayoutGudangPage() {
   const session = useSession();
   const isMulti = !!session && isMultiRole(session.user.role);
+  const bisaEditNomor = !!session && SUPERVISOR_ROLES.includes(session.user.role);
 
   const [semuaLokasi, setSemuaLokasi] = useState<LokProfile[]>([]);
   const [penggunaLokasi, setPenggunaLokasi] = useState("");
@@ -221,6 +222,7 @@ export default function HistoryLayoutGudangPage() {
   const [kodeBlockType, setKodeBlockType] = useState("reguler");
   const [kodeBlockBaru, setKodeBlockBaru] = useState("");
   const [editTab, setEditTab] = useState<"kapasitas" | "level">("kapasitas");
+  const [editNomorLine, setEditNomorLine] = useState("");
   const [addLevelNo, setAddLevelNo] = useState("");
   const [addLevelDeep, setAddLevelDeep] = useState("");
   const [addLevelCap, setAddLevelCap] = useState("");
@@ -382,6 +384,27 @@ export default function HistoryLayoutGudangPage() {
         } catch (e) { notify("error", "Gagal", (e as Error).message || "Gagal menghapus line."); }
       },
     });
+  };
+
+  const ubahNomorLine = async () => {
+    if (!editLine) return;
+    if (!bisaEditNomor) { notify("warning", "Perhatian", "Hanya supervisor atau superadmin yang dapat mengubah nomor line."); return; }
+    const nomorBaru = angka(editNomorLine);
+    if (nomorBaru <= 0) { notify("warning", "Perhatian", "Nomor line wajib diisi angka lebih dari 0."); return; }
+    if (nomorBaru === editLine.nomorLine) { notify("info", "Info", "Nomor line tidak berubah."); return; }
+    const bentrok = lines.some((l) => angka(l.id_line) !== editLine.idLine && angka(l.nomor_line) === nomorBaru);
+    if (bentrok) { notify("warning", "Perhatian", `Nomor line ${nomorBaru} sudah dipakai di block ini.`); return; }
+    setBusy(true);
+    try {
+      await api(`/line/${editLine.idLine}`, {
+        method: "PUT",
+        body: JSON.stringify({ id_line: editLine.idLine, id_pengguna_lokasi: penggunaLokasiFinal, role: session.user.role, nomor_line: nomorBaru }),
+      });
+      notify("success", "Berhasil", "Nomor line berhasil diubah.");
+      setEditLine({ ...editLine, nomorLine: nomorBaru });
+      setRefresh((v) => v + 1);
+    } catch (e) { notify("error", "Gagal", (e as Error).message || "Gagal mengubah nomor line."); }
+    finally { setBusy(false); }
   };
 
   const hapusBlock = () => {
@@ -700,11 +723,14 @@ export default function HistoryLayoutGudangPage() {
                     </div>
                     <div className="history-line-actions">
                       <button type="button" className="history-icon-btn" title="Edit kapasitas, level, dan deep"
-                        onClick={() => setEditLine({
-                          idLokasi, idBlock, idLine: angka(line.id_line), kodeBlock: kodeBlockAktif,
-                          nomorLine: angka(line.nomor_line), idProduk: angka(line.id_produk),
-                          produk: norm(line.nama_produk) || "-", levels: line.level || [],
-                        })}>
+                        onClick={() => {
+                          setEditLine({
+                            idLokasi, idBlock, idLine: angka(line.id_line), kodeBlock: kodeBlockAktif,
+                            nomorLine: angka(line.nomor_line), idProduk: angka(line.id_produk),
+                            produk: norm(line.nama_produk) || "-", levels: line.level || [],
+                          });
+                          setEditNomorLine(String(angka(line.nomor_line)));
+                        }}>
                         <i className="bi bi-pencil-fill"></i>
                       </button>
                       <button type="button" className="history-icon-btn danger" title="Hapus line" onClick={() => hapusLine(angka(line.id_line), angka(line.nomor_line))}>
@@ -764,6 +790,32 @@ export default function HistoryLayoutGudangPage() {
                 <label className="hg-label">Produk yang dipakai di line ini</label>
                 <EditProdukSelect produkList={produkList} value={editLine.idProduk} onChange={(id) => setEditLine({ ...editLine, idProduk: id })} />
               </div>
+
+              {bisaEditNomor && (
+                <div style={{ marginTop: 16 }}>
+                  <label className="hg-label">Nomor line</label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="number"
+                      min={1}
+                      className="hg-input"
+                      value={editNomorLine}
+                      onChange={(e) => setEditNomorLine(e.target.value)}
+                      style={{ maxWidth: 140 }}
+                    />
+                    <button
+                      type="button"
+                      className="hg-main-btn"
+                      style={{ width: "auto", marginTop: 0, padding: "8px 16px" }}
+                      onClick={ubahNomorLine}
+                      disabled={busy}
+                    >
+                      Ubah nomor
+                    </button>
+                  </div>
+                  <div className="hg-subtitle" style={{ marginTop: 4 }}>Tidak boleh sama dengan nomor line lain pada block ini.</div>
+                </div>
+              )}
 
               <div className="hg-tabs">
                 <button type="button" className={`hg-tab-btn ${editTab === "kapasitas" ? "active" : ""}`} onClick={() => setEditTab("kapasitas")}>Kapasitas Deep</button>

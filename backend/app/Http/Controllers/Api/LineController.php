@@ -79,6 +79,19 @@ class LineController extends Controller
 
                 $made = [];
                 foreach ($targets as $n) {
+                    if ($n <= 0) {
+                        throw new \Exception('Nomor line wajib > 0');
+                    }
+
+                    $bentrok = Line::where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->where('id_block', $idBlock)
+                        ->where('nomor_line', $n)
+                        ->exists();
+
+                    if ($bentrok) {
+                        throw new \Exception('Nomor line '.$n.' sudah dipakai di block ini');
+                    }
+
                     $line = Line::create([
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_block' => $idBlock,
@@ -97,6 +110,11 @@ class LineController extends Controller
 
     public function update(Request $request, int $id)
     {
+        $idPenggunaLokasi = $this->requireLok($request);
+        if ($idPenggunaLokasi instanceof JsonResponse) {
+            return $idPenggunaLokasi;
+        }
+
         $idLine = (int) ($request->input('id_line') ?? $id);
         $nomor = $request->has('nomor_line') ? (int) $request->input('nomor_line') : null;
 
@@ -104,17 +122,41 @@ class LineController extends Controller
             return $this->fail('id_line & nomor_line wajib');
         }
 
-        $line = Line::find($idLine);
-        if (! $line) {
-            return $this->fail('Line tidak ditemukan', 404);
+        if ($nomor <= 0) {
+            return $this->fail('Nomor line wajib > 0');
         }
 
-        $line->nomor_line = $nomor;
-        if (! $line->save()) {
-            return $this->fail('Gagal mengubah line');
-        }
+        try {
+            return DB::transaction(function () use ($idPenggunaLokasi, $idLine, $nomor) {
+                $line = Line::where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereKey($idLine)
+                    ->lockForUpdate()
+                    ->first();
 
-        return $this->okMessage('');
+                if (! $line) {
+                    return $this->fail('Line tidak ditemukan', 404);
+                }
+
+                $bentrok = Line::where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('id_block', $line->id_block)
+                    ->where('nomor_line', $nomor)
+                    ->where('id_line', '!=', $idLine)
+                    ->exists();
+
+                if ($bentrok) {
+                    return $this->fail('Nomor line '.$nomor.' sudah dipakai di block ini');
+                }
+
+                $line->nomor_line = $nomor;
+                if (! $line->save()) {
+                    return $this->fail('Gagal mengubah line');
+                }
+
+                return $this->okMessage('Nomor line berhasil diubah');
+            });
+        } catch (\Throwable $e) {
+            return $this->fail($e->getMessage() ?: 'Gagal mengubah line');
+        }
     }
 
     public function destroy(Request $request, int $id)
