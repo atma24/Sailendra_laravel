@@ -43,7 +43,7 @@ const aud = ["diperbarui_oleh", "diperbarui_pada", "catatan_perubahan"];
 
 function columnsFor(type: TypeKey): string[] {
   if (type === "mutasi") return ["no", ...base, "created_at", "nama_produk", "jumlah", "satuan", "best_before", "jenis_mutasi", "lokasi_sumber", "lokasi_tujuan", "catatan"];
-  if (type === "inbound") return ["no", ...base, "tanggal_masuk", "nama_driver", "no_mobil", "no_dn", "tipe_penerimaan", "asal_pabrik", "nama_produk", "jumlah", "satuan", "best_before", "batch", "durasi_input", "catatan", ...aud];
+  if (type === "inbound") return ["no", ...base, "tanggal_masuk", "nama_driver", "no_mobil", "no_dn", "tipe_penerimaan", "asal_pabrik", "nama_produk", "jumlah", "satuan", "best_before", "batch", "status", "durasi_input", "catatan", ...aud];
   return ["no", ...base, "tanggal_keluar", "nama_driver", "no_mobil", "tipe_pengeluaran", "tujuan", "nama_produk", "jumlah", "satuan", "best_before", "batch", "status", "durasi_input", "catatan", ...aud];
 }
 

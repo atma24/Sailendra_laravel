@@ -136,7 +136,7 @@ class LaporanController extends Controller
                 'bm.tanggal_masuk', 'bm.nama_driver', 'bm.no_mobil', 'bm.no_dn',
                 'bm.tipe_penerimaan', 'bm.asal_pabrik', 'bm.nama_produk', 'bm.jumlah',
                 'bm.best_before', DB::raw('COALESCE(bm.batch_sekarang, bm.batch) AS batch'),
-                'bm.satuan', 'bm.diperbarui_oleh', 'bm.catatan', 'bm.catatan_perubahan',
+                'bm.satuan', 'bm.status', 'bm.diperbarui_oleh', 'bm.catatan', 'bm.catatan_perubahan',
                 DB::raw("DATE_FORMAT(bm.diperbarui_pada, '%Y-%m-%d %H:%i') AS diperbarui_pada"),
                 DB::raw("DATE_FORMAT(bm.waktu_mulai_input, '%Y-%m-%d %H:%i:%s') AS waktu_mulai_input"),
                 DB::raw('SEC_TO_TIME(bm.durasi_detik) AS durasi_input')
@@ -178,7 +178,7 @@ class LaporanController extends Controller
                 <th>No</th><th>ID Lokasi</th><th>Nama Lokasi</th><th>Dibuat Oleh</th>
                 <th>Tanggal Masuk</th><th>Driver</th><th>No Mobil</th><th>No DN</th>
                 <th>Tipe Penerimaan</th><th>Asal Pabrik</th><th>Produk</th><th>Jumlah</th>
-                <th>Best Before</th><th>Batch</th><th>Satuan</th><th>Durasi Input</th><th>Catatan</th>
+                <th>Best Before</th><th>Batch</th><th>Satuan</th><th>Status</th><th>Durasi Input</th><th>Catatan</th>
             </tr>";
             $no = 1;
             foreach ($rows as $row) {
@@ -198,6 +198,7 @@ class LaporanController extends Controller
                     <td>'.htmlspecialchars($row->best_before ?? '').'</td>
                     <td>'.htmlspecialchars($row->batch ?? '').'</td>
                     <td>'.htmlspecialchars($row->satuan ?? '').'</td>
+                    <td>'.htmlspecialchars($row->status ?? '').'</td>
                     <td>'.htmlspecialchars($row->durasi_input ?? '').'</td>
                     <td>'.htmlspecialchars($row->catatan ?? '').'</td>
                 </tr>';
@@ -260,8 +261,8 @@ class LaporanController extends Controller
         }
 
         return $this->renderExcelResponse("Laporan Gabungan {$from} s-d {$to}.xls", function () use ($resInbound, $resOutbound, $from, $to) {
-            echo "<table border='1'><tr><th colspan='16'>LAPORAN BARANG MASUK ({$from} s/d {$to})</th></tr>";
-            echo '<tr><th>No</th><th>ID Lokasi</th><th>Nama Lokasi</th><th>Dibuat Oleh</th><th>Tanggal Masuk</th><th>Driver</th><th>No Mobil</th><th>No DN</th><th>Tipe Penerimaan</th><th>Asal Pabrik</th><th>Produk</th><th>Jumlah</th><th>Best Before</th><th>Batch</th><th>Satuan</th><th>Catatan</th></tr>';
+            echo "<table border='1'><tr><th colspan='17'>LAPORAN BARANG MASUK ({$from} s/d {$to})</th></tr>";
+            echo '<tr><th>No</th><th>ID Lokasi</th><th>Nama Lokasi</th><th>Dibuat Oleh</th><th>Tanggal Masuk</th><th>Driver</th><th>No Mobil</th><th>No DN</th><th>Tipe Penerimaan</th><th>Asal Pabrik</th><th>Produk</th><th>Jumlah</th><th>Best Before</th><th>Batch</th><th>Satuan</th><th>Status</th><th>Catatan</th></tr>';
             $no = 1;
             foreach ($resInbound as $row) {
                 echo '<tr>
@@ -280,6 +281,7 @@ class LaporanController extends Controller
                     <td>'.htmlspecialchars($row->best_before ?? '').'</td>
                     <td>'.htmlspecialchars($row->batch ?? '').'</td>
                     <td>'.htmlspecialchars($row->satuan ?? '').'</td>
+                    <td>'.htmlspecialchars($row->status ?? '').'</td>
                     <td>'.htmlspecialchars($row->catatan ?? '').'</td>
                 </tr>';
             }

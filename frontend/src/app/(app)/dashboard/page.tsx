@@ -1,1584 +1,177 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Script from "next/script";
-import Link from "next/link";
-import { apiGet } from "@/lib/api";
-import { useSession, lokasiParam, type Session } from "@/lib/auth";
-
-type Summary = {
-  mutasi_total: number;
-  inbound: { bulan_ini: number; series: { tanggal: string; qty: number }[] };
-  outbound: {
-    bulan_ini: number;
-    pending: number;
-    series: { tanggal: string; qty: number }[];
-  };
-  stock: { zona: Record<string, number>; total_qty: number };
-  stok_list: { nama_produk: string; stok: number; satuan?: string }[];
-  penjualan: { nama_produk: string; qty: number }[];
-};
-
-const dashCss = `
-:root {
-  --primary-navy: #191970;
-  --primary-navy-hover: #121254;
-  --primary-navy-soft: #EEF2FF;
-  --primary-navy-border: #C7D2FE;
-  
-  --danger-red: #DC2626;
-  --danger-red-soft: #FEF2F2;
-  --danger-red-border: #FCA5A5;
-  
-  --success-green: #10B981;
-  --success-green-soft: #ECFDF5;
-  
-  --warning-amber: #F59E0B;
-  --warning-amber-soft: #FFFBEB;
-  
-  --text-dark: #0F172A;
-  --text-medium: #475569;
-  --text-muted: #64748B;
-  --text-light: #94A3B8;
-  
-  --bg-page: #F8FAFC;
-  --bg-card: #FFFFFF;
-  --border-light: #E2E8F0;
-  --border-subtle: #F1F5F9;
-}
-
-.dash-container {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  width: 100%;
-  max-width: 1600px;
-  min-width: 0;
-  margin: 0 auto;
-  overflow-x: clip;
-}
-
-/* Header & Welcome Banner */
-.dash-welcome-card {
-  background: linear-gradient(135deg, #191970 0%, #2A2A8F 100%);
-  border-radius: 20px;
-  padding: 24px 28px;
-  color: #FFFFFF;
-  box-shadow: 0 10px 25px -5px rgba(25, 25, 112, 0.25);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 20px;
-  position: relative;
-  overflow: hidden;
-}
-
-.dash-welcome-card::before {
-  content: "";
-  position: absolute;
-  top: -40px;
-  right: -40px;
-  width: 180px;
-  height: 180px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  pointer-events: none;
-}
-
-.dash-welcome-card::after {
-  content: "";
-  position: absolute;
-  bottom: -50px;
-  right: 120px;
-  width: 140px;
-  height: 140px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.04);
-  pointer-events: none;
-}
-
-.welcome-info {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  z-index: 1;
-}
-
-.welcome-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(8px);
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  width: fit-content;
-}
-
-.welcome-title {
-  font-size: 24px;
-  font-weight: 800;
-  margin: 0;
-  letter-spacing: -0.5px;
-  line-height: 1.2;
-}
-
-.welcome-sub {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
-  margin: 0;
-}
-
-.dash-filter-pill {
-  z-index: 1;
-  background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 14px;
-  padding: 8px 16px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.dash-filter-pill label {
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.dash-filter-pill input[type="month"] {
-  background: #FFFFFF;
-  color: var(--primary-navy);
-  border: none;
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-weight: 700;
-  font-size: 13px;
-  outline: none;
-  cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  max-width: 100%;
-  min-width: 0;
-}
-
-/* Metric KPI Cards Grid */
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-}
-
-.kpi-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 16px;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 16px;
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.kpi-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: var(--card-accent, var(--primary-navy));
-}
-
-.kpi-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 20px -5px rgba(15, 23, 42, 0.08);
-  border-color: var(--card-border-hover, var(--primary-navy-border));
-}
-
-.kpi-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.kpi-icon-wrapper {
-  width: 46px;
-  height: 46px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  transition: transform 0.2s;
-}
-
-.kpi-card:hover .kpi-icon-wrapper {
-  transform: scale(1.08);
-}
-
-.kpi-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-medium);
-  margin: 0;
-}
-
-.kpi-value {
-  font-size: 26px;
-  font-weight: 800;
-  color: var(--text-dark);
-  letter-spacing: -0.5px;
-  line-height: 1.1;
-  margin-top: 4px;
-}
-
-.kpi-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 600;
-  border-top: 1px dashed var(--border-subtle);
-  padding-top: 12px;
-}
-
-.kpi-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-/* Card Specific Themes */
-.kpi-inbound {
-  --card-accent: var(--success-green);
-  --card-border-hover: #A7F3D0;
-}
-.kpi-inbound .kpi-icon-wrapper {
-  background: var(--success-green-soft);
-  color: var(--success-green);
-}
-.kpi-inbound .kpi-tag {
-  background: var(--success-green-soft);
-  color: var(--success-green);
-}
-
-.kpi-outbound {
-  --card-accent: var(--danger-red);
-  --card-border-hover: var(--danger-red-border);
-}
-.kpi-outbound .kpi-icon-wrapper {
-  background: var(--danger-red-soft);
-  color: var(--danger-red);
-}
-.kpi-outbound .kpi-tag {
-  background: var(--danger-red-soft);
-  color: var(--danger-red);
-}
-
-.kpi-mutasi {
-  --card-accent: var(--primary-navy);
-  --card-border-hover: var(--primary-navy-border);
-}
-.kpi-mutasi .kpi-icon-wrapper {
-  background: var(--primary-navy-soft);
-  color: var(--primary-navy);
-}
-.kpi-mutasi .kpi-tag {
-  background: var(--primary-navy-soft);
-  color: var(--primary-navy);
-}
-
-.kpi-stock {
-  --card-accent: var(--warning-amber);
-  --card-border-hover: #FDE68A;
-}
-.kpi-stock .kpi-icon-wrapper {
-  background: var(--warning-amber-soft);
-  color: var(--warning-amber);
-}
-.kpi-stock .kpi-tag {
-  background: var(--warning-amber-soft);
-  color: var(--warning-amber);
-}
-
-/* Alert Widget */
-.dash-alert-banner {
-  background: linear-gradient(90deg, #FEF2F2 0%, #FFFFFF 100%);
-  border: 1px solid var(--danger-red-border);
-  border-left: 5px solid var(--danger-red);
-  border-radius: 14px;
-  padding: 16px 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.06);
-}
-
-.dash-alert-content {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.dash-alert-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: #FEE2E2;
-  color: var(--danger-red);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  flex-shrink: 0;
-}
-
-.dash-alert-text {
-  font-size: 13px;
-  color: #7F1D1D;
-  margin: 0;
-  line-height: 1.4;
-}
-
-.dash-alert-text strong {
-  color: var(--danger-red);
-  font-weight: 800;
-}
-
-.dash-alert-btn {
-  background: var(--danger-red);
-  color: #FFFFFF;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 8px 16px;
-  border-radius: 8px;
-  text-decoration: none;
-  transition: all 0.2s;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.2);
-}
-
-.dash-alert-btn:hover {
-  background: #B91C1C;
-  color: #FFFFFF;
-  box-shadow: 0 4px 10px rgba(220, 38, 38, 0.3);
-}
-
-/* Section Grid Layout */
-.dash-main-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  width: 100%;
-  min-width: 0;
-}
-
-.chart-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 18px;
-  padding: 22px;
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.03);
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.chart-card-full {
-  grid-column: 1 / -1;
-}
-
-.card-header-flex {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  margin-bottom: 18px;
-  gap: 10px;
-}
-
-.card-header-title {
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--text-dark);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-}
-
-.card-header-title i {
-  color: var(--primary-navy);
-  font-size: 18px;
-}
-
-.card-header-sub {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.canvas-wrapper {
-  position: relative;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  height: 290px;
-}
-
-.canvas-wrapper canvas {
-  max-width: 100% !important;
-}
-
-/* Stock Health Section */
-.multi-select-container {
-  position: relative;
-  min-width: 160px;
-  max-width: 100%;
-  flex-shrink: 1;
-}
-
-.multi-select-btn {
-  background: var(--bg-page);
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-dark);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  cursor: pointer;
-  width: 100%;
-  transition: all 0.2s;
-}
-
-.multi-select-btn:hover {
-  border-color: var(--primary-navy);
-  background: #FFFFFF;
-}
-
-.multi-select-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  width: 260px;
-  max-width: calc(100vw - 60px);
-  max-height: 240px;
-  overflow-y: auto;
-  background: #FFFFFF;
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
-  z-index: 50;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.multi-select-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dark);
-  cursor: pointer;
-  user-select: none;
-}
-
-.multi-select-item:hover {
-  background: var(--primary-navy-soft);
-  color: var(--primary-navy);
-}
-
-.multi-select-item input[type="checkbox"] {
-  accent-color: var(--primary-navy);
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-}
-
-.multi-select-clear {
-  font-size: 11px;
-  color: var(--danger-red);
-  font-weight: 700;
-  padding: 4px 8px;
-  text-align: right;
-  cursor: pointer;
-  border-bottom: 1px solid var(--border-subtle);
-  margin-bottom: 4px;
-}
-
-.multi-select-clear:hover {
-  text-decoration: underline;
-}
-
-.stock-search-box {
-  position: relative;
-  margin-bottom: 12px;
-}
-
-.stock-search-box input {
-  width: 100%;
-  padding: 8px 14px 8px 36px;
-  border-radius: 10px;
-  border: 1px solid var(--border-light);
-  font-size: 13px;
-  outline: none;
-  background: var(--bg-page);
-  transition: all 0.2s;
-}
-
-.stock-search-box input:focus {
-  background: #FFFFFF;
-  border-color: var(--primary-navy);
-  box-shadow: 0 0 0 3px rgba(25, 25, 112, 0.08);
-}
-
-.stock-search-box i {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-light);
-  font-size: 14px;
-}
-
-.stock-list-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 330px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.stock-item-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: var(--bg-page);
-  border: 1px solid var(--border-subtle);
-  transition: background 0.15s;
-  gap: 12px;
-}
-
-.stock-item-row:hover {
-  background: #F1F5F9;
-}
-
-.stock-item-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  flex: 1;
-}
-
-.stock-rank-badge {
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
-  background: var(--primary-navy-soft);
-  color: var(--primary-navy);
-  font-size: 11px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.stock-item-details {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.stock-item-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-dark);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.stock-progress-bar {
-  width: 100%;
-  height: 5px;
-  border-radius: 999px;
-  background: #E2E8F0;
-  margin-top: 6px;
-  overflow: hidden;
-}
-
-.stock-progress-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--primary-navy) 0%, #3B82F6 100%);
-  transition: width 0.4s ease;
-}
-
-.stock-item-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.stock-count-text {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--primary-navy);
-}
-
-.stock-status-tag {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-.tag-safe { background: var(--success-green-soft); color: var(--success-green); }
-.tag-warning { background: var(--warning-amber-soft); color: var(--warning-amber); }
-.tag-danger { background: var(--danger-red-soft); color: var(--danger-red); }
-
-.dash-empty-state {
-  text-align: center;
-  padding: 40px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.dash-empty-icon {
-  font-size: 36px;
-  color: var(--text-light);
-  margin-bottom: 8px;
-}
-
-@media (max-width: 1024px) {
-  .dash-main-grid {
-    grid-template-columns: 1fr;
-  }
-  .chart-card-full {
-    grid-column: auto;
-  }
-}
-
-@media (max-width: 640px) {
-  .dash-container {
-    gap: 14px;
-  }
-  .dash-welcome-card {
-    padding: 18px 20px;
-  }
-  .welcome-title {
-    font-size: 20px;
-  }
-  .dash-filter-pill {
-    width: 100%;
-    max-width: 100%;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  .kpi-grid {
-    grid-template-columns: 1fr;
-  }
-  .kpi-card {
-    padding: 16px;
-  }
-  .kpi-value {
-    font-size: 22px;
-  }
-  .dash-main-grid {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-  .chart-card {
-    padding: 16px;
-    border-radius: 14px;
-  }
-  .card-header-flex {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .card-header-title {
-    font-size: 14px;
-  }
-  .multi-select-container {
-    width: 100%;
-    min-width: 0;
-  }
-  .multi-select-btn {
-    width: 100%;
-  }
-  .multi-select-dropdown {
-    left: 0;
-    right: 0;
-    width: auto;
-    max-width: 100%;
-  }
-  .canvas-wrapper {
-    height: 240px;
-  }
-  .dash-alert-banner {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .dash-alert-btn {
-    width: 100%;
-    justify-content: center;
-  }
-}
-`;
-
-const fmt = (n: string | number) => new Intl.NumberFormat("id-ID").format(Number(n) || 0);
-
-// Rumus persen okupansi gudang — sama persis dengan card Gabungan di halaman stock
-// (stock-view.tsx): bilangan bulat, max 100, 0 bila kapasitas tidak ada.
-const persenOkupansi = (qty: number, kap: number) =>
-  kap > 0 ? Math.min(100, Math.round((qty / kap) * 100)) : 0;
-
-const ZONAS: [string, string][] = [
-  ["normal", "Normal"],
-  ["bad", "Bad Stock"],
-  ["reject", "Reject"],
-  ["receh", "Receh"],
-  ["mobil", "Mobil"],
-  ["festive", "Festive"],
-  ["transit", "Transit"],
-  ["hold", "Hold"],
-  ["qi", "QI"],
-];
-
-// High-contrast color palette using Navy, Red, Amber, Emerald, Indigo, Slate & Bright Yellow for QI
-const ZONA_COLORS = [
-  "#10B981", // Normal - Emerald Green
-  "#DC2626", // Bad Stock - Crimson Red
-  "#EF4444", // Reject - Light Red
-  "#F59E0B", // Receh - Amber
-  "#8B5CF6", // Mobil - Violet
-  "#6366F1", // Festive - Indigo
-  "#0EA5E9", // Transit - Sky Blue
-  "#64748B", // Hold - Slate
-  "#FACC15", // QI - Bright Yellow
-];
-
-// Slice di bawah threshold ini terlalu kecil untuk teks (dilewati, nilainya tetap
-// terlihat via tooltip). Disamakan dengan perilaku datalabels sebelumnya.
-const ZONA_LABEL_MIN_PCT = 5;
-
-// Plugin Chart.js inline: menulis angka exact di tengah tiap slice pie.
-// Inline (bukan CDN) agar label dijamin tampil tanpa request jaringan tambahan.
-const zonaValueLabels = {
-  id: "zonaValueLabels",
-  afterDatasetsDraw(chart: unknown) {
-    const c = chart as {
-      config?: { type?: string };
-      ctx?: CanvasRenderingContext2D;
-      data?: { datasets?: { data?: unknown[]; backgroundColor?: unknown }[] };
-      getDatasetMeta?: (i: number) => { data?: unknown[] };
-    };
-    if (c.config?.type !== "pie") return;
-    const ctx = c.ctx;
-    const dataset = c.data?.datasets?.[0];
-    const values = ((dataset?.data as number[] | undefined) || []).map((v) => Number(v) || 0);
-    if (!ctx || values.length === 0) return;
-    const total = values.reduce((a, v) => a + v, 0);
-    if (total <= 0) return;
-    const arcs = c.getDatasetMeta?.(0)?.data || [];
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
-    const bgList = Array.isArray(dataset?.backgroundColor)
-      ? (dataset?.backgroundColor as string[])
-      : [];
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = `800 ${isMobile ? 10 : 12}px system-ui, -apple-system, "Segoe UI", sans-serif`;
-    values.forEach((v, i) => {
-      if ((v / total) * 100 < ZONA_LABEL_MIN_PCT) return;
-      const el = arcs[i] as
-        | {
-            x?: number;
-            y?: number;
-            startAngle?: number;
-            endAngle?: number;
-            outerRadius?: number;
-            innerRadius?: number;
-            getProps?: (props: string[], useFinal: boolean) => Record<string, number>;
-            tooltipPosition?: (useFinal?: boolean) => { x: number; y: number };
-            getCenterPoint?: (useFinal?: boolean) => { x: number; y: number };
-          }
-        | undefined;
-      if (!el) return;
-      let pos: { x: number; y: number } | null = null;
-      if (typeof el.tooltipPosition === "function") {
-        try {
-          pos = el.tooltipPosition(true);
-        } catch {
-          pos = null;
-        }
-      }
-      if (!pos && typeof el.getCenterPoint === "function") {
-        try {
-          pos = el.getCenterPoint(true);
-        } catch {
-          pos = null;
-        }
-      }
-      if (!pos) {
-        const p =
-          typeof el.getProps === "function"
-            ? el.getProps(["x", "y", "startAngle", "endAngle", "outerRadius", "innerRadius"], true)
-            : (el as Record<string, number>);
-        if (
-          typeof p.x !== "number" ||
-          typeof p.y !== "number" ||
-          typeof p.startAngle !== "number" ||
-          typeof p.endAngle !== "number" ||
-          typeof p.outerRadius !== "number"
-        ) {
-          return;
-        }
-        const mid = (p.startAngle + p.endAngle) / 2;
-        const r = ((p.outerRadius || 0) + (p.innerRadius || 0)) / 2;
-        pos = { x: p.x + Math.cos(mid) * r, y: p.y + Math.sin(mid) * r };
-      }
-      const bg = bgList[i];
-      const darkText = bg === "#FACC15" || bg === "#F59E0B";
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = darkText ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.35)";
-      ctx.fillStyle = darkText ? "#0F172A" : "#FFFFFF";
-      const label = fmt(v);
-      ctx.strokeText(label, pos.x, pos.y);
-      ctx.fillText(label, pos.x, pos.y);
-    });
-    ctx.restore();
-  },
-};
+import { useMemo, useState } from "react";
+import { useSession } from "@/lib/auth";
+import FilterBar from "./components/FilterBar";
+import KpiCard from "./components/KpiCard";
+import StorageUsageCard from "./components/StorageUsageCard";
+import TransactionVolume from "./components/TransactionVolume";
+import PendingAlert from "./components/PendingAlert";
+import TrendChart from "./components/TrendChart";
+import TypeCharts from "./components/TypeCharts";
+import GroupBarChart from "./components/GroupBarChart";
+import ZonaPie from "./components/ZonaPie";
+import ExpiredAlertList from "./components/ExpiredAlertList";
+import StockHealthList from "./components/StockHealthList";
+import ChartCard from "./components/ChartCard";
+import {
+  defaultFilters,
+  useDashboardSummary,
+  useRackCapacity,
+  type DashboardFilters,
+} from "./hooks/useDashboardSummary";
+import { fmt } from "./dashboard";
 
 export default function DashboardPage() {
   const session = useSession();
-  const [bulan, setBulan] = useState(() => new Date().toISOString().slice(0, 7));
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [totalKapRak, setTotalKapRak] = useState(0);
-  const [stokSearch, setStokSearch] = useState("");
-  const [selectedProduks, setSelectedProduks] = useState<string[]>([]);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [showAllPenjualan, setShowAllPenjualan] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [filters, setFilters] = useState<DashboardFilters>(defaultFilters);
 
-  const lineRef = useRef<HTMLCanvasElement>(null);
-  const pieRef = useRef<HTMLCanvasElement>(null);
-  const barRef = useRef<HTMLCanvasElement>(null);
+  const { summary, loading, error } = useDashboardSummary(session, filters);
+  const kapasitasRak = useRackCapacity(session, filters.depo);
 
-  const lineChartRef = useRef<unknown>(null);
-  const pieChartRef = useRef<unknown>(null);
-  const barChartRef = useRef<unknown>(null);
-
-  useEffect(() => {
-    if (!session) return;
-    const params = new URLSearchParams(lokasiParam(session as Session));
-    params.set("bulan", bulan);
-    if (selectedProduks.length > 0) {
-      params.set("produk", selectedProduks.join(","));
-    }
-    apiGet<Summary>(`/dashboard/summary?${params.toString()}`)
-      .then((r) => setSummary(r.data || (r as unknown as Summary)))
-      .catch(() => setSummary(null));
-  }, [session, bulan, selectedProduks]);
-
-  // Total kapasitas rak gudang (penyebut persen okupansi, sama seperti card
-  // Gabungan di halaman stock). Kapasitas itu per-gudang, bukan per-bulan/produk,
-  // jadi cukup di-fetch per lokasi tanpa param bulan & produk.
-  useEffect(() => {
-    if (!session) return;
-    const params = new URLSearchParams(lokasiParam(session as Session));
-    apiGet<{ total_kapasitas: number }[]>(`/stok?mode=kapasitas_total&${params.toString()}`)
-      .then((r) => {
-        const rows = r.data || [];
-        const v = parseInt(String(rows[0]?.total_kapasitas ?? ""), 10);
-        setTotalKapRak(isNaN(v) ? 0 : v);
-      })
-      .catch(() => setTotalKapRak(0));
-  }, [session]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setIsDropdownOpen(false);
-      }
+  const storage = useMemo(() => {
+    const reg = summary?.storage_regular;
+    if (reg && reg.kapasitas > 0) return reg;
+    // Fallback: hitung dari total_qty vs kapasitas rak.
+    const terpakai = summary?.stock?.total_qty ?? 0;
+    const kap = kapasitasRak || 0;
+    return {
+      terpakai,
+      kapasitas: kap,
+      persen: kap > 0 ? Math.round((terpakai / kap) * 100) : 0,
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const loadCharts = useCallback(() => {
-    const win = window as unknown as {
-      Chart?: new (ctx: string | CanvasRenderingContext2D, cfg: unknown) => unknown;
-    };
-    const Chart = win.Chart;
-    if (!Chart || !summary) return;
-    // Daftarkan plugin label angka pie sekali saja (inline, tanpa CDN).
-    const ChartAny = Chart as unknown as {
-      register?: (p: unknown) => void;
-      _zonaLabelsRegistered?: boolean;
-    };
-    if (!ChartAny._zonaLabelsRegistered && ChartAny.register) {
-      ChartAny.register(zonaValueLabels);
-      ChartAny._zonaLabelsRegistered = true;
-    }
-    const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
-    const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-
-    // Line Chart: Daily Inbound vs Outbound
-    const line = lineRef.current;
-    if (line) {
-      (lineChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-      const ctx = line.getContext("2d")!;
-
-      const navyGrad = ctx.createLinearGradient(0, 0, 0, 250);
-      navyGrad.addColorStop(0, "rgba(25, 25, 112, 0.25)");
-      navyGrad.addColorStop(1, "rgba(25, 25, 112, 0.0)");
-
-      lineChartRef.current = new Chart(ctx, {
-        type: "line",
-        data: {
-          labels: (summary.inbound?.series || []).map((s) => s.tanggal.slice(8, 10) + "/" + s.tanggal.slice(5, 7)),
-          datasets: [
-            {
-              label: "Barang Masuk (Inbound)",
-              data: (summary.inbound?.series || []).map((s) => s.qty),
-              borderColor: "#191970",
-              backgroundColor: navyGrad,
-              borderWidth: 2.5,
-              pointRadius: 4,
-              pointHoverRadius: 6,
-              pointBackgroundColor: "#191970",
-              tension: 0.3,
-              fill: true,
-            },
-            {
-              label: "Barang Keluar (Outbound)",
-              data: (summary.outbound?.series || []).map((s) => s.qty),
-              borderColor: "#DC2626",
-              backgroundColor: "transparent",
-              borderWidth: 2,
-              borderDash: [5, 5],
-              pointRadius: 3,
-              pointHoverRadius: 5,
-              pointBackgroundColor: "#DC2626",
-              tension: 0.3,
-              fill: false,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              position: "top",
-              labels: {
-                usePointStyle: true,
-                boxWidth: isMobile ? 6 : 8,
-                font: { size: isMobile ? 10 : 12, weight: "700", family: "inherit" },
-                padding: isMobile ? 10 : 16,
-              },
-            },
-            tooltip: {
-              backgroundColor: "#0F172A",
-              titleFont: { size: 12, weight: "bold" },
-              bodyFont: { size: 12 },
-              padding: 10,
-              cornerRadius: 8,
-            },
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              grid: { color: "#F1F5F9" },
-              ticks: { font: { size: 11, weight: "600" }, color: "#64748B" },
-            },
-            x: {
-              grid: { display: false },
-              ticks: {
-                font: { size: isMobile ? 9 : 11, weight: "600" },
-                color: "#64748B",
-                maxTicksLimit: isMobile ? 6 : 15,
-                maxRotation: isMobile ? 45 : 0,
-                autoSkip: true,
-              },
-            },
-          },
-          interaction: { mode: "nearest", axis: "x", intersect: false },
-        },
-      });
-    }
-
-    // Pie Chart: Zona Stock Breakdown (hanya zona berisi, angka exact di dalam slice)
-    {
-      const zona = (summary.stock?.zona || {}) as Record<string, number>;
-      const zonaAktif = ZONAS.map((z, i) => ({
-        key: z[0],
-        label: z[1],
-        value: zona[z[0]] || 0,
-        color: ZONA_COLORS[i % ZONA_COLORS.length],
-      })).filter((d) => d.value > 0);
-      const zonaTotal = zonaAktif.reduce((a, d) => a + d.value, 0);
-      if (zonaAktif.length === 0 || zonaTotal === 0) {
-        (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-        pieChartRef.current = null;
-      } else {
-        const pie = pieRef.current;
-        if (pie) {
-          (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-          const ctx = pie.getContext("2d");
-          if (ctx) {
-      pieChartRef.current = new Chart(ctx, {
-        type: "pie",
-        data: {
-          labels: zonaAktif.map((d) => d.label),
-          datasets: [
-            {
-              data: zonaAktif.map((d) => d.value),
-              backgroundColor: zonaAktif.map((d) => d.color),
-              borderWidth: 2,
-              borderColor: "#FFFFFF",
-              hoverOffset: 8,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              position: isMobile ? "bottom" : "right",
-              labels: {
-                usePointStyle: true,
-                padding: isMobile ? 8 : 12,
-                font: { size: isMobile ? 10 : 11, weight: "600", family: "inherit" },
-              },
-            },
-            tooltip: {
-              backgroundColor: "#0F172A",
-              padding: 10,
-              cornerRadius: 8,
-              callbacks: {
-                label: (c: { label?: string; parsed?: number }) => {
-                  const v = Number(c.parsed ?? 0);
-                  const pct = zonaTotal > 0 ? ((v / zonaTotal) * 100).toFixed(1) : "0.0";
-                  return ` ${c.label ?? ""}: ${fmt(v)} pcs (${pct}%)`;
-                },
-              },
-            },
-          },
-        },
-      });
-          }
-        }
-      }
-    }
-
-    // Bar Chart: Top Sales Product
-    const bar = barRef.current;
-    if (bar) {
-      (barChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-      const ctx = bar.getContext("2d");
-      if (!ctx) return;
-
-      const rawPenjualan = summary.penjualan || [];
-      const displayPenjualan = showAllPenjualan ? rawPenjualan : rawPenjualan.slice(0, 5);
-
-      // In Chart.js horizontal bar chart (indexAxis: 'y'), the first element in data/labels is displayed at the top.
-      const labels = displayPenjualan.map((s) => s.nama_produk);
-      const sold = displayPenjualan.map((s) => s.qty);
-
-      barChartRef.current = new Chart(ctx, {
-        type: "bar",
-        data: {
-          labels: labels,
-          datasets: [
-            {
-              label: "Kuantitas Terjual",
-              data: sold,
-              backgroundColor: "#191970",
-              hoverBackgroundColor: "#2A2A8F",
-              borderRadius: 6,
-              barThickness: isMobile ? 18 : 24,
-            },
-          ],
-        },
-        options: {
-          indexAxis: "y",
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              backgroundColor: "#0F172A",
-              padding: 10,
-              cornerRadius: 8,
-            },
-          },
-          scales: {
-            x: {
-              beginAtZero: true,
-              grid: { color: "#F1F5F9" },
-              ticks: { font: { size: 11, weight: "600" }, color: "#64748B" },
-            },
-            y: {
-              reverse: false,
-              grid: { display: false },
-              ticks: {
-                font: { size: isMobile ? 10 : 11, weight: "600" },
-                color: "#334155",
-                callback: function (
-                  this: { getLabelForValue?: (v: number) => string },
-                  val: unknown
-                ): string {
-                  const raw =
-                    typeof this.getLabelForValue === "function"
-                      ? this.getLabelForValue(val as number)
-                      : String(val);
-                  return isMobile ? truncate(raw, 18) : raw;
-                },
-              },
-            },
-          },
-        },
-      });
-    }
-  }, [summary, showAllPenjualan]);
-
-  useEffect(() => {
-    loadCharts();
-  }, [loadCharts]);
-
-  // Render ulang chart saat viewport berubah (rotasi HP / resize)
-  // agar opsi mobile (legend, ticks) ikut menyesuaikan.
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    function onResize() {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => loadCharts(), 200);
-    }
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      if (t) clearTimeout(t);
-    };
-  }, [loadCharts]);
-
-  useEffect(() => {
-    return () => {
-      (lineChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-      (pieChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-      (barChartRef.current as { destroy?: () => void } | null)?.destroy?.();
-    };
-  }, []);
-
-  const filteredStok = useMemo(() => {
-    if (!summary?.stok_list) return [];
-    if (!stokSearch.trim()) return summary.stok_list;
-    const q = stokSearch.toLowerCase();
-    return summary.stok_list.filter((s) => s.nama_produk.toLowerCase().includes(q));
-  }, [summary, stokSearch]);
-
-  const maxStokVal = useMemo(() => {
-    if (!summary?.stok_list?.length) return 1;
-    return Math.max(...summary.stok_list.map((s) => s.stok)) || 1;
-  }, [summary]);
-
-  const namaGudang = useMemo(() => {
-    if (!session) return "Gudang Utama";
-    const u = session.user;
-    if (u.nama_pengguna_lokasi && u.nama_pengguna_lokasi.trim() !== "") {
-      return u.nama_pengguna_lokasi;
-    }
-    return "Gudang Utama";
-  }, [session]);
-
-  const zonaAktifCount = useMemo(() => {
-    const zona = (summary?.stock?.zona || {}) as Record<string, number>;
-    return ZONAS.filter((z) => (zona[z[0]] || 0) > 0).length;
-  }, [summary]);
-
-  const zonaTotalQty = useMemo(() => {
-    const zona = (summary?.stock?.zona || {}) as Record<string, number>;
-    return ZONAS.reduce((a, z) => a + (zona[z[0]] || 0), 0);
-  }, [summary]);
-
-  // Persen okupansi gudang = total stok fisik / total kapasitas rak,
-  // sama persis dengan pill % di card Gabungan halaman stock.
-  const okupansiPersen = useMemo(
-    () => persenOkupansi(summary?.stock?.total_qty ?? 0, totalKapRak),
-    [summary, totalKapRak]
-  );
+  }, [summary, kapasitasRak]);
 
   if (!session) return null;
 
-  const bulanLabelFull = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(
-    new Date(`${bulan}-01`)
-  );
-
   return (
-    <>
-      <Script
-        src="https://cdn.jsdelivr.net/npm/chart.js"
-        strategy="afterInteractive"
-        onReady={loadCharts}
-        onLoad={loadCharts}
-      />
-      <style>{dashCss}</style>
+    <div className="space-y-4">
+      <FilterBar session={session} filters={filters} onChange={setFilters} />
 
-      <div className="dash-container">
-        {/* Welcome & Filter Banner */}
-        <div className="dash-welcome-card">
-          <div className="welcome-info">
-            <div className="welcome-badge">
-              <i className="bi bi-building"></i> Gudang {namaGudang}
-            </div>
-            <h1 className="welcome-title">Ringkasan Operasional Gudang</h1>
-            <p className="welcome-sub">
-              Monitor arus barang masuk, barang keluar, dan ketersediaan stok fisik periode {bulanLabelFull}
-            </p>
-          </div>
-          <div className="dash-filter-pill">
-            <label htmlFor="bulan">
-              <i className="bi bi-calendar-range"></i> Periode Bulan:
-            </label>
-            <input
-              type="month"
-              id="bulan"
-              value={bulan}
-              onChange={(e) => setBulan(e.target.value)}
-            />
-          </div>
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12.5px] text-red-700">
+          {error}
         </div>
+      )}
 
-        {/* KPI Cards Grid */}
-        <div className="kpi-grid">
-          <div className="kpi-card kpi-inbound">
-            <div className="kpi-header">
-              <div>
-                <div className="kpi-title">Barang Masuk</div>
-                <div className="kpi-value">{fmt(summary?.inbound?.bulan_ini ?? 0)}</div>
-              </div>
-              <div className="kpi-icon-wrapper">
-                <i className="bi bi-box-arrow-in-down"></i>
-              </div>
-            </div>
-            <div className="kpi-footer">
-              <span className="kpi-tag"><i className="bi bi-arrow-down-right"></i> Total Inbound</span>
-              <span>Periode {bulanLabelFull}</span>
-            </div>
-          </div>
+      <PendingAlert pending={summary?.outbound?.pending ?? 0} />
 
-          <div className="kpi-card kpi-outbound">
-            <div className="kpi-header">
-              <div>
-                <div className="kpi-title">Barang Keluar</div>
-                <div className="kpi-value">{fmt(summary?.outbound?.bulan_ini ?? 0)}</div>
-              </div>
-              <div className="kpi-icon-wrapper">
-                <i className="bi bi-box-arrow-up"></i>
-              </div>
-            </div>
-            <div className="kpi-footer">
-              <span className="kpi-tag"><i className="bi bi-arrow-up-right"></i> Total Outbound</span>
-              <span>Periode {bulanLabelFull}</span>
-            </div>
-          </div>
-
-          <div className="kpi-card kpi-mutasi">
-            <div className="kpi-header">
-              <div>
-                <div className="kpi-title">Total Mutasi</div>
-                <div className="kpi-value">{fmt(summary?.mutasi_total ?? 0)}</div>
-              </div>
-              <div className="kpi-icon-wrapper">
-                <i className="bi bi-arrow-left-right"></i>
-              </div>
-            </div>
-            <div className="kpi-footer">
-              <span className="kpi-tag"><i className="bi bi-shuffle"></i> Pergerakan</span>
-              <span>Aktivitas perpindahan barang</span>
-            </div>
-          </div>
-
-          <div className="kpi-card kpi-stock">
-            <div className="kpi-header">
-              <div>
-                <div className="kpi-title">Total Stok Fisik</div>
-                <div
-                  className="kpi-value"
-                  style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
-                  title={
-                    totalKapRak > 0
-                      ? `Okupansi gudang: ${fmt(summary?.stock?.total_qty ?? 0)} / ${fmt(totalKapRak)} kapasitas`
-                      : undefined
-                  }
-                >
-                  {fmt(summary?.stock?.total_qty ?? 0)}
-                  <span className="kpi-tag">{okupansiPersen}%</span>
-                </div>
-              </div>
-              <div className="kpi-icon-wrapper">
-                <i className="bi bi-boxes"></i>
-              </div>
-            </div>
-            <div className="kpi-footer">
-              <span className="kpi-tag"><i className="bi bi-check-circle"></i> Stok Aktif</span>
-              <span>Di seluruh zona penyimpanan</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Alert Outbound Pending */}
-        {(summary?.outbound?.pending ?? 0) > 0 && (
-          <div className="dash-alert-banner">
-            <div className="dash-alert-content">
-              <div className="dash-alert-icon">
-                <i className="bi bi-exclamation-triangle-fill"></i>
-              </div>
-              <p className="dash-alert-text">
-                Terdapat <strong>{Number(summary?.outbound?.pending || 0)} transaksi keluar</strong> yang masih dalam status pending / belum dikonfirmasi.
-              </p>
-            </div>
-            <Link href="/outbound" className="dash-alert-btn">
-              Tindak Lanjuti <i className="bi bi-arrow-right-short"></i>
-            </Link>
-          </div>
-        )}
-
-        {/* Main Analytics Grid */}
-        <div className="dash-main-grid">
-          {/* Trend Line Chart */}
-          <div className="chart-card">
-            <div className="card-header-flex">
-              <div>
-                <h3 className="card-header-title">
-                  <i className="bi bi-graph-up"></i> Tren Transaksi Harian
-                </h3>
-                <div className="card-header-sub">
-                  Perbandingan kuantitas barang masuk &amp; keluar bulan {bulanLabelFull}
-                </div>
-              </div>
-            </div>
-            <div className="canvas-wrapper">
-              <canvas id="lineChart" ref={lineRef}></canvas>
-            </div>
-          </div>
-
-          {/* Zona Stock Pie Chart */}
-          <div className="chart-card">
-            <div className="card-header-flex">
-              <div>
-                <h3 className="card-header-title">
-                  <i className="bi bi-pie-chart-fill"></i> Distribusi Zona Stok
-                </h3>
-                <div className="card-header-sub">
-                  {zonaTotalQty > 0
-                    ? `Total ${fmt(zonaTotalQty)} pcs • ${zonaAktifCount} zona aktif`
-                    : "Persentase barang berdasarkan kategori zona gudang"}
-                </div>
-              </div>
-              <div className="multi-select-container" ref={dropdownRef}>
-                <button
-                  type="button"
-                  className="multi-select-btn"
-                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                >
-                  <span>
-                    {selectedProduks.length === 0
-                      ? "Semua Produk"
-                      : `${selectedProduks.length} Produk Dipilih`}
-                  </span>
-                  <i className={`bi bi-chevron-${isDropdownOpen ? "up" : "down"}`}></i>
-                </button>
-                {isDropdownOpen && (
-                  <div className="multi-select-dropdown">
-                    {selectedProduks.length > 0 && (
-                      <div
-                        className="multi-select-clear"
-                        onClick={() => setSelectedProduks([])}
-                      >
-                        Reset Pilihan (Semua)
-                      </div>
-                    )}
-                    {(summary?.stok_list || []).map((p, i) => {
-                      const isChecked = selectedProduks.includes(p.nama_produk);
-                      return (
-                        <label key={i} className="multi-select-item">
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              if (isChecked) {
-                                setSelectedProduks(selectedProduks.filter((name) => name !== p.nama_produk));
-                              } else {
-                                setSelectedProduks([...selectedProduks, p.nama_produk]);
-                              }
-                            }}
-                          />
-                          <span className="text-truncate">{p.nama_produk}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="canvas-wrapper">
-              {zonaTotalQty > 0 ? (
-                <canvas id="pieChart" ref={pieRef}></canvas>
-              ) : (
-                <div className="dash-empty-state">
-                  <div className="dash-empty-icon"><i className="bi bi-pie-chart"></i></div>
-                  Belum ada stok di zona manapun.
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Penjualan Bar Chart */}
-          <div className="chart-card">
-            <div className="card-header-flex">
-              <div>
-                <h3 className="card-header-title">
-                  <i className="bi bi-bag-check-fill"></i> Barang Keluar Terbanyak
-                </h3>
-                <div className="card-header-sub">
-                  {showAllPenjualan ? "Seluruh produk keluar" : "Top 5 produk keluar terbanyak"} di bulan {bulanLabelFull}
-                </div>
-              </div>
-              {(summary?.penjualan?.length ?? 0) > 5 && (
-                <button
-                  type="button"
-                  className="multi-select-btn"
-                  style={{ width: "auto" }}
-                  onClick={() => setShowAllPenjualan(!showAllPenjualan)}
-                >
-                  <span>{showAllPenjualan ? "Tampilkan Top 5" : "Lihat Semua"}</span>
-                  <i className={`bi bi-${showAllPenjualan ? "dash-circle" : "plus-circle"}`}></i>
-                </button>
-              )}
-            </div>
-            <div
-              className="canvas-wrapper"
-              style={{
-                height: Math.max(
-                  290,
-                  (showAllPenjualan
-                    ? summary?.penjualan?.length ?? 0
-                    : Math.min(5, summary?.penjualan?.length ?? 0)) * 42 + 20
-                ),
-              }}
-            >
-              <canvas id="barChart" ref={barRef}></canvas>
-            </div>
-          </div>
-
-          {/* Health Stock List */}
-          <div className="chart-card">
-            <div className="card-header-flex">
-              <div>
-                <h3 className="card-header-title">
-                  <i className="bi bi-box-seam-fill"></i> Ketersediaan Stok Produk
-                </h3>
-              </div>
-            </div>
-
-            <div className="stock-health-container">
-              <div className="stock-search-box">
-                <i className="bi bi-search"></i>
-                <input
-                  type="text"
-                  placeholder="Cari nama produk..."
-                  value={stokSearch}
-                  onChange={(e) => setStokSearch(e.target.value)}
-                />
-              </div>
-
-              {!filteredStok.length ? (
-                <div className="dash-empty-state">
-                  <div className="dash-empty-icon"><i className="bi bi-inbox"></i></div>
-                  {stokSearch ? "Produk tidak ditemukan." : "Belum ada data stok produk."}
-                </div>
-              ) : (
-                <div className="stock-list-wrap">
-                  {filteredStok.map((item, idx) => {
-                    const pct = Math.round((item.stok / maxStokVal) * 100);
-                    const unitLabel = item.satuan ? item.satuan.toUpperCase() : "PCS";
-
-                    return (
-                      <div className="stock-item-row" key={idx}>
-                        <div className="stock-item-left">
-                          <span className="stock-rank-badge">{idx + 1}</span>
-                          <div className="stock-item-details">
-                            <span className="stock-item-name">{item.nama_produk}</span>
-                            <div className="stock-progress-bar">
-                              <div
-                                className="stock-progress-fill"
-                                style={{ width: `${Math.min(100, Math.max(5, pct))}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="stock-item-right">
-                          <span className="stock-count-text">{fmt(item.stok)} {unitLabel}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* KPI utama */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          label="Total Produk"
+          value={fmt(summary?.produk_realtime?.total_produk ?? 0)}
+          icon="bi-box-seam"
+          hint={`${fmt(summary?.produk_realtime?.total_qty ?? 0)} qty di gudang`}
+          loading={loading}
+        />
+        <StorageUsageCard
+          terpakai={storage.terpakai}
+          kapasitas={storage.kapasitas}
+          persen={storage.persen}
+          loading={loading}
+        />
+        <KpiCard
+          label="Barang Datang"
+          value={fmt(summary?.totals?.barang_datang ?? 0)}
+          tag="Terkonfirmasi"
+          tagTone="success"
+          icon="bi-box-arrow-in-down"
+          loading={loading}
+        />
+        <KpiCard
+          label="Barang Terkirim"
+          value={fmt(summary?.totals?.barang_terkirim ?? 0)}
+          tag="Terkonfirmasi"
+          tagTone="success"
+          icon="bi-send-check"
+          loading={loading}
+        />
       </div>
-    </>
+
+      {/* Volume transaksi */}
+      <TransactionVolume
+        totals={
+          summary?.totals ?? {
+            shipment: 0,
+            so: 0,
+            gin: 0,
+            barang_datang: 0,
+            barang_terkirim: 0,
+          }
+        }
+        loading={loading}
+      />
+
+      {/* Tren harian + zona */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <ChartCard
+            title="Tren Barang Masuk vs Keluar"
+            subtitle="Qty per hari (terkonfirmasi)"
+          >
+            <TrendChart
+              inbound={summary?.inbound?.series ?? []}
+              outbound={summary?.outbound?.series ?? []}
+            />
+          </ChartCard>
+        </div>
+        <ZonaPie zona={summary?.stock?.zona ?? {}} />
+      </div>
+
+      {/* Inbound per tipe */}
+      <TypeCharts
+        title="Inbound per Tipe"
+        subtitle="Transaksi vs terkonfirmasi"
+        data={summary?.inbound_by_type?.data ?? []}
+        overall={
+          summary?.inbound_by_type?.overall ?? {
+            tipe: "Overall",
+            planned: 0,
+            actual: 0,
+            planned_qty: 0,
+            actual_qty: 0,
+          }
+        }
+        meta={(r) => `${r.tipe}`}
+      />
+
+      {/* Outbound per tipe */}
+      <TypeCharts
+        title="Outbound per Tipe"
+        subtitle="Transaksi vs terkonfirmasi"
+        data={summary?.outbound_by_type?.data ?? []}
+        overall={
+          summary?.outbound_by_type?.overall ?? {
+            tipe: "Overall",
+            planned: 0,
+            actual: 0,
+            planned_qty: 0,
+            actual_qty: 0,
+          }
+        }
+        meta={(r) => `${r.tipe}`}
+      />
+
+      {/* Outbound per GIN & per SO */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <GroupBarChart
+          title="Outbound per GIN (Top 10)"
+          subtitle="Transaksi vs terkonfirmasi"
+          rows={summary?.outbound_per_gin ?? []}
+        />
+        <GroupBarChart
+          title="Outbound per No. SO (Top 10)"
+          subtitle="Transaksi vs terkonfirmasi"
+          rows={summary?.outbound_per_so ?? []}
+        />
+      </div>
+
+      {/* Expired & stok */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <ExpiredAlertList rows={summary?.expired_alert ?? []} />
+        <StockHealthList rows={summary?.stok_list ?? []} />
+      </div>
+    </div>
   );
 }
