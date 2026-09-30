@@ -14,8 +14,8 @@ type Props = {
 };
 
 const ITEMS: { key: keyof Props["totals"]; label: string; icon: string; unit?: string }[] = [
-  { key: "shipment", label: "Total Inbound", icon: "bi-box-arrow-in-down" },
-  { key: "gin", label: "Total Outbound", icon: "bi-box-arrow-up" },
+  { key: "shipment", label: "Total Transaksi Inbound", icon: "bi-box-arrow-in-down" },
+  { key: "gin", label: "Total Transaksi Outbound", icon: "bi-box-arrow-up" },
   { key: "barang_datang", label: "Jumlah Barang Masuk", icon: "bi-box-arrow-in-down", unit: "qty" },
   { key: "barang_terkirim", label: "Jumlah Barang Keluar", icon: "bi-send-check", unit: "qty" },
 ];

@@ -110,7 +110,7 @@ export default function InboundTypeTrends({
       tone="inbound"
     >
       <TrendCard
-        title="Inbound Total"
+        title="Inbound Total Transaksi"
         planned={totalPlanned}
         actual={totalActual}
         mode={mode}

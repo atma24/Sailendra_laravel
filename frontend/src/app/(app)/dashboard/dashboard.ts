@@ -24,6 +24,20 @@ export type TypeSeriesRow = {
   series_actual: SeriesPoint[];
 };
 
+/** Satu baris stok/kapasitas. */
+export type ZonaCell = { qty: number; kapasitas: number; persen: number };
+
+/** Breakdown satu item produk per jenis lokasi. */
+export type ZonaStat = {
+  reguler: ZonaCell;
+  mobil: ZonaCell;
+  transit: ZonaCell;
+  bad_reject: ZonaCell;
+};
+
+/** Breakdown gallon/jug: tiap item dipecah per jenis lokasi. */
+export type GallonZona = Record<string, ZonaStat>;
+
 export type ExpiredRow = {
   nama_produk: string;
   batch: string;
@@ -77,6 +91,15 @@ export type Summary = {
   penjualan: { nama_produk: string; qty: number }[];
   produk_realtime: { total_produk: number; total_qty: number };
   storage_regular: { terpakai: number; kapasitas: number; persen: number };
+  storage_luar: { terpakai: number; kapasitas: number; persen: number };
+  gallon_breakdown?: {
+    gallon: { vip: number; aqua: number; vit: number };
+    jug: { aqua: number; vit: number };
+  };
+  gallon_zona?: {
+    gallon: GallonZona;
+    jug: GallonZona;
+  };
   totals: {
     shipment: number;
     so: number;

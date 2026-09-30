@@ -3,8 +3,7 @@
 import { useMemo, useState } from "react";
 import { useSession } from "@/lib/auth";
 import FilterBar from "./components/FilterBar";
-import KpiCard from "./components/KpiCard";
-import StorageUsageCard from "./components/StorageUsageCard";
+import StockSummaryCard from "./components/StockSummaryCard";
 import TransactionVolume from "./components/TransactionVolume";
 import PendingAlert from "./components/PendingAlert";
 import InboundTypeTrends from "./components/InboundTypeTrends";
@@ -17,7 +16,6 @@ import {
   useRackCapacity,
   type DashboardFilters,
 } from "./hooks/useDashboardSummary";
-import { fmt } from "./dashboard";
 
 export default function DashboardPage() {
   const session = useSession();
@@ -56,40 +54,24 @@ export default function DashboardPage() {
 
       <PendingAlert pending={summary?.outbound?.pending ?? 0} />
 
-      {/* KPI utama */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Total Produk"
-          value={fmt(summary?.produk_realtime?.total_produk ?? 0)}
-          icon="bi-box-seam"
-          hint={`${fmt(summary?.produk_realtime?.total_qty ?? 0)} qty di gudang`}
-          loading={loading}
-        />
-        <StorageUsageCard
-          terpakai={storage.terpakai}
-          kapasitas={storage.kapasitas}
-          persen={storage.persen}
-          loading={loading}
-        />
-        <KpiCard
-          label="Barang Datang"
-          value={fmt(summary?.totals?.barang_datang ?? 0)}
-          unit="qty"
-          tag="Terkonfirmasi"
-          tagTone="success"
-          icon="bi-box-arrow-in-down"
-          loading={loading}
-        />
-        <KpiCard
-          label="Barang Terkirim"
-          value={fmt(summary?.totals?.barang_terkirim ?? 0)}
-          unit="qty"
-          tag="Terkonfirmasi"
-          tagTone="success"
-          icon="bi-send-check"
-          loading={loading}
-        />
-      </div>
+      {/* Ringkasan stok realtime: total produk, storage, detail gallon/jug */}
+      <StockSummaryCard
+        totalProduk={summary?.produk_realtime?.total_produk ?? 0}
+        totalQty={summary?.produk_realtime?.total_qty ?? 0}
+        terpakai={storage.terpakai}
+        kapasitas={storage.kapasitas}
+        persen={storage.persen}
+        luar={
+          summary?.storage_luar ?? { terpakai: 0, kapasitas: 0, persen: 0 }
+        }
+        gallon={
+          summary?.gallon_breakdown?.gallon ?? { vip: 0, aqua: 0, vit: 0 }
+        }
+        jug={summary?.gallon_breakdown?.jug ?? { aqua: 0, vit: 0 }}
+        gallonZona={summary?.gallon_zona?.gallon}
+        jugZona={summary?.gallon_zona?.jug}
+        loading={loading}
+      />
 
       {/* Volume transaksi */}
       <TransactionVolume
