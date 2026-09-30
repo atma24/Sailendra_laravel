@@ -13,12 +13,11 @@ type Props = {
   loading?: boolean;
 };
 
-const ITEMS: { key: keyof Props["totals"]; label: string; icon: string }[] = [
-  { key: "shipment", label: "Total Shipment", icon: "bi-truck" },
-  { key: "so", label: "Total SO", icon: "bi-receipt" },
-  { key: "gin", label: "Total GIN", icon: "bi-box-arrow-up" },
-  { key: "barang_datang", label: "Barang Datang", icon: "bi-box-arrow-in-down" },
-  { key: "barang_terkirim", label: "Barang Terkirim", icon: "bi-send-check" },
+const ITEMS: { key: keyof Props["totals"]; label: string; icon: string; unit?: string }[] = [
+  { key: "shipment", label: "Total Inbound", icon: "bi-box-arrow-in-down" },
+  { key: "gin", label: "Total Outbound", icon: "bi-box-arrow-up" },
+  { key: "barang_datang", label: "Jumlah Barang Masuk", icon: "bi-box-arrow-in-down", unit: "qty" },
+  { key: "barang_terkirim", label: "Jumlah Barang Keluar", icon: "bi-send-check", unit: "qty" },
 ];
 
 export default function TransactionVolume({ totals, loading }: Props) {
@@ -27,7 +26,7 @@ export default function TransactionVolume({ totals, loading }: Props) {
       <h3 className="mb-3 text-[13.5px] font-bold tracking-tight text-slate-800">
         Volume Transaksi
       </h3>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
         {ITEMS.map((it) => (
           <div
             key={it.key}
@@ -37,8 +36,19 @@ export default function TransactionVolume({ totals, loading }: Props) {
               <i className={`bi ${it.icon}`} />
               <span className="truncate">{it.label}</span>
             </div>
-            <div className="mt-1.5 text-[20px] font-extrabold leading-none text-slate-800 tabular-nums">
-              {loading ? <span className="text-slate-300">—</span> : fmt(totals[it.key])}
+            <div className="mt-1.5 flex items-baseline gap-1 text-[20px] font-extrabold leading-none text-slate-800 tabular-nums">
+              {loading ? (
+                <span className="text-slate-300">—</span>
+              ) : (
+                <>
+                  <span>{fmt(totals[it.key])}</span>
+                  {it.unit && (
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                      {it.unit}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
         ))}

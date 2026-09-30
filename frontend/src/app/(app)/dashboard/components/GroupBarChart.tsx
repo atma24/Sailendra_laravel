@@ -9,14 +9,24 @@ type Props = {
   subtitle?: string;
   rows: GroupRow[];
   height?: number;
+  unit?: "qty" | "trx";
 };
 
-export default function GroupBarChart({ title, subtitle, rows, height }: Props) {
+export default function GroupBarChart({
+  title,
+  subtitle,
+  rows,
+  height,
+  unit = "qty",
+}: Props) {
   const data = rows.map((r) => ({
     name: r.label,
     planned: r.planned,
     actual: r.actual,
   }));
+
+  const unitLabel = unit === "trx" ? "transaksi" : "qty";
+  const showQtyRow = unit === "qty";
 
   return (
     <ChartCard title={title} subtitle={subtitle}>
@@ -40,11 +50,16 @@ export default function GroupBarChart({ title, subtitle, rows, height }: Props) 
                     <td className="py-1.5 pl-2 pr-3 font-medium text-slate-600">
                       {r.label}
                     </td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums text-slate-400">
-                      {fmt(r.planned_qty)} qty
+                    {showQtyRow && (
+                      <td className="py-1.5 pr-3 text-right tabular-nums text-slate-400">
+                        {fmt(r.planned_qty)} qty
+                      </td>
+                    )}
+                    <td className="py-1.5 pr-2 text-right tabular-nums text-slate-500">
+                      {fmt(r.planned)} {unitLabel}
                     </td>
                     <td className="py-1.5 pr-2 text-right tabular-nums font-semibold text-indigo-900">
-                      {fmt(r.actual_qty)} qty
+                      {fmt(r.actual)} {unitLabel}
                     </td>
                   </tr>
                 ))}

@@ -142,6 +142,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::match(['get', 'post'], '/stok-opname', StokOpnameController::class);
 
     Route::get('/dashboard/summary', [DashboardController::class, 'summary']);
+    Route::get('/dashboard/tahun-tersedia', [DashboardController::class, 'tahunTersedia']);
 
     Route::get('/layout-gudang/ambil-layout', [LayoutGudangController::class, 'ambilLayout']);
     Route::get('/layout-gudang/cek-line-layout', [LayoutGudangController::class, 'cekLineLayout']);

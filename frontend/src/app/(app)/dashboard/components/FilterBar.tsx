@@ -19,26 +19,39 @@ export default function FilterBar({ session, filters, onChange }: Props) {
   const [produkList, setProdukList] = useState<string[]>([]);
   const [produkOpen, setProdukOpen] = useState(false);
   const [produkQuery, setProdukQuery] = useState("");
+  const [depos, setDepos] = useState<{ id: string; nama: string }[]>([]);
+  const [tahunOpts, setTahunOpts] = useState<number[]>(() => [
+    new Date().getFullYear(),
+  ]);
   const ddRef = useRef<HTMLDivElement>(null);
 
-  // Opsi depo: dari akun lokasi user (multi-role) atau lokasi tunggal.
-  const depos = useMemo(() => {
-    if (isMultiRole(session.user.role) && session.user.akun_lokasi?.length) {
-      return session.user.akun_lokasi.map((a) => ({
-        id: String(a.id_pengguna_lokasi ?? ""),
-        nama: a.nama_pengguna_lokasi || String(a.id_pengguna_lokasi ?? ""),
-      }));
-    }
-    if (session.user.id_pengguna_lokasi) {
-      return [
-        {
-          id: String(session.user.id_pengguna_lokasi),
-          nama: session.user.nama_pengguna_lokasi || "Lokasi",
-        },
-      ];
-    }
-    return [];
-  }, [session]);
+  // Depo hanya relevan untuk role support & superadmin (multi-role).
+  const canPickDepo = isMultiRole(session.user.role);
+
+  // Opsi depo: seluruh depo di sistem.
+  useEffect(() => {
+    if (!canPickDepo) return;
+    let live = true;
+    apiGet<{ id_pengguna_lokasi: string | number; nama_pengguna_lokasi: string }[]>(
+      "/pengguna-lokasi"
+    )
+      .then((res) => {
+        if (!live) return;
+        const rows = res.data || [];
+        setDepos(
+          rows.map((d) => ({
+            id: String(d.id_pengguna_lokasi ?? ""),
+            nama: d.nama_pengguna_lokasi || String(d.id_pengguna_lokasi ?? ""),
+          }))
+        );
+      })
+      .catch(() => live && setDepos([]));
+    return () => {
+      live = false;
+    };
+  }, [canPickDepo]);
+
+  const depoOptions = canPickDepo ? depos : [];
 
   // Opsi item (produk).
   useEffect(() => {
@@ -65,15 +78,40 @@ export default function FilterBar({ session, filters, onChange }: Props) {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const tahunOpts = useMemo(() => {
-    const y = Number(filters.tahun) || new Date().getFullYear();
-    return [y - 2, y - 1, y, y + 1];
-  }, [filters.tahun]);
+  // Opsi tahun: dari tahun paling awal yang punya data s/d tahun berjalan.
+  useEffect(() => {
+    let live = true;
+    const nowYear = new Date().getFullYear();
+    apiGet<number[]>("/dashboard/tahun-tersedia")
+      .then((res) => {
+        if (!live) return;
+        const rows = (res.data || []).filter((y) => Number.isFinite(Number(y)));
+        if (rows.length === 0) {
+          setTahunOpts([nowYear]);
+          return;
+        }
+        const years = rows.map((y) => Number(y)).sort((a, b) => a - b);
+        setTahunOpts(years);
+      })
+      .catch(() => live && setTahunOpts([nowYear]));
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const filteredProduk = useMemo(() => {
     const q = produkQuery.toLowerCase();
     return produkList.filter((p) => p.toLowerCase().includes(q)).slice(0, 50);
   }, [produkList, produkQuery]);
+
+  // Pastikan tahun terpilih selalu ada di daftar opsi.
+  const tahunOptions = useMemo(() => {
+    const y = Number(filters.tahun);
+    if (Number.isFinite(y) && !tahunOpts.includes(y)) {
+      return [...tahunOpts, y].sort((a, b) => a - b);
+    }
+    return tahunOpts;
+  }, [tahunOpts, filters.tahun]);
 
   const toggleProduk = (nama: string) => {
     const has = filters.produk.includes(nama);
@@ -84,6 +122,37 @@ export default function FilterBar({ session, filters, onChange }: Props) {
         : [...filters.produk, nama],
     });
   };
+
+  // Jumlah minggu pada bulan terpilih. Definisi: Minggu 1 = tgl 1 s/d hari
+  // Minggu pertama (bisa parsial); Minggu 2+ = blok Senin–Minggu penuh.
+  const jumlahMinggu = useMemo(() => {
+    const y = Number(filters.tahun);
+    const mo = Number(filters.bulan);
+    if (!Number.isFinite(y) || !Number.isFinite(mo) || mo < 1 || mo > 12) {
+      return 6;
+    }
+    const start = new Date(y, mo - 1, 1);
+    const end = new Date(y, mo, 0); // hari terakhir bulan
+    // Hari Minggu pertama pada/atau setelah tgl 1.
+    const firstSunday = new Date(start);
+    firstSunday.setDate(start.getDate() + ((7 - start.getDay()) % 7));
+    let count = 1;
+    const cursor = new Date(firstSunday);
+    cursor.setDate(firstSunday.getDate() + 1); // Senin setelah Minggu pertama
+    while (cursor.getTime() <= end.getTime()) {
+      count++;
+      cursor.setDate(cursor.getDate() + 7);
+    }
+    return count;
+  }, [filters.tahun, filters.bulan]);
+
+  useEffect(() => {
+    const w = Number(filters.minggu);
+    if (filters.minggu !== "" && Number.isFinite(w) && w > jumlahMinggu) {
+      onChange({ ...filters, minggu: "" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumlahMinggu]);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -97,7 +166,7 @@ export default function FilterBar({ session, filters, onChange }: Props) {
           value={filters.tahun}
           onChange={(e) => onChange({ ...filters, tahun: e.target.value })}
         >
-          {tahunOpts.map((y) => (
+          {tahunOptions.map((y) => (
             <option key={y} value={y}>
               {y}
             </option>
@@ -123,20 +192,21 @@ export default function FilterBar({ session, filters, onChange }: Props) {
         >
           <option value="">Semua minggu</option>
           {[1, 2, 3, 4, 5, 6].map((w) => (
-            <option key={w} value={w}>
+            <option key={w} value={w} disabled={w > jumlahMinggu}>
               Minggu {w}
+              {w > jumlahMinggu ? " (tidak ada)" : ""}
             </option>
           ))}
         </select>
 
-        {depos.length > 0 && (
+        {canPickDepo && (
           <select
             className={selectCls}
             value={filters.depo}
             onChange={(e) => onChange({ ...filters, depo: e.target.value })}
           >
             <option value="">Semua depo</option>
-            {depos.map((d) => (
+            {depoOptions.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.nama}
               </option>

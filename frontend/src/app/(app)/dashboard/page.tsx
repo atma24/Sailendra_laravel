@@ -7,13 +7,10 @@ import KpiCard from "./components/KpiCard";
 import StorageUsageCard from "./components/StorageUsageCard";
 import TransactionVolume from "./components/TransactionVolume";
 import PendingAlert from "./components/PendingAlert";
-import TrendChart from "./components/TrendChart";
-import TypeCharts from "./components/TypeCharts";
-import GroupBarChart from "./components/GroupBarChart";
-import ZonaPie from "./components/ZonaPie";
+import InboundTypeTrends from "./components/InboundTypeTrends";
+import OutboundTypeTrends from "./components/OutboundTypeTrends";
 import ExpiredAlertList from "./components/ExpiredAlertList";
 import StockHealthList from "./components/StockHealthList";
-import ChartCard from "./components/ChartCard";
 import {
   defaultFilters,
   useDashboardSummary,
@@ -41,6 +38,9 @@ export default function DashboardPage() {
       persen: kap > 0 ? Math.round((terpakai / kap) * 100) : 0,
     };
   }, [summary, kapasitasRak]);
+
+  const inbound = summary?.inbound;
+  const outbound = summary?.outbound;
 
   if (!session) return null;
 
@@ -74,6 +74,7 @@ export default function DashboardPage() {
         <KpiCard
           label="Barang Datang"
           value={fmt(summary?.totals?.barang_datang ?? 0)}
+          unit="qty"
           tag="Terkonfirmasi"
           tagTone="success"
           icon="bi-box-arrow-in-down"
@@ -82,6 +83,7 @@ export default function DashboardPage() {
         <KpiCard
           label="Barang Terkirim"
           value={fmt(summary?.totals?.barang_terkirim ?? 0)}
+          unit="qty"
           tag="Terkonfirmasi"
           tagTone="success"
           icon="bi-send-check"
@@ -103,69 +105,33 @@ export default function DashboardPage() {
         loading={loading}
       />
 
-      {/* Tren harian + zona */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <div className="xl:col-span-2">
-          <ChartCard
-            title="Tren Barang Masuk vs Keluar"
-            subtitle="Qty per hari (terkonfirmasi)"
-          >
-            <TrendChart
-              inbound={summary?.inbound?.series ?? []}
-              outbound={summary?.outbound?.series ?? []}
-            />
-          </ChartCard>
-        </div>
-        <ZonaPie zona={summary?.stock?.zona ?? {}} />
-      </div>
-
-      {/* Inbound per tipe */}
-      <TypeCharts
-        title="Inbound per Tipe"
-        subtitle="Transaksi vs terkonfirmasi"
-        data={summary?.inbound_by_type?.data ?? []}
-        overall={
-          summary?.inbound_by_type?.overall ?? {
-            tipe: "Overall",
-            planned: 0,
-            actual: 0,
-            planned_qty: 0,
-            actual_qty: 0,
-          }
-        }
-        meta={(r) => `${r.tipe}`}
-      />
-
-      {/* Outbound per tipe */}
-      <TypeCharts
-        title="Outbound per Tipe"
-        subtitle="Transaksi vs terkonfirmasi"
-        data={summary?.outbound_by_type?.data ?? []}
-        overall={
-          summary?.outbound_by_type?.overall ?? {
-            tipe: "Overall",
-            planned: 0,
-            actual: 0,
-            planned_qty: 0,
-            actual_qty: 0,
-          }
-        }
-        meta={(r) => `${r.tipe}`}
-      />
-
-      {/* Outbound per GIN & per SO */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <GroupBarChart
-          title="Outbound per GIN (Top 10)"
-          subtitle="Transaksi vs terkonfirmasi"
-          rows={summary?.outbound_per_gin ?? []}
+      {/* Inbound per tipe: Total + tiap tipe, masing-masing deret waktu (2 batang/hari) */}
+      {!loading && (
+        <InboundTypeTrends
+          seriesByType={summary?.inbound_series_by_type ?? []}
+          totalPlanned={inbound?.series_planned ?? []}
+          totalActual={inbound?.series_actual ?? []}
+          minggu={filters.minggu}
+          mulai={summary?.periode?.mulai ?? ""}
+          monthStart={summary?.periode?.bulan ? `${summary.periode.bulan}-01` : ""}
+          bulan={summary?.periode?.bulan}
+          tahun={summary?.periode?.tahun}
         />
-        <GroupBarChart
-          title="Outbound per No. SO (Top 10)"
-          subtitle="Transaksi vs terkonfirmasi"
-          rows={summary?.outbound_per_so ?? []}
+      )}
+
+      {/* Outbound per tipe: Total + tiap tipe, masing-masing deret waktu (2 batang/hari) */}
+      {!loading && (
+        <OutboundTypeTrends
+          seriesByType={summary?.outbound_series_by_type ?? []}
+          totalPlanned={outbound?.series_planned ?? []}
+          totalActual={outbound?.series_actual ?? []}
+          minggu={filters.minggu}
+          mulai={summary?.periode?.mulai ?? ""}
+          monthStart={summary?.periode?.bulan ? `${summary.periode.bulan}-01` : ""}
+          bulan={summary?.periode?.bulan}
+          tahun={summary?.periode?.tahun}
         />
-      </div>
+      )}
 
       {/* Expired & stok */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

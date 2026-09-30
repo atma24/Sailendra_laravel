@@ -18,6 +18,12 @@ export type GroupRow = {
   actual_qty: number;
 };
 
+export type TypeSeriesRow = {
+  tipe: string;
+  series_planned: SeriesPoint[];
+  series_actual: SeriesPoint[];
+};
+
 export type ExpiredRow = {
   nama_produk: string;
   batch: string;
@@ -36,6 +42,9 @@ export type Summary = {
     minggu: string;
     mulai: string;
     sampai: string;
+    granularity?: "day" | "month";
+    /** Jumlah minggu yang ada di bulan terpilih (Minggu 1 = tgl 1 s/d Minggu pertama). */
+    jumlah_minggu?: number;
   };
   mutasi_total: number;
   inbound: {
@@ -45,6 +54,8 @@ export type Summary = {
     qty_bulan_ini: number;
     qty_today: number;
     series: SeriesPoint[];
+    series_planned?: SeriesPoint[];
+    series_actual?: SeriesPoint[];
   };
   outbound: {
     total: number;
@@ -54,6 +65,8 @@ export type Summary = {
     qty_today: number;
     pending: number;
     series: SeriesPoint[];
+    series_planned?: SeriesPoint[];
+    series_actual?: SeriesPoint[];
   };
   stock: {
     zona: Record<string, number>;
@@ -72,7 +85,9 @@ export type Summary = {
     barang_terkirim: number;
   };
   inbound_by_type: { data: TypeRow[]; overall: TypeRow };
+  inbound_series_by_type?: TypeSeriesRow[];
   outbound_by_type: { data: TypeRow[]; overall: TypeRow };
+  outbound_series_by_type?: TypeSeriesRow[];
   outbound_per_gin: GroupRow[];
   outbound_per_so: GroupRow[];
   expired_alert: ExpiredRow[];
@@ -94,6 +109,18 @@ export const fmtTanggal = (iso: string) => {
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("id-ID", { day: "2-digit", month: "short" });
 };
+
+// Label bulan singkat untuk sumbu X mode bulanan (input "YYYY-MM").
+export const fmtBulanSingkat = (iso: string) => {
+  if (!iso) return "-";
+  const m = Number(iso.slice(5, 7));
+  if (!m || m < 1 || m > 12) return iso;
+  return NAMA_BULAN_SINGKAT[m - 1];
+};
+
+// Ubah "YYYY-MM-DD" atau "YYYY-MM" jadi label sesuai granularitas.
+export const fmtPeriodeLabel = (iso: string, granularity?: "day" | "month") =>
+  granularity === "month" ? fmtBulanSingkat(iso) : fmtTanggal(iso);
 
 export const fmtTanggalFull = (iso: string) => {
   if (!iso) return "-";
@@ -120,6 +147,32 @@ export const NAMA_BULAN = [
   "November",
   "Desember",
 ];
+
+export const NAMA_BULAN_SINGKAT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "Mei",
+  "Jun",
+  "Jul",
+  "Agu",
+  "Sep",
+  "Okt",
+  "Nov",
+  "Des",
+];
+
+// Senin sebagai hari pertama (index 0).
+export const NAMA_HARI_SINGKAT = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+
+// Ubah "YYYY-MM-DD" jadi nama hari singkat (Sen..Min).
+export const fmtHariSingkat = (iso: string) => {
+  if (!iso) return "-";
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return NAMA_HARI_SINGKAT[(d.getDay() + 6) % 7];
+};
 
 export const ZONA_ORDER = [
   "normal",

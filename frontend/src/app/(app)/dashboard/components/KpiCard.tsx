@@ -10,6 +10,7 @@ type Props = {
   tag?: string;
   tagTone?: "neutral" | "success" | "warn" | "danger";
   hint?: string;
+  unit?: string;
   loading?: boolean;
 };
 
@@ -27,6 +28,7 @@ export default function KpiCard({
   tag,
   tagTone = "neutral",
   hint,
+  unit,
   loading,
 }: Props) {
   return (
@@ -46,6 +48,11 @@ export default function KpiCard({
         <span className="text-[26px] font-extrabold leading-none tracking-tight text-slate-800 tabular-nums">
           {loading ? <span className="text-slate-300">—</span> : value}
         </span>
+        {!loading && unit && (
+          <span className="mb-0.5 text-[12px] font-bold uppercase tracking-wide text-slate-400">
+            {unit}
+          </span>
+        )}
         {tag && (
           <span
             className={`mb-0.5 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${TONE[tagTone]}`}
