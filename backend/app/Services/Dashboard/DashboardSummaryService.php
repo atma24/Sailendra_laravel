@@ -71,6 +71,8 @@ class DashboardSummaryService
             'storage_luar' => $this->stock->storageLuar($lokasiFilter, $produkFilter),
             'gallon_breakdown' => $this->stock->gallonBreakdown($lokasiFilter),
             'gallon_zona' => $this->stock->gallonJugByZona($lokasiFilter),
+            'gallon_per_kategori' => $this->stock->gallonPerKategori($lokasiFilter),
+            'produk_per_kategori' => $this->stock->produkPerKategori($lokasiFilter),
             'totals' => $totals,
             'inbound_by_type' => $this->inbound->byType($lokasiFilter, $rangeStart, $rangeEnd, $produkFilter),
             'inbound_series_by_type' => $this->inbound->seriesByType($lokasiFilter, $rangeStart, $rangeEnd, $dates, $produkFilter, $granularity),

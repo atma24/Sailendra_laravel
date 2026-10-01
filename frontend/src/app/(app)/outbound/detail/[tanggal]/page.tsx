@@ -183,6 +183,7 @@ export default function OutboundDetailPage() {
   // header form
   const [hMobil, setHMobil] = useState("");
   const [hDriver, setHDriver] = useState("");
+  const [hTujuan, setHTujuan] = useState("");
   const [hCatatan, setHCatatan] = useState("");
 
   // item form (edit)
@@ -339,6 +340,7 @@ export default function OutboundDetailPage() {
   const openHeader = () => {
     setHMobil(norm(header?.no_mobil));
     setHDriver(norm(header?.nama_driver) || driver);
+    setHTujuan(norm(header?.tujuan));
     setHCatatan(norm(header?.catatan));
     setShowHeader(true);
   };
@@ -353,6 +355,7 @@ export default function OutboundDetailPage() {
         id_pengguna_lokasi: String(header.id_pengguna_lokasi || idPenggunaLokasi()),
         no_mobil: hMobil,
         nama_driver: hDriver,
+        tujuan: hTujuan,
         catatan: hCatatan,
       });
       sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Detail outbound berhasil diperbarui.", type: "success" }));
@@ -838,6 +841,10 @@ export default function OutboundDetailPage() {
               <div className="dialog-field dialog-field-full">
                 <label>Nama Driver</label>
                 <input type="text" value={hDriver} onChange={(e) => setHDriver(e.target.value)} maxLength={30} />
+              </div>
+              <div className="dialog-field dialog-field-full">
+                <label>Tujuan (wajib untuk Primary)</label>
+                <input type="text" value={hTujuan} onChange={(e) => setHTujuan(e.target.value)} maxLength={150} placeholder="Isi tujuan pengiriman" />
               </div>
               <div className="dialog-field dialog-field-full">
                 <label>Catatan (opsional)</label>

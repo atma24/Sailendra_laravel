@@ -38,6 +38,14 @@ export type ZonaStat = {
 /** Breakdown gallon/jug: tiap item dipecah per jenis lokasi. */
 export type GallonZona = Record<string, ZonaStat>;
 
+/** Satu item produk pada card lokasi dinamis (SPS/XWH/...). */
+export type KategoriItem = {
+  nama: string;
+  satuan: string;
+  qty: number;
+  zona: ZonaStat;
+};
+
 export type ExpiredRow = {
   nama_produk: string;
   batch: string;
@@ -100,6 +108,19 @@ export type Summary = {
     gallon: GallonZona;
     jug: GallonZona;
   };
+  /** Breakdown gallon/jug per kategori lokasi (GALLON/SPS/XWH/...). */
+  gallon_per_kategori?: Record<
+    string,
+    {
+      breakdown: {
+        gallon: { vip: number; aqua: number; vit: number };
+        jug: { aqua: number; vit: number };
+      };
+      zona: { gallon: GallonZona; jug: GallonZona };
+    }
+  >;
+  /** Semua item produk per kategori lokasi (card dinamis SPS/XWH/...). */
+  produk_per_kategori?: Record<string, { items: KategoriItem[] }>;
   totals: {
     shipment: number;
     so: number;

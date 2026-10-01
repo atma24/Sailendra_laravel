@@ -53,7 +53,7 @@ const css = `
 
 const FILTERS: Record<string, { title: string; filter?: (r: string) => boolean }> = {
   all: { title: "Semua Pengguna" },
-  supervisor: { title: "Daftar Supervisor", filter: (r) => r === "supervisor" || r === "support" },
+  supervisor: { title: "Daftar Supervisor", filter: (r) => r === "supervisor" || r === "support" || r === "superadmin" },
   checker: { title: "Daftar Checker", filter: (r) => r === "checker" },
   forklift: { title: "Daftar Forklift", filter: (r) => r === "forklift" },
   auditor: { title: "Daftar Auditor", filter: (r) => r === "auditor" },

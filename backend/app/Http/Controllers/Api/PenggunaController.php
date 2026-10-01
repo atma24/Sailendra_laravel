@@ -66,6 +66,10 @@ class PenggunaController extends Controller
             return $this->fail('Role tidak valid (Supervisor/Checker/Forklift/Support/SuperAdmin/Auditor)');
         }
 
+        if (in_array($role, ['Support', 'SuperAdmin'], true) && $request->user()?->role !== 'SuperAdmin') {
+            return $this->fail('Hanya SuperAdmin yang dapat membuat role Support/SuperAdmin', 403);
+        }
+
         if (! in_array($status, self::STATUS, true)) {
             return $this->fail('Status tidak valid (Aktif/Nonaktif)');
         }
@@ -120,6 +124,10 @@ class PenggunaController extends Controller
 
         if ($role !== null && ! in_array($role, self::ROLE, true)) {
             return $this->fail('Role tidak valid. Gunakan: Supervisor/Checker/Forklift/Support/SuperAdmin/Auditor');
+        }
+
+        if ($role !== null && in_array($role, ['Support', 'SuperAdmin'], true) && $request->user()?->role !== 'SuperAdmin') {
+            return $this->fail('Hanya SuperAdmin yang dapat menetapkan role Support/SuperAdmin', 403);
         }
 
         if ($status !== null && ! in_array($status, self::STATUS, true)) {

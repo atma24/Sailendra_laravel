@@ -70,6 +70,8 @@ export default function DashboardPage() {
         jug={summary?.gallon_breakdown?.jug ?? { aqua: 0, vit: 0 }}
         gallonZona={summary?.gallon_zona?.gallon}
         jugZona={summary?.gallon_zona?.jug}
+        perKategori={summary?.gallon_per_kategori}
+        produkPerKategori={summary?.produk_per_kategori}
         loading={loading}
       />
 

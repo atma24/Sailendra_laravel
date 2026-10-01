@@ -135,8 +135,12 @@ export default function ProfilePage() {
         setSelected((prev) => {
           if (prev.size > 0) return prev;
           const aktif = session.lokasi;
+          if (aktif === "all") {
+            return new Set(list.map((l) => String(l.id_pengguna_lokasi)));
+          }
           if (Array.isArray(aktif)) {
-            return new Set(list.filter((l) => aktif.includes(l.id_pengguna_lokasi)).map((l) => l.id_pengguna_lokasi));
+            const aktifStr = new Set(aktif.map((a) => String(a)));
+            return new Set(list.filter((l) => aktifStr.has(String(l.id_pengguna_lokasi))).map((l) => String(l.id_pengguna_lokasi)));
           }
           return prev;
         });
@@ -172,20 +176,21 @@ export default function ProfilePage() {
     [locs, search]
   );
 
-  const allChecked = locs.length > 0 && locs.every((l) => selected.has(l.id_pengguna_lokasi));
+  const allChecked = locs.length > 0 && locs.every((l) => selected.has(String(l.id_pengguna_lokasi)));
   const checkedCount = selected.size;
 
   function toggle(id: string) {
-    setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+    const key = String(id);
+    setSelected((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   }
   function toggleAll() {
-    setSelected(allChecked ? new Set() : new Set(locs.map((l) => l.id_pengguna_lokasi)));
+    setSelected(allChecked ? new Set() : new Set(locs.map((l) => String(l.id_pengguna_lokasi))));
   }
   function applyLokasi() {
     const s = getSession();
     if (!s) return;
-    if (checkedCount === 0) { setModalOpen(true); return; }
-    const lokasi = allChecked ? "all" : locs.filter((l) => selected.has(l.id_pengguna_lokasi)).map((l) => l.id_pengguna_lokasi);
+    if (checkedCount === 0) { toast("Pilih minimal 1 lokasi.", "warning"); return; }
+    const lokasi = allChecked ? "all" : locs.filter((l) => selected.has(String(l.id_pengguna_lokasi))).map((l) => String(l.id_pengguna_lokasi));
     setSession({ ...s, lokasi });
     setModalOpen(false);
     router.refresh();
@@ -377,10 +382,10 @@ export default function ProfilePage() {
             <div className="body">
               {filtered.length === 0 && <div className="empty">Tidak ada lokasi</div>}
               {filtered.map((l) => {
-                const checked = selected.has(l.id_pengguna_lokasi);
+                const checked = selected.has(String(l.id_pengguna_lokasi));
                 return (
-                  <label key={l.id_pengguna_lokasi} className={`cb ${checked ? "checked" : ""}`} onClick={() => toggle(l.id_pengguna_lokasi)}>
-                    <input type="checkbox" checked={checked} readOnly />
+                  <label key={l.id_pengguna_lokasi} className={`cb ${checked ? "checked" : ""}`}>
+                    <input type="checkbox" checked={checked} onChange={() => toggle(l.id_pengguna_lokasi)} />
                     <div className="box"></div>
                     <span className="cbtext">{l.id_pengguna_lokasi} - {l.nama_pengguna_lokasi}</span>
                   </label>

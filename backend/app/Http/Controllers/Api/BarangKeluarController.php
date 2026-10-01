@@ -776,6 +776,318 @@ public function store(Request $request)
     }
 
     // =========================================================================
+    // 4d2. UPLOAD OUTBOUND PRIMARY VIA FILE (Upload Excel Primary)
+    //     Format: No -> gin_no, No DN -> no_dn, Type Doc diabaikan (hardcode
+    //     Primary), No Polisi -> no_mobil (normalisasi), Pengemudi ->
+    //     nama_driver, Ritase (0 => 1), Material Desc -> nama_produk,
+    //     Quantity -> jumlah, Tgl Buat -> tanggal_keluar. Batch diabaikan
+    //     (auto FEFO), tujuan dikosongkan dan diisi manual di detail.
+    // =========================================================================
+    public function uploadPrimary(Request $request)
+    {
+        set_time_limit(0);
+        $idPenggunaLokasi = trim((string) $request->input('upload_lokasi', ''));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
+
+        if ($idPenggunaLokasi === '') {
+            return $this->fail('upload_lokasi wajib');
+        }
+        if ($idPengguna <= 0) {
+            return $this->fail('id_pengguna wajib');
+        }
+
+        $file = $request->file('file_excel');
+        if (! $file || ! $file->isValid()) {
+            return $this->fail('Harap pilih file Excel atau CSV yang valid.');
+        }
+
+        $ext = strtolower($file->getClientOriginalExtension());
+        $path = $file->getRealPath();
+
+        try {
+            $parsed = $this->bacaFileSpreadsheet($path, $ext);
+            $headerRow = $parsed['header'];
+            $rowsData = $parsed['rows'];
+        } catch (Throwable $e) {
+            return $this->fail($e->getMessage());
+        }
+
+        if (empty($rowsData)) {
+            return $this->fail('File Excel kosong atau tidak memiliki data yang bisa dibaca.');
+        }
+
+        $colMap = [];
+        foreach ($headerRow as $index => $colName) {
+            $clean = trim((string) $colName);
+            if ($clean !== '') {
+                $colMap[$clean] = $index;
+            }
+        }
+
+        $idxGin = $colMap['No'] ?? 0;
+        $idxDn = $colMap['No DN'] ?? 1;
+        $idxMobil = $colMap['No Polisi'] ?? 4;
+        $idxDriver = $colMap['Pengemudi'] ?? 5;
+        $idxRitase = $colMap['Ritase'] ?? 6;
+        $idxProduk = $colMap['Material Desc'] ?? 8;
+        $idxJumlah = $colMap['Quantity'] ?? 9;
+        $idxDate = $colMap['Tgl Buat'] ?? 17;
+
+        $produkList = DB::table('produk')->get(['id_produk', 'nama_produk', 'satuan']);
+        $mapProduk = [];
+        foreach ($produkList as $p) {
+            $mapProduk[strtoupper(trim((string) $p->nama_produk))] = $p;
+        }
+
+        $grouped = [];
+        $countUnmapped = 0;
+        $countPlatInvalid = 0;
+        foreach ($rowsData as $data) {
+            $ginNo = trim((string) ($data[$idxGin] ?? ''));
+            if ($ginNo === '') {
+                continue;
+            }
+
+            $noDn = trim((string) ($data[$idxDn] ?? ''));
+            $namaDriver = trim((string) ($data[$idxDriver] ?? ''));
+
+            $rawMobil = trim((string) ($data[$idxMobil] ?? ''));
+            $noMobil = strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', $rawMobil));
+            if ($noMobil === '' || ! preg_match('/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/', $noMobil)) {
+                $countPlatInvalid++;
+                continue;
+            }
+
+            $rawRitase = trim((string) ($data[$idxRitase] ?? ''));
+            $ritase = (int) $rawRitase;
+            if ($ritase <= 0) {
+                $ritase = 1;
+            }
+
+            $rawDate = trim((string) ($data[$idxDate] ?? ''));
+            $tanggalKeluar = date('Y-m-d');
+            if ($rawDate !== '') {
+                $parsedDate = date('Y-m-d', strtotime(str_replace('/', '-', substr($rawDate, 0, 10))));
+                if ($parsedDate !== '1970-01-01' && $parsedDate !== false) {
+                    $tanggalKeluar = $parsedDate;
+                }
+            }
+
+            $namaProdukExcel = strtoupper(trim((string) ($data[$idxProduk] ?? '')));
+            $jumlah = (int) ($data[$idxJumlah] ?? 0);
+
+            if ($jumlah <= 0) {
+                continue;
+            }
+            if ($namaDriver === '') {
+                continue;
+            }
+            if (! isset($mapProduk[$namaProdukExcel])) {
+                $countUnmapped++;
+                continue;
+            }
+            $produk = $mapProduk[$namaProdukExcel];
+
+            if (! isset($grouped[$ginNo])) {
+                $grouped[$ginNo] = [
+                    'gin_no' => $ginNo,
+                    'id_pengguna' => $idPengguna,
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'tipe_pengeluaran' => 'Primary',
+                    'tujuan' => null,
+                    'no_mobil' => $noMobil,
+                    'nama_driver' => $namaDriver,
+                    'tanggal_keluar' => $tanggalKeluar,
+                    'tanggal_pengiriman' => $tanggalKeluar,
+                    'no_dn' => $noDn,
+                    'ritase' => $ritase,
+                    'catatan' => 'Upload Excel Primary',
+                    'status' => 'Draft',
+                    'items' => [],
+                    '_seen' => [],
+                ];
+            }
+
+            $dedupKey = (int) $produk->id_produk;
+            if (isset($grouped[$ginNo]['_seen'][$dedupKey])) {
+                $idxItem = $grouped[$ginNo]['_seen'][$dedupKey];
+                $grouped[$ginNo]['items'][$idxItem]['jumlah'] += $jumlah;
+                continue;
+            }
+
+            $grouped[$ginNo]['_seen'][$dedupKey] = count($grouped[$ginNo]['items']);
+            $grouped[$ginNo]['items'][] = [
+                'id_produk' => (int) $produk->id_produk,
+                'jumlah' => $jumlah,
+                'satuan' => trim((string) ($produk->satuan ?? 'PCS')) ?: 'PCS',
+                'so_number' => null,
+            ];
+        }
+
+        if (empty($grouped)) {
+            $msg = 'Gagal memproses file. ';
+            if ($countUnmapped > 0) {
+                $msg .= "Ada $countUnmapped item produk yang namanya tidak sesuai dengan database (Master Data). ";
+            }
+            if ($countPlatInvalid > 0) {
+                $msg .= "Ada $countPlatInvalid baris dengan No Polisi tidak valid. ";
+            }
+            if ($countUnmapped === 0 && $countPlatInvalid === 0) {
+                $msg .= 'Pastikan file Excel tidak kosong, format sesuai, dan kuantitas barang wajib > 0.';
+            }
+
+            return $this->fail(trim($msg));
+        }
+
+        $inserted = 0;
+        $updated = 0;
+        $skipped = 0;
+        $failed = 0;
+        $details = [];
+
+        $ginKeys = array_keys($grouped);
+        $existingRows = DB::table('barang_keluar')
+            ->whereIn('gin_no', $ginKeys)
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->get(['id_barang_keluar', 'gin_no', 'status', 'nama_driver', 'no_mobil', 'so_number', 'no_dn', 'id_produk']);
+
+        $existingAll = [];
+        foreach ($existingRows as $ex) {
+            $g = $ex->gin_no;
+            if (! isset($existingAll[$g])) {
+                $existingAll[$g] = [
+                    'status' => strtolower(trim((string) $ex->status)),
+                    'ids' => [],
+                    'items' => [],
+                ];
+            }
+            $existingAll[$g]['ids'][] = $ex->id_barang_keluar;
+            $existingAll[$g]['items'][$ex->id_produk] = $ex->id_barang_keluar;
+        }
+
+        foreach ($grouped as $ginNo => $payload) {
+            unset($payload['_seen']);
+
+            DB::beginTransaction();
+            try {
+                $existing = $existingAll[$ginNo] ?? null;
+
+                if ($existing) {
+                    $statusLama = $existing['status'];
+
+                    if (in_array($statusLama, ['selesai', 'confirmed', 'pending'])) {
+                        $driverBaru = trim($payload['nama_driver'] ?? '');
+                        $mobilBaru = trim($payload['no_mobil'] ?? '');
+                        $dnBaru = trim($payload['no_dn'] ?? '');
+
+                        DB::table('barang_keluar')
+                            ->whereIn('id_barang_keluar', $existing['ids'])
+                            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                            ->update([
+                                'nama_driver' => $driverBaru,
+                                'no_mobil' => $mobilBaru,
+                            ]);
+
+                        foreach ($payload['items'] as $it) {
+                            $idProd = (int) ($it['id_produk'] ?? 0);
+                            if ($idProd > 0 && isset($existing['items'][$idProd]) && $dnBaru !== '') {
+                                $idBk = $existing['items'][$idProd];
+                                DB::table('barang_keluar')
+                                    ->where('id_barang_keluar', $idBk)
+                                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                                    ->update(['no_dn' => $dnBaru]);
+                            }
+                        }
+
+                        DB::commit();
+                        $updated++;
+                        continue;
+                    }
+
+                    DB::table('rencana_keluar_deep')
+                        ->whereIn('id_barang_keluar', $existing['ids'])
+                        ->delete();
+
+                    DB::table('barang_keluar')
+                        ->whereIn('id_barang_keluar', $existing['ids'])
+                        ->whereIn('status', ['Draft', 'Pending'])
+                        ->delete();
+                }
+
+                $tanggalKeluarPayload = $payload['tanggal_keluar'];
+                $namaDriverPayload = $payload['nama_driver'];
+                $noMobilPayload = $payload['no_mobil'];
+                $noDnPayload = $payload['no_dn'];
+                $ritasePayload = $payload['ritase'];
+
+                $insertHeaders = [];
+                foreach ($payload['items'] as $it) {
+                    $idProduk = (int) $it['id_produk'];
+                    $jumlah = (int) $it['jumlah'];
+                    $satuan = trim($it['satuan'] ?? 'PCS');
+                    $namaProdukStr = DB::table('produk')->where('id_produk', $idProduk)->value('nama_produk') ?? 'Product';
+
+                    $insertHeaders[] = [
+                        'gin_no' => $ginNo,
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_pengguna' => $idPengguna,
+                        'id_produk' => $idProduk,
+                        'nama_produk' => $namaProdukStr,
+                        'tipe_pengeluaran' => 'Primary',
+                        'tujuan' => null,
+                        'nama_driver' => $namaDriverPayload,
+                        'no_mobil' => $noMobilPayload,
+                        'jumlah' => $jumlah,
+                        'best_before' => null,
+                        'batch' => null,
+                        'satuan' => $satuan,
+                        'lokasi_block' => null,
+                        'catatan' => 'Upload Excel Primary',
+                        'tanggal_keluar' => $tanggalKeluarPayload,
+                        'tanggal_pengiriman' => $tanggalKeluarPayload,
+                        'no_dn' => $noDnPayload,
+                        'so_number' => null,
+                        'ritase' => $ritasePayload,
+                        'status' => 'Draft',
+                        'waktu_mulai_input' => date('Y-m-d H:i:s'),
+                        'durasi_detik' => 0,
+                    ];
+                }
+
+                if (! empty($insertHeaders)) {
+                    DB::table('barang_keluar')->insert($insertHeaders);
+                }
+
+                DB::commit();
+                $inserted++;
+            } catch (Throwable $e) {
+                DB::rollBack();
+                $failed++;
+                $details[] = $ginNo.': '.$e->getMessage();
+            }
+        }
+
+        $msg = "Upload primary selesai! $inserted GIN berhasil ditambahkan.";
+        if ($updated > 0) {
+            $msg .= " $updated GIN diperbarui (Driver / No Mobil / No DN).";
+        }
+        if ($skipped > 0) {
+            $msg .= " $skipped GIN dilewati.";
+        }
+        if ($failed > 0) {
+            $msg .= " $failed GIN gagal: ".implode('; ', $details);
+        }
+        if ($countUnmapped > 0) {
+            $msg .= " Peringatan: $countUnmapped baris diabaikan (produk tak dikenal).";
+        }
+        if ($countPlatInvalid > 0) {
+            $msg .= " Peringatan: $countPlatInvalid baris diabaikan (No Polisi tidak valid).";
+        }
+
+        return $this->ok(['inserted' => $inserted, 'updated' => $updated, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
+    }
+
+    // =========================================================================
     // 4d. IMPORT HISTORICAL VIA FILE (Ref: Outbound::import_historical)
     //     Parse file (dengan kolom Batch_No), status Selesai, stok tidak dikurangi.
     // =========================================================================
@@ -996,7 +1308,7 @@ public function store(Request $request)
                 throw new Exception('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
             }
         }
-        if ($tipePengeluaran === 'Primary' && $tujuan === '') {
+        if ($tipePengeluaran === 'Primary' && $tujuan === '' && $statusInput !== 'Draft') {
             throw new Exception('Tujuan wajib diisi untuk Primary');
         }
         if ($tipePengeluaran !== 'Primary') {
@@ -1300,6 +1612,20 @@ $in = $request->all();
                 $ref = DB::table('barang_keluar')->where('id_barang_keluar', $idBarangKeluar)->where('id_pengguna_lokasi', $idPenggunaLokasi)->first();
                 if (! $ref) {
                     throw new Exception('Data tidak ditemukan');
+                }
+
+                $tipeRef = strtoupper(trim((string) ($ref->tipe_pengeluaran ?? '')));
+                if ($tipeRef === 'PRIMARY') {
+                    $grupTujuanQuery = DB::table('barang_keluar');
+                    $grupTujuanQuery = $this->terapkanFilterGrupOutbound($grupTujuanQuery, $ref, '');
+                    $tujuanKosong = $grupTujuanQuery
+                        ->where('status', 'Draft')
+                        ->where(function ($q) {
+                            $q->whereNull('tujuan')->orWhereRaw("TRIM(COALESCE(tujuan, '')) = ''");
+                        })->exists();
+                    if ($tujuanKosong) {
+                        throw new Exception('Tujuan wajib diisi untuk Primary. Lengkapi tujuan di detail sebelum submit.');
+                    }
                 }
 
                 $waktuMulai = ! empty($in['waktu_mulai_input']) ? $in['waktu_mulai_input'] : DB::raw('waktu_mulai_input');

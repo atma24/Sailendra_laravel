@@ -30,7 +30,8 @@ const css = `
 @media (max-width: 576px) { .user-form-row { grid-template-columns: 1fr; } }
 `;
 
-const ROLES = ["Supervisor", "Checker", "Forklift", "Auditor"];
+const ROLES_DEFAULT = ["Supervisor", "Checker", "Forklift", "Auditor"];
+const ROLES_SUPERADMIN = ["Supervisor", "Checker", "Forklift", "Support", "Auditor", "SuperAdmin"];
 const STATUSES = ["Aktif", "Nonaktif"];
 
 function tokenHeaders(): HeadersInit {
@@ -97,6 +98,9 @@ export default function UserFormPage({ editId }: { editId?: number }) {
 
   if (!session) return null;
   const multi = isMultiRole(session.user.role);
+  const isSuperAdmin = session.user.role === "SuperAdmin";
+  const roleOptions = isSuperAdmin ? ROLES_SUPERADMIN : ROLES_DEFAULT;
+  const availableRoles = roleOptions.includes(role) ? roleOptions : [...roleOptions, role];
   const activeLocId = lokasiTerpilih || aktifLokasiId(session) || "-";
   const lokasiTampil = lokasiName
     ? `${activeLocId} - ${lokasiName}`
@@ -108,6 +112,7 @@ export default function UserFormPage({ editId }: { editId?: number }) {
     setErr("");
     if (username.trim() === "") { setErr("Username wajib diisi"); return; }
     if (!isEdit && password.trim() === "") { setErr("Kata sandi wajib diisi untuk pengguna baru"); return; }
+    if (!isSuperAdmin && (role === "Support" || role === "SuperAdmin")) { setErr("Hanya SuperAdmin yang dapat membuat role Support/SuperAdmin"); return; }
     const body: Record<string, unknown> = { id_pengguna_lokasi: String(activeLocId), username: username.trim(), role, status };
     if (password.trim() !== "") body.password = password.trim();
     setSaving(true);
@@ -181,7 +186,7 @@ export default function UserFormPage({ editId }: { editId?: number }) {
           <div className="form-group-custom">
             <label>Role</label>
             <select value={role} onChange={(e) => setRole(e.target.value)}>
-              {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              {availableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div className="form-group-custom">

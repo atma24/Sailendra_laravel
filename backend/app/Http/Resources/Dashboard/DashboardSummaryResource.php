@@ -37,6 +37,8 @@ class DashboardSummaryResource extends JsonResource
             'storage_luar' => $s['storage_luar'],
             'gallon_breakdown' => $s['gallon_breakdown'],
             'gallon_zona' => $s['gallon_zona'],
+            'gallon_per_kategori' => $s['gallon_per_kategori'],
+            'produk_per_kategori' => $s['produk_per_kategori'],
             'totals' => $s['totals'],
             'inbound_by_type' => $s['inbound_by_type'],
             'inbound_series_by_type' => $s['inbound_series_by_type'],

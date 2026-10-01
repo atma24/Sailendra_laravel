@@ -125,7 +125,7 @@ export default function OutboundTanggalPage() {
   const [keyword, setKeyword] = useState("");
   const [search, setSearch] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const [modal, setModal] = useState<"" | "upload" | "import" | "foc">("");
+  const [modal, setModal] = useState<"" | "upload" | "primary" | "import" | "foc">("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const [lokasiList, setLokasiList] = useState<{ id_pengguna_lokasi: string; nama_pengguna_lokasi: string }[]>([]);
@@ -186,7 +186,7 @@ export default function OutboundTanggalPage() {
   const secondaryList = Object.values(secondaryMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
   const focList = Object.values(focMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
 
-  const openModal = async (which: "upload" | "import" | "foc") => {
+  const openModal = async (which: "upload" | "primary" | "import" | "foc") => {
     setUploadMsg("");
     setUploadLok("");
     setProgressText("");
@@ -214,7 +214,7 @@ export default function OutboundTanggalPage() {
       const s = raw ? JSON.parse(raw) : null;
       const headers: HeadersInit = { Accept: "application/json" };
       if (s?.token) headers.Authorization = `Bearer ${s.token}`;
-      const uploadUrl = `/api/barang-keluar/${modal === "import" ? "import-file" : "upload-file"}`;
+      const uploadUrl = `/api/barang-keluar/${modal === "import" ? "import-file" : modal === "primary" ? "upload-primary" : "upload-file"}`;
 
       const fd = new FormData();
       fd.append("file_excel", file);
@@ -287,6 +287,10 @@ export default function OutboundTanggalPage() {
                 <i className="bi bi-file-earmark-excel"></i>
                 Upload Excel
               </button>
+              <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("primary")}>
+                <i className="bi bi-file-earmark-excel"></i>
+                Upload Primary
+              </button>
               <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("foc")}>
                 <i className="bi bi-file-earmark-excel"></i>
                 Upload FOC
@@ -353,11 +357,13 @@ export default function OutboundTanggalPage() {
       {modal && modal !== "foc" && (
         <UploadModal
           open={!!modal}
-          title={modal === "import" ? "Import Outbound Historical" : "Upload Outbound"}
+          title={modal === "import" ? "Import Outbound Historical" : modal === "primary" ? "Upload Outbound Primary" : "Upload Outbound"}
           note={
             modal === "import"
               ? "Format Excel: GIN NO, NAMA CUSTOMER, DRIVER GUDANG, STATUS (Default Selesai), NO MOBIL, NAMA DRIVER, TANGGAL KELUAR, ID PRODUK, NAMA PRODUK, QTY, NO BATCH, BEST BEFORE, SO NUMBER, SALLE GROUP"
-              : "Upload data pengeluaran barang (Outbound) format Excel."
+              : modal === "primary"
+                ? "Format Excel: No, No DN, Type Doc, No Polisi, Pengemudi, Ritase, Material Desc, Quantity, Tgl Buat. Tipe otomatis Primary, Batch auto-FEFO, Tujuan diisi manual di Detail."
+                : "Upload data pengeluaran barang (Outbound) format Excel."
           }
           onClose={() => setModal("")}
           onSubmit={uploadFileSubmit}
