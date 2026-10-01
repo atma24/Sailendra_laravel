@@ -948,14 +948,18 @@ class BarangMasukController extends Controller
         $idxProdukDesc = $colMap['Material Desc'] ?? -1;
         $idxAsalId = $colMap['Source Id'] ?? -1; 
         $idxAsalName = $colMap['Source Name'] ?? -1;
-        $idxTransporter = $colMap['Actual Transporter Name'] ?? -1;
-        $idxQty = $colMap['Actual Quantity'] ?? -1;
+        $idxTransporterPlanned = $colMap['Planned Transporter Name'] ?? -1;
+        $idxTransporterActual = $colMap['Actual Transporter Name'] ?? -1;
+        $idxTransporter = $idxTransporterPlanned >= 0 ? $idxTransporterPlanned : $idxTransporterActual;
+        $idxQtyPlanned = $colMap['Planned Quantity'] ?? -1;
+        $idxQtyActual = $colMap['Actual Quantity'] ?? -1;
+        $idxQty = $idxQtyPlanned >= 0 ? $idxQtyPlanned : $idxQtyActual;
         $idxDate = $colMap['Planned PickUp Date'] ?? -1;
         $idxDn = $colMap['DN number'] ?? -1;
         $idxTruck = $colMap['Truck Type'] ?? -1;
 
         if ($idxShipment < 0 || $idxProdukDesc < 0 || $idxQty < 0) {
-            return $this->fail('Kolom mandatory (Shipment Id, Material Desc, Actual Quantity) tidak lengkap di Excel.');
+            return $this->fail('Kolom mandatory (Shipment Id, Material Desc, Planned Quantity) tidak lengkap di Excel.');
         }
 
         $produkList = DB::table('produk')->get(['id_produk', 'nama_produk', 'satuan']);
@@ -976,7 +980,11 @@ class BarangMasukController extends Controller
             if ($shipmentId === '') continue;
 
             $namaProdukExcel = strtoupper(trim((string) ($data[$idxProdukDesc] ?? '')));
-            $jumlah = (int) ($data[$idxQty] ?? 0);
+            // Sumber qty: Planned Quantity (utama), fallback ke Actual Quantity bila planned kosong.
+            $jumlah = (int) ($data[$idxQtyPlanned] ?? 0);
+            if ($jumlah <= 0 && $idxQtyActual >= 0) {
+                $jumlah = (int) ($data[$idxQtyActual] ?? 0);
+            }
 
             if ($jumlah <= 0) continue;
             
@@ -1007,16 +1015,28 @@ class BarangMasukController extends Controller
             }
             $asalName = $idxAsalName >= 0 ? trim((string) ($data[$idxAsalName] ?? '')) : 'Pabrik';
             $asalPabrik = ($asalId !== '') ? $asalId . ' - ' . $asalName : $asalName;
-            $transporter = $idxTransporter >= 0 ? trim((string) ($data[$idxTransporter] ?? '')) : '-';
+            $transporter = $idxTransporterPlanned >= 0 ? trim((string) ($data[$idxTransporterPlanned] ?? '')) : '';
+            if ($transporter === '' && $idxTransporterActual >= 0) {
+                $transporter = trim((string) ($data[$idxTransporterActual] ?? ''));
+            }
+            if ($transporter === '') $transporter = '-';
             $noDn = $idxDn >= 0 ? trim((string) ($data[$idxDn] ?? '')) : '';
             $truckType = $idxTruck >= 0 ? trim((string) ($data[$idxTruck] ?? '')) : '-';
             
             $rawDate = $idxDate >= 0 ? trim((string) ($data[$idxDate] ?? '')) : '';
             $tanggalMasuk = date('Y-m-d');
             if ($rawDate !== '') {
-                $parsed = date('Y-m-d', strtotime(str_replace('/', '-', substr($rawDate, 0, 10))));
-                if ($parsed !== '1970-01-01' && $parsed !== false) {
-                    $tanggalMasuk = $parsed;
+                $candidate = substr($rawDate, 0, 10);
+                $dtParsed = DateTime::createFromFormat('d/m/Y', $candidate)
+                    ?: DateTime::createFromFormat('d-m-Y', $candidate)
+                    ?: DateTime::createFromFormat('Y-m-d', $candidate);
+                if ($dtParsed) {
+                    $tanggalMasuk = $dtParsed->format('Y-m-d');
+                } else {
+                    $parsed = date('Y-m-d', strtotime(str_replace('/', '-', $candidate)));
+                    if ($parsed !== '1970-01-01' && $parsed !== false) {
+                        $tanggalMasuk = $parsed;
+                    }
                 }
             }
 
