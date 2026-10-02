@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\PenggunaLokasiController;
 use App\Http\Controllers\Api\PlantController;
 use App\Http\Controllers\Api\ProdukController;
 use App\Http\Controllers\Api\StokController;
+use App\Http\Controllers\Api\UtilisasiReportController;
 use App\Http\Controllers\Api\StokOpnameController;
 use App\Http\Controllers\Api\TraceabilityController;
 use Illuminate\Support\Facades\Route;
@@ -143,6 +144,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/dashboard/summary', [DashboardController::class, 'summary']);
     Route::get('/dashboard/tahun-tersedia', [DashboardController::class, 'tahunTersedia']);
+
+    // Report historis Warehouse Utilization (snapshot harian per depo).
+    Route::get('/laporan-utilisasi/daftar', [UtilisasiReportController::class, 'daftar']);
+    Route::get('/laporan-utilisasi/export', [UtilisasiReportController::class, 'export']);
+    Route::get('/laporan-utilisasi', [UtilisasiReportController::class, 'show']);
 
     Route::get('/layout-gudang/ambil-layout', [LayoutGudangController::class, 'ambilLayout']);
     Route::get('/layout-gudang/cek-line-layout', [LayoutGudangController::class, 'cekLineLayout']);

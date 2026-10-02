@@ -79,3 +79,29 @@ export const apiGet = <T = unknown>(path: string) => api<T>(path);
 
 export const apiPost = <T = unknown>(path: string, data: unknown) =>
   api<T>(path, { method: "POST", body: JSON.stringify(data) });
+
+// Unduh file (export) dengan header Authorization, lalu trigger download.
+export async function apiDownload(path: string, filename: string) {
+  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() });
+
+  if (!res.ok) {
+    let msg = "Gagal mengunduh file";
+    try {
+      const body = await res.json();
+      msg = body?.message || msg;
+    } catch {
+      /* non-json */
+    }
+    throw new ApiError(msg, res.status);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

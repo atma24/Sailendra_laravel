@@ -66,7 +66,8 @@ class DashboardController extends Controller
             $dates,
             $granularity,
             $request->top(),
-            $mutasiTotal
+            $mutasiTotal,
+            $request->expiredMode()
         );
 
         return new DashboardSummaryResource($payload);

@@ -26,6 +26,7 @@ type TraceRow = {
   best_before: string;
   batch_number: string;
   nama_plant: string;
+  tanggal_pengiriman: string;
 };
 
 type Produk = { id_produk: number; nama_produk: string };
@@ -195,10 +196,10 @@ export default function TraceabilityPage() {
   const exportExcel = async () => {
     const data = await fetchAll();
     const tanggal = new Date().toISOString().slice(0, 10);
-    const heads = ["Nama Depo", "Nama Driver", "No Mobil", "Sales Group", "Cust ID", "Nama Customer", "No SO", "No Gin", "Produk", "Qty", "Best Before", "Batch", "Plant"];
+    const heads = ["Nama Depo", "Nama Driver", "No Mobil", "Sales Group", "Cust ID", "Nama Customer", "No SO", "No Gin", "Produk", "Qty", "Best Before", "Batch", "Plant", "Tgl Kirim"];
     const body = data.map((x) =>
       `<tr>${cell(x.nama_depo)}${cell(x.nama_driver || x.driver_gudang)}${cell(x.no_mobil)}${cell(x.sales_group)}${cell(x.id_customer)}${cell(x.nama_customer)}`
-      + `${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}</tr>`
+      + `${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}${cell(x.tanggal_pengiriman)}</tr>`
     ).join("");
     const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>
       <table border="1">
@@ -219,7 +220,7 @@ export default function TraceabilityPage() {
     if (!w) return;
     const rows = data.map((x, i) =>
       `<tr><td>${i + 1}</td>${cell(x.nama_depo)}${cell(x.nama_driver || x.driver_gudang)}${cell(x.no_mobil)}${cell(x.sales_group)}`
-      + `${cell(x.id_customer)}${cell(x.nama_customer)}${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}</tr>`
+      + `${cell(x.id_customer)}${cell(x.nama_customer)}${cell(x.so_number)}${cell(x.gin_no)}${cell(x.nama_produk)}${cell(x.jumlah)}${cell(x.best_before)}${cell(x.batch_number)}${cell(stripPlant(x.nama_plant))}${cell(x.tanggal_pengiriman)}</tr>`
     ).join("");
     w.document.write(`<!doctype html><html><head><title>Laporan Traceability</title>
       <style>
@@ -239,7 +240,7 @@ export default function TraceabilityPage() {
       <div class="toolbar"><span>Template Laporan Traceability</span><button onclick="window.print()">Download PDF</button></div>
       <h1>Laporan Traceability</h1>
       <div class="sub">Periode Tanggal: <b>${tanggal}</b> &mdash; Total: ${data.length} data</div>
-      <table><thead><tr><th>No</th>${["Nama Depo","Nama Driver","No Mobil","Sales Group","Cust ID","Nama Customer","No SO","No Gin","Produk","Qty","Best Before","Batch","Plant"].map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+      <table><thead><tr><th>No</th>${["Nama Depo","Nama Driver","No Mobil","Sales Group","Cust ID","Nama Customer","No SO","No Gin","Produk","Qty","Best Before","Batch","Plant","Tgl Kirim"].map((h) => `<th>${h}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table></body></html>`);
     w.document.close();
   };
@@ -401,7 +402,7 @@ export default function TraceabilityPage() {
               <thead>
                 <tr>
                   <th>Nama Depo</th><th>Nama Driver</th><th>No Mobil</th><th>Sales Group</th><th>Cust ID</th><th>Nama Customer</th>
-                  <th>No SO</th><th>No Gin</th><th>Produk</th><th>Qty</th><th>Best Before</th><th>Batch</th><th>Plant</th>
+                  <th>No SO</th><th>No Gin</th><th>Produk</th><th>Qty</th><th>Best Before</th><th>Batch</th><th>Plant</th><th>Tgl Kirim</th>
                 </tr>
               </thead>
               <tbody>
@@ -420,6 +421,7 @@ export default function TraceabilityPage() {
                     <td>{norm(r.best_before)}</td>
                     <td>{norm(r.batch_number)}</td>
                     <td>{stripPlant(r.nama_plant)}</td>
+                    <td>{norm(r.tanggal_pengiriman)}</td>
                   </tr>
                 ))}
               </tbody>

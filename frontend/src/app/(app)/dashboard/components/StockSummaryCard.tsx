@@ -325,7 +325,7 @@ export default function StockSummaryCard({
           <i className="bi bi-box-seam" />
         </span>
         <h2 className="text-[14px] font-extrabold tracking-tight text-blue-800">
-          Ringkasan Stok Gudang
+          Warehouse Utilization
         </h2>
         {/* Tombol lokasi: Semua + tiap kategori (dinamis dari backend) */}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">

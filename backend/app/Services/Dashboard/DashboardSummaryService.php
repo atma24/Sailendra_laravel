@@ -33,7 +33,8 @@ class DashboardSummaryService
         array $dates,
         string $granularity,
         int $top,
-        int $mutasiTotal
+        int $mutasiTotal,
+        string $expiredMode = 'h30'
     ): array {
         $rangeStart = $periode['mulai'];
         $rangeEnd = $periode['sampai'];
@@ -80,7 +81,7 @@ class DashboardSummaryService
             'outbound_series_by_type' => $this->outbound->seriesByType($lokasiFilter, $rangeStart, $rangeEnd, $dates, $produkFilter, $granularity),
             'outbound_per_gin' => $this->outbound->perGin($lokasiFilter, $rangeStart, $rangeEnd, $produkFilter, $top),
             'outbound_per_so' => $this->outbound->perSo($lokasiFilter, $rangeStart, $rangeEnd, $produkFilter, $top),
-            'expired_alert' => $this->alert->expired($lokasiFilter, $produkFilter),
+            'expired_alert' => $this->alert->expired($lokasiFilter, $produkFilter, $expiredMode),
         ];
     }
 }

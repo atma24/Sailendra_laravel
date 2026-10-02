@@ -31,6 +31,12 @@ const singles = [
   { title: "Stock", icon: "bi-box-seam", path: "/stock", page: "stock" },
   { title: "Stock Opname", icon: "bi-clipboard-check", path: "/stock-opname", page: "stock_opname" },
   { title: "Report", icon: "bi-file-earmark-text", path: "/report", page: "report" },
+  {
+    title: "Warehouse Utilization",
+    icon: "bi-bar-chart-line",
+    path: "/laporan-utilisasi",
+    page: "laporan_utilisasi",
+  },
 ];
 
 const layoutGudang = {

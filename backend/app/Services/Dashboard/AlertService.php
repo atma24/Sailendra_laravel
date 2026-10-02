@@ -12,12 +12,19 @@ use Illuminate\Support\Facades\DB;
 class AlertService
 {
     /**
-     * Daftar produk dengan best_before <= threshold (default 30 hari).
+     * Daftar produk dengan best_before <= threshold (mode 'h30', default
+     * 30 hari) atau semua stok ber-best-before (mode 'all'),
+     * satu baris per produk + best_before.
+     *
+     * Kolom: nama_produk, qty (agregat), best_before (expired date),
+     * production_date (MIN tanggal_masuk inbound terkait), aging_hari
+     * (best_before - hari ini, realtime dalam hari; negatif = sudah lewat expired).
      *
      * @param  array<int,string>  $produkFilter
-     * @return array<int,array<string,mixed>>
+     * @param  string  $mode  'h30' (default) atau 'all'
+     * @return array<int,array{nama_produk:string,qty:int,best_before:string,production_date:?string,aging_hari:?int,expired:bool}>
      */
-    public function expired(?array $lokasiFilter, array $produkFilter = []): array
+    public function expired(?array $lokasiFilter, array $produkFilter = [], string $mode = 'h30'): array
     {
         $thresholdDays = DashboardConstants::EXPIRED_ALERT_DAYS;
         $threshold = now()->addDays($thresholdDays)->format('Y-m-d');
@@ -25,21 +32,22 @@ class AlertService
 
         $q = DB::table('stok_gudang_deep as sd')
             ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sd.id_stok_header')
-            ->join('deep as d', 'd.id_deep', '=', 'sd.id_deep')
-            ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
-            ->join('line as ln', 'ln.id_line', '=', 'lv.id_line')
-            ->join('block as b', 'b.id_block', '=', 'ln.id_block')
-            ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
+            ->leftJoin('barang_masuk as bm', 'bm.id_barang_masuk', '=', 'sg.id_barang_masuk')
+            ->leftJoin('produk as p', 'p.id_produk', '=', 'sg.id_produk')
             ->where('sd.jumlah', '>', 0)
             ->whereNotNull('sg.best_before')
-            ->where('sg.best_before', '<=', $threshold)
+            // Produk tanpa batch (otomatis best_before 9999) tidak dihitung aging.
+            ->whereRaw('COALESCE(p.tanpa_batch, 0) = 0');
+        if (strtolower(trim($mode)) !== 'all') {
+            $q->where('sg.best_before', '<=', $threshold);
+        }
+        $q = $q
             ->selectRaw('sg.nama_produk AS nama_produk')
-            ->selectRaw("COALESCE(NULLIF(TRIM(sg.batch), ''), '-') AS batch")
+            ->selectRaw('sg.nama_produk AS nama_produk')
             ->selectRaw('sg.best_before AS best_before')
-            ->selectRaw("CONCAT(b.kode_block, '-', ln.nomor_line) AS lokasi")
-            ->selectRaw("UPPER(COALESCE(l.kategori, l.nama_lokasi, '')) AS kategori")
+            ->selectRaw('MIN(bm.tanggal_masuk) AS production_date')
             ->selectRaw('SUM(sd.jumlah) AS qty')
-            ->groupBy('sg.nama_produk', 'sg.batch', 'sg.best_before', 'b.kode_block', 'ln.nomor_line', 'l.kategori', 'l.nama_lokasi')
+            ->groupBy('sg.nama_produk', 'sg.best_before')
             ->orderBy('sg.best_before');
         if (! empty($produkFilter)) {
             $q->whereIn('sg.nama_produk', $produkFilter);
@@ -50,18 +58,17 @@ class AlertService
         $list = [];
         foreach ($q->get() as $row) {
             $bb = (string) $row->best_before;
-            $sisa = null;
+            $prod = $row->production_date !== null ? (string) $row->production_date : null;
+            $aging = null;
             if ($bb !== '') {
-                $sisa = (int) now()->parse($today)->diffInDays(now()->parse($bb), false);
+                $aging = (int) now()->parse($today)->diffInDays(now()->parse($bb), false);
             }
             $list[] = [
                 'nama_produk' => $row->nama_produk,
-                'batch' => $row->batch,
-                'best_before' => $bb,
-                'lokasi' => $row->lokasi,
-                'kategori' => $row->kategori,
                 'qty' => (int) $row->qty,
-                'sisa_hari' => $sisa,
+                'best_before' => $bb,
+                'production_date' => $prod,
+                'aging_hari' => $aging,
                 'expired' => $bb !== '' && $bb < $today,
             ];
         }

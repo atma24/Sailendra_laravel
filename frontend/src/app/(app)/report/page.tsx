@@ -9,20 +9,47 @@ type Row = Record<string, string | number | null>;
 type Preview = { success: boolean; is_gabungan?: boolean; periode?: string; count?: number; items?: Row[]; inbound?: Row[]; outbound?: Row[] };
 type Loc = { id_pengguna_lokasi: string; nama_pengguna_lokasi: string };
 
+type UtilisasiSnapshot = {
+  tanggal: string;
+  id_pengguna_lokasi: string;
+  produk_total: number;
+  produk_qty: number;
+  storage_dalam: { terpakai: number; kapasitas: number; persen: number };
+  storage_luar: { terpakai: number; kapasitas: number; persen: number };
+};
+
+/** Ubah snapshot jadi 1 baris tabel (untuk preview di halaman Report). */
+function snapshotToRow(s: UtilisasiSnapshot): Row {
+  const n = (v: number | string) => new Intl.NumberFormat("id-ID").format(Number(v) || 0);
+  return {
+    periode: s.tanggal,
+    id_pengguna_lokasi: s.id_pengguna_lokasi,
+    total_produk: s.produk_total,
+    total_qty: s.produk_qty,
+    storage_dalam: `${n(s.storage_dalam.terpakai)} / ${n(s.storage_dalam.kapasitas)} (${s.storage_dalam.persen}%)`,
+    storage_luar: `${n(s.storage_luar.terpakai)} / ${n(s.storage_luar.kapasitas)} (${s.storage_luar.persen}%)`,
+  };
+}
+
 const TYPES = [
   { key: "inbound", label: "Inbound", icon: "bi-box-arrow-in-down" },
   { key: "outbound", label: "Outbound", icon: "bi-box-arrow-up" },
   { key: "gabungan", label: "Gabungan", icon: "bi-file-earmark-text" },
   { key: "mutasi", label: "Mutasi", icon: "bi-arrow-left-right" },
+  { key: "utilisasi", label: "Warehouse Utilization", icon: "bi-bar-chart-line" },
 ] as const;
 
 type TypeKey = (typeof TYPES)[number]["key"];
+
+/** Jenis laporan snapshot: 1 tanggal + 1 depo per file. */
+const SNAPSHOT_TYPES: TypeKey[] = ["utilisasi"];
 
 const ENDPOINT: Record<TypeKey, string> = {
   inbound: "/laporan/barang-masuk",
   outbound: "/laporan/barang-keluar",
   gabungan: "/laporan/gabungan",
   mutasi: "/laporan/mutasi",
+  utilisasi: "/laporan-utilisasi",
 };
 
 const norm = (v: unknown) => String(v ?? "").trim();
@@ -36,12 +63,15 @@ const COL_LABEL: Record<string, string> = {
   best_before: "Best Before", batch: "Batch", status: "Status", durasi_input: "Durasi Input", catatan: "Catatan",
   jenis_mutasi: "Jenis Mutasi", lokasi_sumber: "Lokasi Sumber", lokasi_tujuan: "Lokasi Tujuan",
   diperbarui_oleh: "Diubah Oleh", diperbarui_pada: "Waktu Diubah", catatan_perubahan: "Alasan Diubah",
+  periode: "Tanggal", total_produk: "Total Produk (SKU)", total_qty: "Total Qty",
+  storage_dalam: "Storage Dalam (terpakai/kapasitas)", storage_luar: "Storage Luar (terpakai/kapasitas)",
 };
 
 const base = ["id_pengguna_lokasi", "nama_pengguna_lokasi", "dibuat_oleh"];
 const aud = ["diperbarui_oleh", "diperbarui_pada", "catatan_perubahan"];
 
 function columnsFor(type: TypeKey): string[] {
+  if (type === "utilisasi") return ["periode", "id_pengguna_lokasi", "total_produk", "total_qty", "storage_dalam", "storage_luar"];
   if (type === "mutasi") return ["no", ...base, "created_at", "nama_produk", "jumlah", "satuan", "best_before", "jenis_mutasi", "lokasi_sumber", "lokasi_tujuan", "catatan"];
   if (type === "inbound") return ["no", ...base, "tanggal_masuk", "nama_driver", "no_mobil", "no_dn", "tipe_penerimaan", "asal_pabrik", "nama_produk", "jumlah", "satuan", "best_before", "batch", "status", "durasi_input", "catatan", ...aud];
   return ["no", ...base, "tanggal_keluar", "nama_driver", "no_mobil", "tipe_pengeluaran", "tujuan", "nama_produk", "jumlah", "satuan", "best_before", "batch", "status", "durasi_input", "catatan", ...aud];
@@ -53,7 +83,8 @@ const css = `
 .report-title { font-size: 16px; font-weight: 950; color: var(--primary); margin-bottom: 20px; letter-spacing: -0.2px; }
 .report-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
 .report-label { display: block; font-size: 11px; font-weight: 850; color: var(--text-main); margin-bottom: 2px; }
-.report-type-selector { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 4px; }
+.report-type-selector { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 4px; }
+@media (max-width: 900px) { .report-type-selector { grid-template-columns: repeat(2, 1fr); } }
 .report-type-option { position: relative; }
 .report-type-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
 .report-type-label { display: flex; align-items: center; justify-content: center; gap: 8px; height: 40px; border: 1px solid #e2e7f0; border-radius: 8px; background: #fbfcff; color: var(--text-main); font-size: 12px; font-weight: 800; cursor: pointer; transition: .15s ease; user-select: none; }
@@ -223,6 +254,20 @@ export default function ReportPage() {
     return sp;
   };
 
+  const isSnapshot = SNAPSHOT_TYPES.includes(type);
+
+  /** Daftar depo terpilih untuk jenis snapshot (1 file per depo). */
+  const depoList = (): string[] => {
+    if (multi) {
+      if (allChecked || selIds.size === 0) return [""];
+      return Array.from(selIds);
+    }
+    return [String(session.user.id_pengguna_lokasi ?? "")];
+  };
+
+  const depoLabel = (id: string) =>
+    id === "" ? "1 depo" : (locs.find((l) => l.id_pengguna_lokasi === id)?.nama_pengguna_lokasi || id);
+
   const toQuery = () => {
     const sp = locParams();
     sp.set("from", start);
@@ -234,8 +279,17 @@ export default function ReportPage() {
   };
 
   const doPreview = async () => {
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setPv(null);
     try {
+      if (isSnapshot) {
+        // Snapshot: 1 tanggal + 1 depo. Ambil depo pertama sebagai preview.
+        const d = depoList()[0];
+        const sp = new URLSearchParams({ tanggal: end, depo: d });
+        const res = await apiGet<UtilisasiSnapshot | null>(`${ENDPOINT[type]}?${sp.toString()}`);
+        const snap = (res?.data ?? null) as UtilisasiSnapshot | null;
+        setPv(snap ? { success: true, items: [snapshotToRow(snap)], periode: snap.tanggal } : null);
+        return;
+      }
       const sp = toQuery();
       sp.set("format", "json");
       const res = await apiGet<Preview>(`${ENDPOINT[type]}?${sp.toString()}`);
@@ -248,6 +302,31 @@ export default function ReportPage() {
   const doDownload = async () => {
     setDownloading(true); setError("");
     try {
+      if (isSnapshot) {
+        // Unduh 1 file per depo terpilih.
+        for (const d of depoList()) {
+          const sp = new URLSearchParams({ tanggal: end, depo: d });
+          const res = await fetch(`/api${ENDPOINT[type]}/export?${sp.toString()}`, {
+            headers: { Accept: "application/vnd.ms-excel", Authorization: `Bearer ${makeToken()}` },
+          });
+          if (!res.ok) {
+            const msg = await res.text();
+            setError(msg.slice(0, 200) || `Snapshot tidak ditemukan untuk ${depoLabel(d)} pada ${end}.`);
+            return;
+          }
+          const blob = await res.blob();
+          const cd = res.headers.get("Content-Disposition") || "";
+          const m = /filename="([^"]+)"/.exec(cd);
+          const name = m ? m[1] : `warehouse-utilization_${end}_${d}.xls`;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = name;
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+        }
+        return;
+      }
+
       const sp = toQuery();
       const res = await fetch(`/api${ENDPOINT[type]}?${sp.toString()}`, {
         headers: { Accept: "application/vnd.ms-excel", Authorization: `Bearer ${makeToken()}` },
@@ -306,16 +385,36 @@ export default function ReportPage() {
         )}
 
         <div className="report-group">
-          <div className="report-date-row">
+          {isSnapshot ? (
             <div>
-              <label htmlFor="start_date" className="report-label" style={{ marginBottom: 4 }}>Dari Tanggal</label>
-              <input type="date" id="start_date" className="report-input-date" value={start || today} onChange={(e) => setStart(e.target.value)} required />
+              <label htmlFor="end_date" className="report-label" style={{ marginBottom: 4 }}>
+                Tanggal Snapshot
+              </label>
+              <input
+                type="date"
+                id="end_date"
+                className="report-input-date"
+                value={end || today}
+                max={today}
+                onChange={(e) => setEnd(e.target.value)}
+                required
+              />
+              <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: "var(--text-soft)" }}>
+                Snapshot otomatis per 23:59 WIB. 1 file per depo terpilih.
+              </div>
             </div>
-            <div>
-              <label htmlFor="end_date" className="report-label" style={{ marginBottom: 4 }}>Sampai Tanggal</label>
-              <input type="date" id="end_date" className="report-input-date" value={end || today} onChange={(e) => setEnd(e.target.value)} required />
+          ) : (
+            <div className="report-date-row">
+              <div>
+                <label htmlFor="start_date" className="report-label" style={{ marginBottom: 4 }}>Dari Tanggal</label>
+                <input type="date" id="start_date" className="report-input-date" value={start || today} onChange={(e) => setStart(e.target.value)} required />
+              </div>
+              <div>
+                <label htmlFor="end_date" className="report-label" style={{ marginBottom: 4 }}>Sampai Tanggal</label>
+                <input type="date" id="end_date" className="report-input-date" value={end || today} onChange={(e) => setEnd(e.target.value)} required />
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="report-actions-grid">

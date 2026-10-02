@@ -119,7 +119,14 @@ export default function DashboardPage() {
 
       {/* Expired & stok */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <ExpiredAlertList rows={summary?.expired_alert ?? []} />
+        <ExpiredAlertList
+          rows={summary?.expired_alert ?? []}
+          mode={filters.expiredMode}
+          onModeChange={(expiredMode) =>
+            setFilters({ ...filters, expiredMode })
+          }
+          loading={loading}
+        />
         <StockHealthList rows={summary?.stok_list ?? []} />
       </div>
     </div>

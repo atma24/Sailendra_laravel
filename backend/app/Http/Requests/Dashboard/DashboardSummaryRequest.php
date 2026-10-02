@@ -66,6 +66,16 @@ class DashboardSummaryRequest extends FormRequest
         return $minggu === null ? '' : trim((string) $minggu);
     }
 
+    /**
+     * Mode filter card aging produk: 'all' (semua) atau 'h30' (default).
+     */
+    public function expiredMode(): string
+    {
+        return strtolower(trim((string) $this->query('expired_mode', 'h30'))) === 'all'
+            ? 'all'
+            : 'h30';
+    }
+
     public function isWeekly(): bool
     {
         $label = $this->mingguLabel();

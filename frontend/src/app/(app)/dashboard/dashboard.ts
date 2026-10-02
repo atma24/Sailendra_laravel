@@ -48,12 +48,10 @@ export type KategoriItem = {
 
 export type ExpiredRow = {
   nama_produk: string;
-  batch: string;
-  best_before: string;
-  lokasi: string;
-  kategori: string;
   qty: number;
-  sisa_hari: number | null;
+  best_before: string;
+  production_date: string | null;
+  aging_hari: number | null;
   expired: boolean;
 };
 
@@ -175,6 +173,16 @@ export const fmtTanggalFull = (iso: string) => {
     month: "long",
     year: "numeric",
   });
+};
+
+// Format DD/MM/YYYY, mis. "01/10/2028". Menerima "YYYY-MM-DD" atau datetime.
+export const fmtTanggalSlash = (iso: string | null | undefined) => {
+  if (!iso) return "-";
+  const s = String(iso).slice(0, 10);
+  const d = new Date(`${s}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return s;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
 };
 
 export const NAMA_BULAN = [

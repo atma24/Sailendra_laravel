@@ -5,12 +5,15 @@ import { apiGet } from "@/lib/api";
 import { lokasiParam, type Session } from "@/lib/auth";
 import type { Summary } from "../dashboard";
 
+export type ExpiredMode = "all" | "h30";
+
 export type DashboardFilters = {
   tahun: string;
   bulan: string; // 1-12
   minggu: string; // "" | "1".."6"
   depo: string; // id_pengguna_lokasi, "" = ikut session
   produk: string[]; // nama_produk
+  expiredMode: ExpiredMode; // filter card aging produk
 };
 
 export function defaultFilters(): DashboardFilters {
@@ -21,6 +24,7 @@ export function defaultFilters(): DashboardFilters {
     minggu: "",
     depo: "",
     produk: [],
+    expiredMode: "h30",
   };
 }
 
@@ -39,6 +43,7 @@ function buildParams(session: Session, f: DashboardFilters): URLSearchParams {
   params.set("bulan", `${f.tahun}-${f.bulan.padStart(2, "0")}`);
   if (f.minggu) params.set("minggu", f.minggu);
   if (f.produk.length > 0) params.set("produk", f.produk.join(","));
+  if (f.expiredMode === "all") params.set("expired_mode", "all");
   return params;
 }
 
@@ -74,6 +79,7 @@ export function useDashboardSummary(
     filters.bulan,
     filters.minggu,
     filters.depo,
+    filters.expiredMode,
     produkKey,
   ]);
 
