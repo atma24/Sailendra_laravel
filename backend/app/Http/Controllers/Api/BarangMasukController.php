@@ -222,6 +222,7 @@ class BarangMasukController extends Controller
         $jumlah = (int) ($in['jumlah'] ?? 0);
         $satuan = trim((string) ($in['satuan'] ?? ''));
         $tanggalMasuk = trim((string) ($in['tanggal_masuk'] ?? date('Y-m-d')));
+        $tanggalProduksi = trim((string) ($in['tanggal_produksi'] ?? ''));
         $bestBefore = isset($in['best_before']) ? trim((string) $in['best_before']) : null;
         $batch = trim((string) ($in['batch'] ?? ''));
         $asalPabrik = isset($in['asal_pabrik']) ? trim((string) $in['asal_pabrik']) : null;
@@ -388,6 +389,20 @@ class BarangMasukController extends Controller
 
         if ($idPengguna <= 0 || $idProduk <= 0 || $jumlah <= 0 || $satuan === '') {
             return $this->fail('Field wajib: id_pengguna, id_produk, jumlah, satuan');
+        }
+        if ($tanggalProduksi === '') {
+            return $this->fail('Field wajib: tanggal_produksi');
+        }
+        $dtProduksi = DateTime::createFromFormat('Y-m-d', $tanggalProduksi);
+        if (! $dtProduksi || $dtProduksi->format('Y-m-d') !== $tanggalProduksi) {
+            return $this->fail('Format tanggal_produksi tidak valid (Y-m-d).');
+        }
+        $dtMasuk = DateTime::createFromFormat('Y-m-d', $tanggalMasuk);
+        if (! $dtMasuk || $dtMasuk->format('Y-m-d') !== $tanggalMasuk) {
+            return $this->fail('Format tanggal_masuk tidak valid (Y-m-d).');
+        }
+        if ($tanggalProduksi > $tanggalMasuk) {
+            return $this->fail('Tanggal produksi tidak boleh melebihi tanggal masuk.');
         }
         if (! in_array($tipePenerimaan, ['Primary', 'Secondary', 'Primary XWH', 'REJECT', 'FOC'], true)) {
             return $this->fail('Field wajib: tipe_penerimaan (Primary / Secondary / Primary XWH / REJECT / FOC)');
@@ -561,7 +576,7 @@ class BarangMasukController extends Controller
         try {
             DB::transaction(function () use (
                 $alokasiPerLine, $idPenggunaLokasi, $idPengguna, $idProduk, $namaProduk,
-                $satuan, $tanggalMasuk, $tipePenerimaan, $bestBefore, $batch, $asalPabrik,
+                $satuan, $tanggalMasuk, $tanggalProduksi, $tipePenerimaan, $bestBefore, $batch, $asalPabrik,
                 $noDn, $namaDriver, $noMobil, $catatan, $waktuMulai, $durasiDetik, $multiplier,
                 $shipmentId,
                 &$idBarangMasukList, &$idStokList, &$ringkasanList, &$lokasiAkhirStr
@@ -585,6 +600,7 @@ class BarangMasukController extends Controller
                         'jumlah' => $jumlahTersimpan,
                         'satuan' => $satuan,
                         'tanggal_masuk' => $tanggalMasuk,
+                        'tanggal_produksi' => $tanggalProduksi,
                         'tipe_penerimaan' => $tipePenerimaan,
                         'best_before' => $bestBefore,
                         'batch' => $batch,
@@ -666,7 +682,7 @@ class BarangMasukController extends Controller
         }
 
         $headerKeys = [
-            'id_pengguna', 'id_pengguna_lokasi', 'tanggal_masuk', 'tipe_penerimaan',
+            'id_pengguna', 'id_pengguna_lokasi', 'tanggal_masuk', 'tanggal_produksi', 'tipe_penerimaan',
             'nama_driver', 'no_mobil', 'shipment_id', 'no_dn', 'catatan',
             'waktu_mulai_input', 'durasi_detik',
         ];
@@ -687,6 +703,31 @@ class BarangMasukController extends Controller
             $header['shipment_id'] = $this->generateManualShipmentId(
                 trim((string) ($header['tanggal_masuk'] ?? ''))
             );
+        }
+
+        // Tanggal produksi wajib 1x per shipment (header). Validasi awal agar
+        // pesan jelas; validasi per-item tetap dijaga di store().
+        $tanggalProduksiBatch = trim((string) ($header['tanggal_produksi'] ?? ''));
+        if ($tanggalProduksiBatch === '') {
+            $firstItemTp = '';
+            $firstItem = is_array($items) ? reset($items) : null;
+            if (is_array($firstItem) && isset($firstItem['tanggal_produksi'])) {
+                $firstItemTp = trim((string) $firstItem['tanggal_produksi']);
+            }
+            if ($firstItemTp === '') {
+                return $this->fail('Field wajib: tanggal_produksi');
+            }
+            $header['tanggal_produksi'] = $firstItemTp;
+            $tanggalProduksiBatch = $firstItemTp;
+        }
+        $dtProduksiBatch = DateTime::createFromFormat('Y-m-d', $tanggalProduksiBatch);
+        if (! $dtProduksiBatch || $dtProduksiBatch->format('Y-m-d') !== $tanggalProduksiBatch) {
+            return $this->fail('Format tanggal_produksi tidak valid (Y-m-d).');
+        }
+        $tanggalMasukBatch = trim((string) ($header['tanggal_masuk'] ?? date('Y-m-d')));
+        $dtMasukBatch = DateTime::createFromFormat('Y-m-d', $tanggalMasukBatch);
+        if ($dtMasukBatch && $dtMasukBatch->format('Y-m-d') === $tanggalMasukBatch && $tanggalProduksiBatch > $tanggalMasukBatch) {
+            return $this->fail('Tanggal produksi tidak boleh melebihi tanggal masuk.');
         }
 
         $hasil = [];
@@ -1171,9 +1212,54 @@ class BarangMasukController extends Controller
             return $this->fail('shipment_id, id_pengguna_lokasi, dan items wajib diisi.');
         }
 
+        // Tanggal produksi boleh dilengkapi sekalian saat submit (per shipment).
+        $tanggalProduksiSubmit = trim((string) $request->input('tanggal_produksi', ''));
+        if ($tanggalProduksiSubmit !== '') {
+            $dtProdSubmit = DateTime::createFromFormat('Y-m-d', $tanggalProduksiSubmit);
+            if (! $dtProdSubmit || $dtProdSubmit->format('Y-m-d') !== $tanggalProduksiSubmit) {
+                return $this->fail('Format tanggal_produksi tidak valid (Y-m-d).');
+            }
+        }
+
         DB::beginTransaction();
         try {
             $processedItems = 0;
+
+            // Gate: tanggal produksi wajib terisi sebelum confirm.
+            // Data Selesai lama tidak dicek (hanya Draft yang diproses di sini).
+            $draftIds = [];
+            foreach ($itemsReq as $it) {
+                $idBmGate = (int) ($it['id_barang_masuk'] ?? 0);
+                if ($idBmGate > 0) $draftIds[] = $idBmGate;
+            }
+            if (! empty($draftIds)) {
+                $draftRows = DB::table('barang_masuk')
+                    ->whereIn('id_barang_masuk', $draftIds)
+                    ->where('shipment_id', $shipmentId)
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('status', 'Draft')
+                    ->lockForUpdate()
+                    ->get(['id_barang_masuk', 'tanggal_masuk', 'tanggal_produksi', 'nama_produk']);
+                foreach ($draftRows as $dr) {
+                    $prodEfektif = $tanggalProduksiSubmit !== '' ? $tanggalProduksiSubmit : trim((string) ($dr->tanggal_produksi ?? ''));
+                    if ($prodEfektif === '') {
+                        throw new Exception("Tanggal produksi wajib diisi sebelum konfirmasi (item: {$dr->nama_produk}). Lengkapi via Edit Detail.");
+                    }
+                    $tglMasukDr = trim((string) ($dr->tanggal_masuk ?? ''));
+                    if ($tglMasukDr !== '' && $prodEfektif > $tglMasukDr) {
+                        throw new Exception("Tanggal produksi tidak boleh melebihi tanggal masuk (item: {$dr->nama_produk}).");
+                    }
+                }
+                // Samakan ke seluruh item bila dilengkapi sekalian saat submit.
+                if ($tanggalProduksiSubmit !== '') {
+                    DB::table('barang_masuk')
+                        ->whereIn('id_barang_masuk', $draftIds)
+                        ->where('shipment_id', $shipmentId)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->where('status', 'Draft')
+                        ->update(['tanggal_produksi' => $tanggalProduksiSubmit]);
+                }
+            }
 
             foreach ($itemsReq as $it) {
                 $idBm = (int) ($it['id_barang_masuk'] ?? 0);
@@ -1376,6 +1462,18 @@ class BarangMasukController extends Controller
 
             if ($pendingItems->isEmpty()) {
                 throw new Exception('Tidak ada data Inbound berstatus Pending untuk dikonfirmasi.');
+            }
+
+            // Gate: tanggal produksi wajib terisi + tidak boleh > tanggal masuk.
+            foreach ($pendingItems as $pi) {
+                $prodPi = trim((string) ($pi->tanggal_produksi ?? ''));
+                if ($prodPi === '') {
+                    throw new Exception("Tanggal produksi wajib diisi sebelum konfirmasi (item: {$pi->nama_produk}). Lengkapi via Edit Detail.");
+                }
+                $masukPi = trim((string) ($pi->tanggal_masuk ?? ''));
+                if ($masukPi !== '' && $prodPi > $masukPi) {
+                    throw new Exception("Tanggal produksi tidak boleh melebihi tanggal masuk (item: {$pi->nama_produk}).");
+                }
             }
 
             $idsProses = $pendingItems->pluck('id_barang_masuk')->toArray();
@@ -1869,6 +1967,7 @@ class BarangMasukController extends Controller
         $jumlahBaru = isset($in['jumlah']) ? (int) $in['jumlah'] : null;
         $satuan = isset($in['satuan']) ? trim((string) $in['satuan']) : null;
         $tanggalMasuk = isset($in['tanggal_masuk']) ? trim((string) $in['tanggal_masuk']) : null;
+        $tanggalProduksi = isset($in['tanggal_produksi']) ? trim((string) $in['tanggal_produksi']) : null;
         $bestBefore = isset($in['best_before']) ? trim((string) $in['best_before']) : null;
         $asalPabrik = isset($in['asal_pabrik']) ? trim((string) $in['asal_pabrik']) : null;
         $namaDriver = isset($in['nama_driver']) ? trim((string) $in['nama_driver']) : null;
@@ -1888,7 +1987,7 @@ class BarangMasukController extends Controller
 
         try {
             return DB::transaction(function () use (
-                $in, $idBm, $idProduk, $jumlahBaru, $satuan, $tanggalMasuk, $bestBefore,
+                $in, $idBm, $idProduk, $jumlahBaru, $satuan, $tanggalMasuk, $tanggalProduksi, $bestBefore,
                 $asalPabrik, $namaDriver, $lokasiBaru, $tipePenerimaan, $noDn, $noMobil,
                 $catatan, $idPenggunaLokasi, $namaPengguna, $shipmentIdBaru
             ) {
@@ -1913,7 +2012,31 @@ class BarangMasukController extends Controller
                 $upd = [];
                 if ($jumlahBaru !== null) $upd['jumlah'] = $jumlahBaru;
                 if ($satuan !== null) $upd['satuan'] = $satuan;
-                if ($tanggalMasuk) $upd['tanggal_masuk'] = $tanggalMasuk;
+                if ($tanggalMasuk) {
+                    $dtMasukUpd = DateTime::createFromFormat('Y-m-d', $tanggalMasuk);
+                    if (! $dtMasukUpd || $dtMasukUpd->format('Y-m-d') !== $tanggalMasuk) {
+                        throw new Exception('Format tanggal_masuk tidak valid (Y-m-d).');
+                    }
+                    $upd['tanggal_masuk'] = $tanggalMasuk;
+                }
+                if ($tanggalProduksi !== null) {
+                    if ($tanggalProduksi === '') throw new Exception('tanggal_produksi wajib diisi');
+                    $dtProdUpd = DateTime::createFromFormat('Y-m-d', $tanggalProduksi);
+                    if (! $dtProdUpd || $dtProdUpd->format('Y-m-d') !== $tanggalProduksi) {
+                        throw new Exception('Format tanggal_produksi tidak valid (Y-m-d).');
+                    }
+                    $tglMasukEfektif = $tanggalMasuk ?: ($lama->tanggal_masuk ?? '');
+                    if ($tglMasukEfektif !== '' && $tanggalProduksi > $tglMasukEfektif) {
+                        throw new Exception('Tanggal produksi tidak boleh melebihi tanggal masuk.');
+                    }
+                    $upd['tanggal_produksi'] = $tanggalProduksi;
+                } elseif ($tanggalMasuk) {
+                    // Tanggal masuk dimajukan: pastikan tanggal produksi lama tetap valid.
+                    $prodLama = trim((string) ($lama->tanggal_produksi ?? ''));
+                    if ($prodLama !== '' && $prodLama > $tanggalMasuk) {
+                        throw new Exception('Tanggal produksi tidak boleh melebihi tanggal masuk.');
+                    }
+                }
                 
                 // Cek update shipment id
                 if ($shipmentIdBaru !== null && $shipmentIdBaru !== ($lama->shipment_id ?? '')) {
@@ -3925,6 +4048,7 @@ class BarangMasukController extends Controller
                 'jumlah' => $jumlah,
                 'satuan' => $satuan,
                 'tanggal_masuk' => $ref->tanggal_masuk,
+                'tanggal_produksi' => $ref->tanggal_produksi,
                 'tipe_penerimaan' => $ref->tipe_penerimaan,
                 'asal_pabrik' => $ref->asal_pabrik,
                 'no_dn' => $ref->no_dn,

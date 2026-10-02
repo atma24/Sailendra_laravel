@@ -18,6 +18,7 @@ class BarangMasuk extends Model
         'id_produk',
         'nama_produk',
         'tanggal_masuk',
+        'tanggal_produksi',
         'tipe_penerimaan',
         'asal_pabrik',
         'no_dn',

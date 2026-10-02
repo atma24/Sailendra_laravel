@@ -41,6 +41,10 @@ const TYPES = [
 
 type TypeKey = (typeof TYPES)[number]["key"];
 
+/** Opsi filter tipe penerimaan (inbound) & tipe pengeluaran (outbound). */
+const TIPE_PENERIMAAN = ["Primary", "Primary XWH", "Secondary", "FOC", "REJECT"];
+const TIPE_PENGELUARAN = ["Primary", "Secondary", "Pemusnahan", "FOC"];
+
 /** Jenis laporan snapshot: 1 tanggal + 1 depo per file. */
 const SNAPSHOT_TYPES: TypeKey[] = ["utilisasi"];
 
@@ -194,6 +198,8 @@ export default function ReportPage() {
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
   const [type, setType] = useState<TypeKey>("inbound");
+  const [tipePenerimaan, setTipePenerimaan] = useState("");
+  const [tipePengeluaran, setTipePengeluaran] = useState("");
   
   // 2. Gunakan 'today' sebagai default awal, bukan string kosong ("")
   const [start, setStart] = useState(today);
@@ -275,6 +281,12 @@ export default function ReportPage() {
     sp.set("start_date", start);
     sp.set("end_date", end);
     if (type !== "gabungan") sp.set("mode", "range");
+    if (type === "inbound" && tipePenerimaan) sp.set("tipe", tipePenerimaan);
+    if (type === "outbound" && tipePengeluaran) sp.set("tipe", tipePengeluaran);
+    if (type === "gabungan") {
+      if (tipePenerimaan) sp.set("tipe_penerimaan", tipePenerimaan);
+      if (tipePengeluaran) sp.set("tipe_pengeluaran", tipePengeluaran);
+    }
     return sp;
   };
 
@@ -381,6 +393,43 @@ export default function ReportPage() {
               <span>{locTrigger}</span>
               <i className="bi bi-caret-down-fill" style={{ fontSize: 10 }}></i>
             </div>
+          </div>
+        )}
+
+        {(type === "inbound" || type === "outbound" || type === "gabungan") && (
+          <div className="report-group">
+            <label className="report-label">
+              {type === "inbound" ? "Filter Tipe Penerimaan" : type === "outbound" ? "Filter Tipe Pengeluaran" : "Filter Tipe"}
+            </label>
+            {type === "gabungan" ? (
+              <div className="report-date-row">
+                <select
+                  className="report-input-date"
+                  value={tipePenerimaan}
+                  onChange={(e) => setTipePenerimaan(e.target.value)}
+                >
+                  <option value="">Semua Tipe Penerimaan (Inbound)</option>
+                  {TIPE_PENERIMAAN.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select
+                  className="report-input-date"
+                  value={tipePengeluaran}
+                  onChange={(e) => setTipePengeluaran(e.target.value)}
+                >
+                  <option value="">Semua Tipe Pengeluaran (Outbound)</option>
+                  {TIPE_PENGELUARAN.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            ) : (
+              <select
+                className="report-input-date"
+                value={type === "inbound" ? tipePenerimaan : tipePengeluaran}
+                onChange={(e) => (type === "inbound" ? setTipePenerimaan(e.target.value) : setTipePengeluaran(e.target.value))}
+              >
+                <option value="">{type === "inbound" ? "Semua Tipe Penerimaan" : "Semua Tipe Pengeluaran"}</option>
+                {(type === "inbound" ? TIPE_PENERIMAAN : TIPE_PENGELUARAN).map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            )}
           </div>
         )}
 

@@ -26,6 +26,7 @@ class LaporanController extends Controller
         $startDate = trim((string) $request->input('start_date', ''));
         $endDate = trim((string) $request->input('end_date', ''));
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
+        $tipe = $request->input('tipe', '');
 
         $labelPeriode = $this->resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year);
 
@@ -61,6 +62,7 @@ class LaporanController extends Controller
         }
 
         $query = $this->filterLokasi($query, 'bk.id_pengguna_lokasi', $idPenggunaLokasi);
+        $query = $this->filterTipe($query, 'bk.tipe_pengeluaran', $tipe);
 
         if (! $diterapkanFilter) {
             $query->whereDate('bk.tanggal_keluar', date('Y-m-d'));
@@ -125,6 +127,7 @@ class LaporanController extends Controller
         $startDate = trim((string) $request->input('start_date', ''));
         $endDate = trim((string) $request->input('end_date', ''));
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
+        $tipe = $request->input('tipe', '');
 
         $labelPeriode = $this->resolvePeriodeLabel($mode, $startDate, $endDate, $date, $month, $year);
 
@@ -156,6 +159,7 @@ class LaporanController extends Controller
         }
 
         $query = $this->filterLokasi($query, 'bm.id_pengguna_lokasi', $idPenggunaLokasi);
+        $query = $this->filterTipe($query, 'bm.tipe_penerimaan', $tipe);
 
         if (! $diterapkanFilter) {
             $query->whereDate('bm.tanggal_masuk', date('Y-m-d'));
@@ -227,6 +231,8 @@ class LaporanController extends Controller
             $to = date('Y-m-d');
         }
         $idPenggunaLokasi = $request->input('id_pengguna_lokasi', '');
+        $tipePenerimaan = $request->input('tipe_penerimaan', $request->input('tipe', ''));
+        $tipePengeluaran = $request->input('tipe_pengeluaran', $request->input('tipe', ''));
         $format = $request->input('format', 'xlsx');
 
         $queryInbound = DB::table('barang_masuk as bm')
@@ -235,6 +241,7 @@ class LaporanController extends Controller
             ->whereBetween(DB::raw('DATE(bm.tanggal_masuk)'), [$from, $to])
             ->select('bm.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bm.tanggal_masuk) AS tanggal_masuk'));
         $queryInbound = $this->filterLokasi($queryInbound, 'bm.id_pengguna_lokasi', $idPenggunaLokasi);
+        $queryInbound = $this->filterTipe($queryInbound, 'bm.tipe_penerimaan', $tipePenerimaan);
         $resInbound = $queryInbound->orderBy('bm.tanggal_masuk', 'ASC')
             ->orderBy('bm.id_pengguna_lokasi', 'ASC')
             ->orderBy('bm.nama_produk', 'ASC')
@@ -246,6 +253,7 @@ class LaporanController extends Controller
             ->whereBetween(DB::raw('DATE(bk.tanggal_keluar)'), [$from, $to])
             ->select('bk.*', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh', DB::raw('DATE(bk.tanggal_keluar) AS tanggal_keluar'), DB::raw('SEC_TO_TIME(bk.durasi_detik) AS durasi_input'));
         $queryOutbound = $this->filterLokasi($queryOutbound, 'bk.id_pengguna_lokasi', $idPenggunaLokasi);
+        $queryOutbound = $this->filterTipe($queryOutbound, 'bk.tipe_pengeluaran', $tipePengeluaran);
         $resOutbound = $queryOutbound->orderBy('bk.tanggal_keluar', 'ASC')
             ->orderBy('bk.id_pengguna_lokasi', 'ASC')
             ->orderBy('bk.nama_driver', 'ASC')
@@ -778,6 +786,32 @@ class LaporanController extends Controller
             } else {
                 $query->where($column, trim($idPenggunaLokasi));
             }
+        }
+
+        return $query;
+    }
+
+    /**
+     * Filter query berdasarkan tipe (penerimaan/pengeluaran).
+     * Mendukung satu nilai, beberapa nilai dipisah koma, atau 'all'/'' untuk tanpa filter.
+     */
+    private function filterTipe($query, $column, $tipe)
+    {
+        if (empty($tipe) || $tipe === 'all') {
+            return $query;
+        }
+
+        if (is_string($tipe) && strpos($tipe, ',') !== false) {
+            $tipe = explode(',', $tipe);
+        }
+
+        if (is_array($tipe)) {
+            $filtered = array_filter(array_map('trim', $tipe), fn ($t) => $t !== 'all' && $t !== '');
+            if (! empty($filtered)) {
+                $query->whereIn($column, $filtered);
+            }
+        } else {
+            $query->where($column, trim($tipe));
         }
 
         return $query;

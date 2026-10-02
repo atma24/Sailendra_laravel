@@ -135,6 +135,7 @@ export default function InboundFormPage() {
 
   const today = new Date().toISOString().slice(0, 10);
   const [tanggal, setTanggal] = useState(today);
+  const [tanggalProduksi, setTanggalProduksi] = useState("");
   const [tipe, setTipe] = useState("Primary");
   const [shipmentId, setShipmentId] = useState("");
   const [noDn, setNoDn] = useState("");
@@ -302,6 +303,8 @@ export default function InboundFormPage() {
   // --- Gagal di 1 item = tidak ada yang tersimpan, isian form tetap utuh.
   const simpan = async () => {
     if (!items.length) { setResults({ success: [], failed: [{ nama_produk: "Produk", message: "Belum ada item yang diisi." }] }); return; }
+    if (norm(tanggalProduksi) === "") { notify("error", "Tanggal Produksi wajib diisi."); return; }
+    if (norm(tanggal) !== "" && norm(tanggalProduksi) > norm(tanggal)) { notify("error", "Tanggal produksi tidak boleh melebihi tanggal masuk."); return; }
     if (butuhShipmentDn(tipe) && norm(shipmentId) === "") { setErrShipment("Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); notify("error", "Shipment ID wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
     setErrShipment("");
     if (butuhShipmentDn(tipe) && norm(noDn) === "") { notify("error", "No DN wajib diisi untuk Penerimaan Primary / Primary XWH."); return; }
@@ -402,6 +405,7 @@ export default function InboundFormPage() {
           jumlah: angka(it.jumlah),
           satuan: it.satuan || "BOX",
           tanggal_masuk: tanggal,
+          tanggal_produksi: norm(tanggalProduksi),
           tipe_penerimaan: tipe,
           best_before: bb,
           batch,
@@ -450,7 +454,7 @@ export default function InboundFormPage() {
     try {
       const r = await apiPost<{ items?: { lokasi_akhir_str?: string; lokasi_akhir?: { line: string; qty: number }[] }[] }>(
         "/barang-masuk/batch",
-        { items: payloads }
+        { items: payloads, tanggal_masuk: tanggal, tanggal_produksi: norm(tanggalProduksi) }
       );
       const success: ResultItem[] = (r.data?.items || []).map((b, i) => {
         const lokasi = b.lokasi_akhir_str || (b.lokasi_akhir || []).map((l) => l.line).join(", ") || "-";
@@ -512,6 +516,18 @@ export default function InboundFormPage() {
               onChange={(e) => setTanggal(e.target.value)} 
               onClick={(e) => e.currentTarget.showPicker && e.currentTarget.showPicker()} 
             />
+          </div>
+          <div>
+            <label className="inbound-label">Tanggal Produksi<span className="inbound-req">*</span></label>
+            <input
+              type="date"
+              className="inbound-input"
+              value={tanggalProduksi}
+              max={tanggal || undefined}
+              onChange={(e) => setTanggalProduksi(e.target.value)}
+              onClick={(e) => e.currentTarget.showPicker && e.currentTarget.showPicker()}
+            />
+            <div className="inbound-field-err" style={{ color: "#64748B", fontWeight: 600 }}>Wajib diisi, tidak boleh melebihi tanggal masuk.</div>
           </div>
           <div>
             <label className="inbound-label">Tipe Penerimaan<span className="inbound-req">*</span></label>

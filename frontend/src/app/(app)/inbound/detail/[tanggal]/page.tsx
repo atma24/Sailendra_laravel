@@ -19,6 +19,7 @@ type BmRow = {
   jumlah: number;
   satuan: string;
   tanggal_masuk: string;
+  tanggal_produksi?: string;
   tipe_penerimaan: string;
   best_before: string;
   batch: string;
@@ -250,6 +251,7 @@ export default function InboundDetailPage() {
   }, []);
 
   const [hTanggal, setHTanggal] = useState("");
+  const [hTanggalProduksi, setHTanggalProduksi] = useState("");
   const [hMobil, setHMobil] = useState("");
   const [hDn, setHDn] = useState("");
   const [hDriver, setHDriver] = useState("");
@@ -412,6 +414,11 @@ export default function InboundDetailPage() {
   const submitDraftBooking = async () => {
     setBusy(true);
     try {
+      const prodHeader = norm(first?.tanggal_produksi);
+      if (!prodHeader) throw new Error("Tanggal produksi wajib diisi sebelum konfirmasi. Lengkapi via Edit Detail.");
+      if (first && norm(first.tanggal_masuk) && prodHeader > norm(first.tanggal_masuk).slice(0, 10)) {
+        throw new Error("Tanggal produksi tidak boleh melebihi tanggal masuk.");
+      }
       const draftItems = items.filter(i => (i.status || "").toLowerCase() === "draft");
 
       for (const i of draftItems) {
@@ -448,6 +455,7 @@ export default function InboundDetailPage() {
          shipment_id: first.shipment_id || "",
          id_pengguna_lokasi: aktifLokasiId(session),
          items: payloadItems,
+         tanggal_produksi: norm(first.tanggal_produksi),
          waktu_mulai_input: timerData.waktu_mulai_input,
          durasi_detik: timerData.durasi_detik
       });
@@ -464,6 +472,11 @@ export default function InboundDetailPage() {
   const konfirmasiPending = async () => {
     setBusy(true);
     try {
+      const prodHeader = norm(first?.tanggal_produksi);
+      if (!prodHeader) throw new Error("Tanggal produksi wajib diisi sebelum konfirmasi. Lengkapi via Edit Detail.");
+      if (first && norm(first.tanggal_masuk) && prodHeader > norm(first.tanggal_masuk).slice(0, 10)) {
+        throw new Error("Tanggal produksi tidak boleh melebihi tanggal masuk.");
+      }
       const timerData = getTimerPayload();
 
       await apiPost('/barang-masuk/konfirmasi', {
@@ -515,6 +528,7 @@ export default function InboundDetailPage() {
   const openHeader = () => {
     if (!first) return;
     setHTanggal(norm(first.tanggal_masuk).slice(0, 10));
+    setHTanggalProduksi(norm(first.tanggal_produksi).slice(0, 10));
     setHMobil(norm(first.no_mobil));
     setHDn(norm(first.no_dn));
     setHDriver(norm(first.nama_driver));
@@ -527,12 +541,17 @@ export default function InboundDetailPage() {
   const simpanHeader = async () => {
     if (!first || !items.length) return;
     const isReject = (first.tipe_penerimaan || "").toUpperCase() === "REJECT";
+    if (norm(hTanggalProduksi) === "") { notify("error", "Tanggal produksi wajib diisi."); return; }
+    if (norm(hTanggal) !== "" && norm(hTanggalProduksi) > norm(hTanggal)) {
+      notify("error", "Tanggal produksi tidak boleh melebihi tanggal masuk."); return;
+    }
     setBusy(true);
     try {
       const payload: Record<string, unknown> = {
         id_pengguna_lokasi: aktifLokasiId(session),
         nama_pengguna: session.user.username,
         tanggal_masuk: hTanggal,
+        tanggal_produksi: norm(hTanggalProduksi),
         nama_driver: hDriver || "Tanpa nama driver",
         no_mobil: hMobil,
       };
@@ -669,6 +688,12 @@ export default function InboundDetailPage() {
                 <div className="id-text-value">{tanggal || "-"}</div>
               </div>
               <div className="id-text-row">
+                <div className="id-text-label">Tanggal Produksi</div>
+                <div className="id-text-value" style={!norm(first.tanggal_produksi) ? { color: "#DC2626" } : undefined}>
+                  {norm(first.tanggal_produksi).slice(0, 10) || "Belum diisi *"}
+                </div>
+              </div>
+              <div className="id-text-row">
                 <div className="id-text-label">Status</div>
                 <div className="id-text-value">
                   <span className="status-badge" style={ss}>
@@ -716,6 +741,11 @@ export default function InboundDetailPage() {
 
             {!isSelesaiAll && !isCanceledAll && (
               <div className="id-actions" style={{ marginTop: 8 }}>
+                {!norm(first.tanggal_produksi) && (
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#DC2626", background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: 8, padding: "8px 10px" }}>
+                    Tanggal produksi belum diisi — wajib dilengkapi via Edit Detail sebelum konfirmasi.
+                  </div>
+                )}
                 {canBatalkan && (
                   <button type="button" className="id-delete-all" onClick={openBatalkan}>
                     <i className="bi bi-x-circle"></i>
@@ -901,6 +931,10 @@ export default function InboundDetailPage() {
               <div className="dialog-field">
                 <label>Tanggal Masuk</label>
                 <input type="date" value={hTanggal} onChange={(e) => setHTanggal(e.target.value)} />
+              </div>
+              <div className="dialog-field">
+                <label>Tanggal Produksi *</label>
+                <input type="date" value={hTanggalProduksi} max={hTanggal || undefined} onChange={(e) => setHTanggalProduksi(e.target.value)} />
               </div>
               <div className="dialog-field">
                 <label>No Mobil</label>
