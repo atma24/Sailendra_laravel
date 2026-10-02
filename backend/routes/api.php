@@ -101,6 +101,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/layout-gudang/ubah-bb-jumlah-line', [LayoutGudangController::class, 'ubahBbJumlahLine']);
         Route::post('/layout-gudang/transfer-stok-line', [LayoutGudangController::class, 'transferStokLine']);
         Route::post('/layout-gudang/rapikan-deep', [LayoutGudangController::class, 'rapikanDeepSeLine']);
+        Route::post('/layout-gudang/rapikan-otomatis-line', [LayoutGudangController::class, 'rapikanOtomatisSeLine']);
         Route::post('/layout-gudang/prioritas-lokasi-produk', [LayoutGudangController::class, 'prioritasLokasiProduk']);
 
         // Pengaturan Produk (urutan blok + FEFO per lokasi)

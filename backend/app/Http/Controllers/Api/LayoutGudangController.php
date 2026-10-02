@@ -2141,20 +2141,8 @@ class LayoutGudangController extends Controller
                         ->update(['jumlah_sisa' => $total]);
                 }
 
-                $labelLine = $tujuan->kode_block.'-'.(int) $tujuan->nomor_line;
-                DB::table('mutasi')->insert([
-                    'id_pengguna_lokasi' => $idPenggunaLokasi,
-                    'id_pengguna' => $idPengguna,
-                    'id_produk' => $idProduk,
-                    'lokasi_sumber' => $labelLine.' / L'.$asal->level.' / D'.$asal->deep,
-                    'lokasi_tujuan' => $labelLine.' / L'.$tujuan->level.' / D'.$tujuan->deep,
-                    'jumlah' => $qtyPindah,
-                    'best_before' => $bestBefore,
-                    'jenis_mutasi' => 'RAPIKAN',
-                    'satuan' => $headerTujuan->satuan ?? 'BOX',
-                    'catatan' => $catatan,
-                    'created_at' => now(),
-                ]);
+                // Rapikan tidak dicatat ke mutasi (perpindahan internal se-line, bukan mutasi stok).
+                // Data mutasi RAPIKAN yang lama dibiarkan apa adanya.
 
                 $sumAsal = (int) DB::table('stok_gudang_deep')
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
@@ -2177,8 +2165,598 @@ class LayoutGudangController extends Controller
     }
 
     /**
-     * Deteksi pecahan (1 produk+tanggal di >1 deep parsial se-line)
-     * dan gantung (L1 kosong tapi L2 berisi).
+     * Rapikan otomatis 1 line (1 tombol): susun ulang kolom per kolom
+     * dari kiri, tiap kolom dari bawah ke atas:
+     * 1) gabungkan pecahan (produk+BB sama),
+     * 2) padatkan se-line (lubang kosong dimigrasi ke kanan-atas,
+     *    BB tertua di kolom kiri),
+     * 3) turunkan kasus gantung ke L1.
+     * Sengaja TIDAK mencatat ke tabel mutasi (perpindahan internal se-line).
+     */
+    public function rapikanOtomatisSeLine(Request $request)
+    {
+        if ($request->method() !== 'POST') {
+            return $this->fail('Metode harus POST');
+        }
+
+        $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
+        $idLine = (int) $request->input('id_line', 0);
+
+        if ($idPenggunaLokasi === '' || $idLine <= 0) {
+            return $this->fail('Parameter belum lengkap (id_pengguna_lokasi, id_line wajib)');
+        }
+
+        try {
+            return DB::transaction(function () use ($idPenggunaLokasi, $idLine) {
+                $lineInfo = DB::table('line as ln')
+                    ->join('block as b', fn ($j) => $j
+                        ->on('b.id_block', '=', 'ln.id_block')
+                        ->on('b.id_pengguna_lokasi', '=', 'ln.id_pengguna_lokasi'))
+                    ->where('ln.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('ln.id_line', $idLine)
+                    ->select('ln.id_line', 'ln.nomor_line', 'b.kode_block')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $lineInfo) {
+                    throw new \Exception('Line tidak ditemukan pada lokasi aktif');
+                }
+                $labelLine = $lineInfo->kode_block.'-'.(int) $lineInfo->nomor_line;
+
+                $deeps = DB::table('deep as d')
+                    ->join('level as lv', fn ($j) => $j
+                        ->on('lv.id_level', '=', 'd.id_level')
+                        ->on('lv.id_pengguna_lokasi', '=', 'd.id_pengguna_lokasi'))
+                    ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->where('lv.id_line', $idLine)
+                    ->select('d.id_deep', 'd.kapasitas', 'lv.level', 'd.deep')
+                    ->lockForUpdate()
+                    ->get();
+
+                if ($deeps->isEmpty()) {
+                    throw new \Exception('Line belum memiliki palet (deep)');
+                }
+
+                $kapMap = [];
+                $lvlMap = [];
+                foreach ($deeps as $d) {
+                    $kapMap[(int) $d->id_deep] = (int) $d->kapasitas;
+                    $lvlMap[(int) $d->id_deep] = strtoupper(trim((string) $d->level));
+                }
+                $lvlNum = function ($lvl) {
+                    $n = (int) preg_replace('/[^0-9]/', '', (string) $lvl);
+                    return $n > 0 ? $n : 99;
+                };
+
+                // Isi per deep (hanya status normal yang boleh digeser; QI disentuh sama sekali).
+                $rows = DB::table('stok_gudang_deep as sgd')
+                    ->join('stok_gudang as sg', fn ($j) => $j
+                        ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('sgd.id_deep', array_keys($kapMap))
+                    ->where('sgd.jumlah', '>', 0)
+                    ->where('sg.status', 'normal')
+                    ->select('sgd.id_deep', 'sg.id_produk', 'sgd.best_before')
+                    ->selectRaw('SUM(sgd.jumlah) AS total')
+                    ->groupBy('sgd.id_deep', 'sg.id_produk', 'sgd.best_before')
+                    ->lockForUpdate()
+                    ->get();
+
+                $isiMap = []; // id_deep => total isi normal
+                $groups = []; // "produk|bb" => [id_deep => isi]
+                foreach ($rows as $r) {
+                    $did = (int) $r->id_deep;
+                    $bb = trim((string) $r->best_before);
+                    $isi = (int) $r->total;
+                    $isiMap[$did] = ($isiMap[$did] ?? 0) + $isi;
+                    $key = ((int) $r->id_produk).'|'.$bb;
+                    if (! isset($groups[$key])) {
+                        $groups[$key] = ['id_produk' => (int) $r->id_produk, 'best_before' => $bb, 'deeps' => []];
+                    }
+                    $groups[$key]['deeps'][$did] = ($groups[$key]['deeps'][$did] ?? 0) + $isi;
+                }
+                foreach (array_keys($kapMap) as $did) {
+                    if (! isset($isiMap[$did])) {
+                        $isiMap[$did] = 0;
+                    }
+                }
+
+                $touchedHeaders = [];
+                $totalPindah = 0;
+                $details = [];
+                $deepsTersentuh = []; // id_deep unik yang ikut ditata (untuk pesan notif)
+                $lokasiBlock = $labelLine;
+
+                // 1) Gabungkan tiap grup pecah ke palet paling penuh yang masih muat.
+                foreach ($groups as $key => $g) {
+                    $deepIsi = array_filter($g['deeps'], fn ($v) => $v > 0);
+                    if (count($deepIsi) <= 1) {
+                        continue;
+                    }
+                    $guard = 0;
+                    while (count(array_filter($deepIsi, fn ($v) => $v > 0)) > 1 && $guard < 100) {
+                        $guard++;
+                        // Tujuan: isi terbesar yang masih punya sisa space.
+                        $tujuan = null;
+                        $tujuanIsi = -1;
+                        foreach ($deepIsi as $did => $isi) {
+                            if ($isi <= 0) {
+                                continue;
+                            }
+                            $space = ($kapMap[$did] ?? 0) - ($isiMap[$did] ?? 0);
+                            if ($space <= 0) {
+                                continue;
+                            }
+                            if ($isi > $tujuanIsi) {
+                                $tujuanIsi = $isi;
+                                $tujuan = $did;
+                            }
+                        }
+                        if ($tujuan === null) {
+                            break; // semua penuh, tidak bisa digabung lagi
+                        }
+                        // Asal: isi terkecil selain tujuan.
+                        $asal = null;
+                        $asalIsi = PHP_INT_MAX;
+                        foreach ($deepIsi as $did => $isi) {
+                            if ($did === $tujuan || $isi <= 0) {
+                                continue;
+                            }
+                            if ($isi < $asalIsi) {
+                                $asalIsi = $isi;
+                                $asal = $did;
+                            }
+                        }
+                        if ($asal === null) {
+                            break;
+                        }
+                        $space = ($kapMap[$tujuan] ?? 0) - ($isiMap[$tujuan] ?? 0);
+                        $qty = min($deepIsi[$asal], $space);
+                        if ($qty <= 0) {
+                            break;
+                        }
+                        $moved = $this->geserStokDeep($idPenggunaLokasi, $asal, $tujuan, $g['id_produk'], $g['best_before'], $qty, $lokasiBlock, $touchedHeaders);
+                        $deepIsi[$asal] -= $moved;
+                        $deepIsi[$tujuan] = ($deepIsi[$tujuan] ?? 0) + $moved;
+                        $isiMap[$asal] -= $moved;
+                        $isiMap[$tujuan] += $moved;
+                        $totalPindah += $moved;
+                        if ($moved > 0) {
+                            $deepsTersentuh[$asal] = true;
+                            $deepsTersentuh[$tujuan] = true;
+                        }
+                        $details[] = ['best_before' => $g['best_before'], 'qty_pindah' => $moved, 'dari' => $asal, 'ke' => $tujuan];
+                        if ($deepIsi[$asal] <= 0) {
+                            unset($deepIsi[$asal]);
+                        }
+                    }
+                }
+
+                // 2) Padatkan se-line kolom per kolom dari kiri: tiap kolom
+                //    diisi dari bawah ke atas, lalu lanjut kolom kanan.
+                //    Grup BB tertua dulu, satu (produk, BB) per palet.
+                //    Stok hanya digeser maju mengikuti urutan isi; lubang
+                //    kosong bermigrasi ke kanan-atas.
+                $pindahSebelumPadat = $totalPindah;
+
+                $deepNumMap = [];
+                foreach ($deeps as $d) {
+                    $deepNumMap[(int) $d->id_deep] = (int) $d->deep;
+                }
+                $inboundOrder = array_keys($kapMap);
+                usort($inboundOrder, function ($a, $b) use ($deepNumMap, $lvlMap, $lvlNum) {
+                    $cmp = ($deepNumMap[$a] ?? 0) <=> ($deepNumMap[$b] ?? 0);
+                    if ($cmp !== 0) {
+                        return $cmp;
+                    }
+                    $cmp = $lvlNum($lvlMap[$a] ?? '') <=> $lvlNum($lvlMap[$b] ?? '');
+                    if ($cmp !== 0) {
+                        return $cmp;
+                    }
+
+                    return $a <=> $b;
+                });
+                $posOrder = array_flip($inboundOrder);
+
+                // Palet terkunci: berisi stok non-normal (mis. QI) — jangan disentuh.
+                $locked = DB::table('stok_gudang_deep as sgd')
+                    ->join('stok_gudang as sg', fn ($j) => $j
+                        ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('sgd.id_deep', array_keys($kapMap))
+                    ->where('sgd.jumlah', '>', 0)
+                    ->where('sg.status', '<>', 'normal')
+                    ->distinct()
+                    ->pluck('sgd.id_deep')
+                    ->map(fn ($v) => (int) $v)
+                    ->all();
+                $lockedSet = array_fill_keys($locked, true);
+                $targets = array_values(array_filter($inboundOrder, fn ($did) => ! isset($lockedSet[$did]) && ($kapMap[$did] ?? 0) > 0));
+
+                $padatGuard = 0;
+                do {
+                    $changed = false;
+
+                    $occ = []; // id_deep => list [id_produk, bb, qty, created_min]
+                    $isiN = array_fill_keys(array_keys($kapMap), 0);
+                    $snap = DB::table('stok_gudang_deep as sgd')
+                        ->join('stok_gudang as sg', fn ($j) => $j
+                            ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                            ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                        ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->whereIn('sgd.id_deep', array_keys($kapMap))
+                        ->where('sgd.jumlah', '>', 0)
+                        ->where('sg.status', 'normal')
+                        ->select('sgd.id_deep', 'sg.id_produk', 'sgd.best_before')
+                        ->selectRaw('SUM(sgd.jumlah) AS total, MIN(sg.created_at) AS created_min')
+                        ->groupBy('sgd.id_deep', 'sg.id_produk', 'sgd.best_before')
+                        ->lockForUpdate()
+                        ->get();
+                    foreach ($snap as $s) {
+                        $did = (int) $s->id_deep;
+                        $isiN[$did] += (int) $s->total;
+                        $occ[$did][] = [
+                            'id_produk' => (int) $s->id_produk,
+                            'bb' => trim((string) $s->best_before),
+                            'qty' => (int) $s->total,
+                            'created' => (string) ($s->created_min ?? ''),
+                        ];
+                    }
+
+                    foreach ($targets as $t) {
+                        $space = ($kapMap[$t] ?? 0) - ($isiN[$t] ?? 0);
+                        if ($space <= 0) {
+                            continue;
+                        }
+                        $cur = $occ[$t] ?? [];
+                        if (count($cur) > 1) {
+                            continue; // amankan: palet campur tidak disentuh
+                        }
+                        $needProd = null;
+                        $needBb = null;
+                        if (! empty($cur)) {
+                            $needProd = (int) $cur[0]['id_produk'];
+                            $needBb = (string) $cur[0]['bb'];
+                        } else {
+                            // Palet kosong: isi grup tertua (BB ASC, header tertua)
+                            // yang masih tersisa di palet-palete urutan berikutnya.
+                            $best = null;
+                            foreach ($occ as $did2 => $list2) {
+                                if (($posOrder[$did2] ?? 0) <= ($posOrder[$t] ?? 0)) {
+                                    continue; // hanya sumber dari belakang
+                                }
+                                foreach ($list2 as $e) {
+                                    if ($e['qty'] <= 0) {
+                                        continue;
+                                    }
+                                    if ($best === null || $e['bb'] < $best['bb']
+                                        || ($e['bb'] === $best['bb'] && $e['created'] < $best['created'])) {
+                                        $best = ['id_produk' => $e['id_produk'], 'bb' => $e['bb'], 'created' => $e['created']];
+                                    }
+                                }
+                            }
+                            if ($best === null) {
+                                continue;
+                            }
+                            $needProd = $best['id_produk'];
+                            $needBb = $best['bb'];
+                        }
+
+                        // Sumber: palet urutan paling akhir yang memegang grup tsb.
+                        $src = null;
+                        $srcAvail = 0;
+                        foreach (array_reverse($targets) as $cand) {
+                            if (($posOrder[$cand] ?? 0) <= ($posOrder[$t] ?? 0)) {
+                                continue;
+                            }
+                            foreach ($occ[$cand] ?? [] as $e) {
+                                if ((int) $e['id_produk'] === $needProd && (string) $e['bb'] === (string) $needBb && $e['qty'] > 0) {
+                                    $src = $cand;
+                                    $srcAvail = $e['qty'];
+                                    break 2;
+                                }
+                            }
+                        }
+                        if ($src === null) {
+                            continue;
+                        }
+                        $qty = min($space, $srcAvail);
+                        if ($qty <= 0) {
+                            continue;
+                        }
+                        $moved = $this->geserStokDeep($idPenggunaLokasi, $src, $t, $needProd, $needBb, $qty, $lokasiBlock, $touchedHeaders);
+                        if ($moved <= 0) {
+                            continue;
+                        }
+                        $deepsTersentuh[$src] = true;
+                        $deepsTersentuh[$t] = true;
+                        $isiN[$src] -= $moved;
+                        $isiN[$t] += $moved;
+                        foreach (($occ[$src] ?? []) as &$e) {
+                            if ((int) $e['id_produk'] === $needProd && (string) $e['bb'] === (string) $needBb) {
+                                $e['qty'] -= $moved;
+                                break;
+                            }
+                        }
+                        unset($e);
+                        $found = false;
+                        foreach (($occ[$t] ?? []) as &$e) {
+                            if ((int) $e['id_produk'] === $needProd && (string) $e['bb'] === (string) $needBb) {
+                                $e['qty'] += $moved;
+                                $found = true;
+                                break;
+                            }
+                        }
+                        unset($e);
+                        if (! $found) {
+                            $occ[$t][] = ['id_produk' => $needProd, 'bb' => $needBb, 'qty' => $moved, 'created' => ''];
+                        }
+                        $totalPindah += $moved;
+                        if (count($details) < 50) {
+                            $details[] = ['best_before' => $needBb, 'qty_pindah' => $moved, 'dari' => $src, 'ke' => $t, 'padat' => true];
+                        }
+                        $changed = true;
+                    }
+
+                    $padatGuard++;
+                } while ($changed && $padatGuard < 30);
+
+                // Segarkan peta isi untuk fase gantung di bawah (hanya normal).
+                $pindahSetelahPadat = $totalPindah;
+                $isiMap = array_fill_keys(array_keys($kapMap), 0);
+                $reSnap = DB::table('stok_gudang_deep as sgd')
+                    ->join('stok_gudang as sg', fn ($j) => $j
+                        ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('sgd.id_deep', array_keys($kapMap))
+                    ->where('sgd.jumlah', '>', 0)
+                    ->where('sg.status', 'normal')
+                    ->select('sgd.id_deep')
+                    ->selectRaw('SUM(sgd.jumlah) AS total')
+                    ->groupBy('sgd.id_deep')
+                    ->lockForUpdate()
+                    ->get();
+                foreach ($reSnap as $r) {
+                    $isiMap[(int) $r->id_deep] = (int) $r->total;
+                }
+
+                // 3) Turunkan gantung: L1 kosong tapi L2+ berisi -> pindah ke L1 kosong.
+                $totalL1 = 0;
+                $sumberAtas = []; // id_deep L2+ yang berisi
+                foreach ($isiMap as $did => $isi) {
+                    if (($lvlNum($lvlMap[$did] ?? '')) <= 1) {
+                        $totalL1 += $isi;
+                    } elseif ($isi > 0) {
+                        $sumberAtas[] = $did;
+                    }
+                }
+                if ($totalL1 <= 0 && ! empty($sumberAtas)) {
+                    $l1Kosong = [];
+                    foreach ($isiMap as $did => $isi) {
+                        if ($lvlNum($lvlMap[$did] ?? '') <= 1 && $isi <= 0 && ($kapMap[$did] ?? 0) > 0) {
+                            $l1Kosong[] = $did;
+                        }
+                    }
+                    usort($sumberAtas, function ($a, $b) use ($lvlMap, $lvlNum) {
+                        $la = $lvlNum($lvlMap[$a] ?? '');
+                        $lb = $lvlNum($lvlMap[$b] ?? '');
+                        return $la <=> $lb ?: $a <=> $b;
+                    });
+                    sort($l1Kosong);
+                    foreach ($sumberAtas as $asal) {
+                        if (empty($l1Kosong)) {
+                            break;
+                        }
+                        // Ambil rincian produk+BB di deep asal (FIFO: BB terlama dulu).
+                        $asalRows = DB::table('stok_gudang_deep as sgd')
+                            ->join('stok_gudang as sg', fn ($j) => $j
+                                ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                                ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                            ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                            ->where('sgd.id_deep', $asal)
+                            ->where('sgd.jumlah', '>', 0)
+                            ->where('sg.status', 'normal')
+                            ->orderBy('sgd.best_before')
+                            ->select('sg.id_produk', 'sgd.best_before')
+                            ->selectRaw('SUM(sgd.jumlah) AS total')
+                            ->groupBy('sg.id_produk', 'sgd.best_before')
+                            ->lockForUpdate()
+                            ->get();
+                        foreach ($asalRows as $ar) {
+                            if (empty($l1Kosong)) {
+                                break;
+                            }
+                            $sisaAsal = (int) $ar->total;
+                            $bb = trim((string) $ar->best_before);
+                            while ($sisaAsal > 0 && ! empty($l1Kosong)) {
+                                $tujuan = $l1Kosong[0];
+                                $space = ($kapMap[$tujuan] ?? 0) - ($isiMap[$tujuan] ?? 0);
+                                if ($space <= 0) {
+                                    array_shift($l1Kosong);
+                                    continue;
+                                }
+                                // Palet L1 tujuan harus kosong atau sudah berisi BB yang sama.
+                                $cek = DB::table('stok_gudang_deep as sgd')
+                                    ->join('stok_gudang as sg', fn ($j) => $j
+                                        ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                                        ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+                                    ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+                                    ->where('sgd.id_deep', $tujuan)
+                                    ->where('sgd.jumlah', '>', 0)
+                                    ->select('sg.id_produk', 'sgd.best_before')
+                                    ->limit(1)
+                                    ->first();
+                                if ($cek && (trim((string) $cek->best_before) !== $bb || (int) $cek->id_produk !== (int) $ar->id_produk)) {
+                                    array_shift($l1Kosong);
+                                    continue;
+                                }
+                                $qty = min($sisaAsal, $space);
+                                $moved = $this->geserStokDeep($idPenggunaLokasi, $asal, $tujuan, (int) $ar->id_produk, $bb, $qty, $lokasiBlock, $touchedHeaders);
+                                $sisaAsal -= $moved;
+                                $isiMap[$asal] -= $moved;
+                                $isiMap[$tujuan] += $moved;
+                                $totalPindah += $moved;
+                                if ($moved > 0) {
+                                    $deepsTersentuh[$asal] = true;
+                                    $deepsTersentuh[$tujuan] = true;
+                                }
+                                $details[] = ['best_before' => $bb, 'qty_pindah' => $moved, 'dari' => $asal, 'ke' => $tujuan, 'gantung' => true];
+                                if (($isiMap[$tujuan] ?? 0) >= ($kapMap[$tujuan] ?? 0)) {
+                                    array_shift($l1Kosong);
+                                }
+                                if ($moved <= 0) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                DB::table('stok_gudang_deep')
+                    ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                    ->whereIn('id_deep', array_keys($kapMap))
+                    ->where('jumlah', '<=', 0)
+                    ->delete();
+
+                $touchedHeaders = array_values(array_unique($touchedHeaders));
+                foreach ($touchedHeaders as $hid) {
+                    $total = (int) DB::table('stok_gudang_deep')
+                        ->where('id_stok_header', $hid)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->sum('jumlah');
+                    DB::table('stok_gudang')
+                        ->where('id_stok', $hid)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->update(['jumlah_sisa' => $total]);
+                }
+
+                if ($totalPindah <= 0) {
+                    return $this->ok(['total_pindah' => 0, 'dipadatkan' => 0, 'details' => []], 'Line '.$labelLine.' sudah rapi, tidak ada yang bisa digabung.');
+                }
+
+                $dipadatkan = max(0, $pindahSetelahPadat - $pindahSebelumPadat);
+                $jmlPalet = count($deepsTersentuh);
+
+                return $this->okMessage('Line '.$labelLine.' berhasil dirapikan ('.$jmlPalet.' palet ditata ulang).', [
+                    'total_pindah' => $totalPindah,
+                    'dipadatkan' => $dipadatkan,
+                    'palet' => $jmlPalet,
+                    'details' => $details,
+                ]);
+            });
+        } catch (\Throwable $e) {
+            return $this->fail($e->getMessage() ?: 'Terjadi kesalahan');
+        }
+    }
+
+    /**
+     * Geser qty stok (1 produk + 1 BB, status normal) antar deep se-line.
+     * Mengembalikan qty yang benar-benar dipindah. Tanpa catat mutasi.
+     */
+    private function geserStokDeep(string $idPenggunaLokasi, int $idDeepAsal, int $idDeepTujuan, int $idProduk, string $bestBefore, int $qty, string $lokasiBlock, array &$touchedHeaders): int
+    {
+        if ($qty <= 0 || $idDeepAsal === $idDeepTujuan) {
+            return 0;
+        }
+
+        $sumberRows = DB::table('stok_gudang_deep as sgd')
+            ->join('stok_gudang as sg', fn ($j) => $j
+                ->on('sg.id_stok', '=', 'sgd.id_stok_header')
+                ->on('sg.id_pengguna_lokasi', '=', 'sgd.id_pengguna_lokasi'))
+            ->where('sgd.id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('sgd.id_deep', $idDeepAsal)
+            ->where('sg.id_produk', $idProduk)
+            ->where('sgd.best_before', $bestBefore)
+            ->where('sgd.jumlah', '>', 0)
+            ->where('sg.status', 'normal')
+            ->orderBy('sg.created_at')
+            ->orderBy('sg.id_stok')
+            ->orderBy('sgd.id_detail_stok')
+            ->select('sgd.id_detail_stok', 'sgd.id_stok_header', 'sgd.jumlah', 'sgd.batch')
+            ->lockForUpdate()
+            ->get();
+
+        if ($sumberRows->isEmpty()) {
+            return 0;
+        }
+
+        $existingTujuan = DB::table('stok_gudang_deep')
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->where('id_deep', $idDeepTujuan)
+            ->where('best_before', $bestBefore)
+            ->where('jumlah', '>', 0)
+            ->orderBy('id_detail_stok')
+            ->first();
+
+        $idStokTujuan = $existingTujuan ? (int) $existingTujuan->id_stok_header : (int) $sumberRows[0]->id_stok_header;
+
+        $headerTujuan = DB::table('stok_gudang')
+            ->where('id_stok', $idStokTujuan)
+            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $headerTujuan || (int) $headerTujuan->id_produk !== $idProduk) {
+            throw new \Exception('Header tujuan tidak valid');
+        }
+
+        $sisa = $qty;
+        $moved = 0;
+        foreach ($sumberRows as $src) {
+            if ($sisa <= 0) {
+                break;
+            }
+            $ambil = min((int) $src->jumlah, $sisa);
+            if ($ambil <= 0) {
+                continue;
+            }
+
+            DB::table('stok_gudang_deep')
+                ->where('id_detail_stok', $src->id_detail_stok)
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->decrement('jumlah', $ambil);
+
+            $rowTujuan = DB::table('stok_gudang_deep')
+                ->where('id_stok_header', $idStokTujuan)
+                ->where('id_deep', $idDeepTujuan)
+                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                ->first();
+
+            if ($rowTujuan) {
+                DB::table('stok_gudang_deep')
+                    ->where('id_detail_stok', $rowTujuan->id_detail_stok)
+                    ->update(['jumlah' => DB::raw('jumlah + '.$ambil), 'best_before' => $bestBefore]);
+            } else {
+                DB::table('stok_gudang_deep')->insert([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'id_stok_header' => $idStokTujuan,
+                    'id_deep' => $idDeepTujuan,
+                    'jumlah' => $ambil,
+                    'best_before' => $bestBefore,
+                    'batch' => $src->batch ?? $headerTujuan->batch,
+                    'lokasi_block' => $lokasiBlock,
+                    'created_at' => now(),
+                ]);
+            }
+
+            $touchedHeaders[] = (int) $src->id_stok_header;
+            $sisa -= $ambil;
+            $moved += $ambil;
+        }
+
+        $touchedHeaders[] = $idStokTujuan;
+
+        return $moved;
+    }
+
+    /**
+     * Deteksi pecahan (1 produk+tanggal di >1 deep parsial se-line),
+     * gantung (L1 kosong tapi L2 berisi), dan bolong (palet kosong
+     * yang muncul sebelum palet terisi menurut urutan isi kiri-bawah
+     * ke kanan-atas).
      */
     public function deteksiFragmentasi(Request $request)
     {
@@ -2276,12 +2854,46 @@ class LayoutGudangController extends Controller
                 }
             }
             $gantung = $info['total_l1'] <= 0 && $info['total_l2plus'] > 0;
-            if ($pecah || $gantung) {
+            // Bolong: susun palet sesuai urutan isi (kolom kiri dulu, tiap
+            // kolom dari bawah ke atas); palet kosong di depan palet terisi
+            // = lubang.
+            $occByDeep = [];
+            foreach ($info['cells'] as $c) {
+                $did = (int) $c['id_deep'];
+                if (! isset($occByDeep[$did])) {
+                    $occByDeep[$did] = [
+                        'deep' => (int) $c['deep'],
+                        'lvlNum' => (int) preg_replace('/[^0-9]/', '', strtoupper(trim((string) $c['level']))) ?: 99,
+                        'terisi' => 0,
+                    ];
+                }
+                $occByDeep[$did]['terisi'] += (int) $c['terisi'];
+            }
+            $urutIsi = array_values($occByDeep);
+            usort($urutIsi, function ($a, $b) {
+                if ($a['deep'] !== $b['deep']) {
+                    return $a['deep'] <=> $b['deep'];
+                }
+
+                return $a['lvlNum'] <=> $b['lvlNum'];
+            });
+            $bolong = false;
+            $terisiDitemukan = false;
+            for ($i = count($urutIsi) - 1; $i >= 0; $i--) {
+                if ($urutIsi[$i]['terisi'] > 0) {
+                    $terisiDitemukan = true;
+                } elseif ($terisiDitemukan) {
+                    $bolong = true;
+                    break;
+                }
+            }
+            if ($pecah || $gantung || $bolong) {
                 $hasil[] = [
                     'id_line' => $info['id_line'],
                     'label_line' => $info['label_line'],
                     'pecah' => $pecah,
                     'gantung' => $gantung,
+                    'bolong' => $bolong,
                     'total_l1' => $info['total_l1'],
                     'total_l2plus' => $info['total_l2plus'],
                 ];

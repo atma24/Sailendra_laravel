@@ -230,13 +230,7 @@ export default function LineEditModal({
   onChanged,
 }: LineEditModalProps) {
   const lokAktif = String(idPenggunaLokasi || session.user.id_pengguna_lokasi || "");
-  const [tab, setTab] = useState<"bb" | "transfer" | "rapikan">("bb");
-  const [frag, setFrag] = useState<{ pecah: { id_produk: number; best_before: string; deeps: { id_deep: number; level: string; deep: number; terisi: number; kapasitas: number }[] }[]; gantung: boolean } | null>(null);
-  const [fragLoading, setFragLoading] = useState(false);
-  const [rapikanBb, setRapikanBb] = useState("");
-  const [rapikanAsal, setRapikanAsal] = useState("");
-  const [rapikanTujuan, setRapikanTujuan] = useState("");
-  const [rapikanQty, setRapikanQty] = useState("");
+  const [tab, setTab] = useState<"bb" | "transfer">("bb");
   const [plantOptions, setPlantOptions] = useState<PlantRow[]>([]);
   const [plantMap, setPlantMap] = useState<Record<string, string>>({});
   const [bbRows, setBbRows] = useState<BbRow[]>(() =>
@@ -315,144 +309,6 @@ export default function LineEditModal({
   }, [blockList, lokAktif]);
 
   const origin = parseLineLabel(edit.lineLabel);
-
-  // Daftar BB fallback dari line (selalu ada walau sudah rapi), gabung dgn hasil deteksi pecah.
-  // Banding tanggal saja (10 char pertama) agar format DB vs layout yang beda jam tetap cocok.
-  const normBb = (v: unknown) => String(v ?? "").trim().slice(0, 10);
-  const bbFallback = (edit.bbItems || []).map((b) => normBb(b.best_before)).filter(Boolean);
-  const deepFallbackByBb: Record<string, { id_deep: number; level: string; deep: number; terisi: number; kapasitas: number }[]> = {};
-  const allDeeps = (edit.deepItems || []).map((d) => ({
-    id_deep: d.id_deep,
-    level: String(d.level),
-    deep: d.deep,
-    terisi: d.terpakai,
-    kapasitas: d.kapasitas,
-    best_before: normBb(d.best_before),
-  }));
-  allDeeps.forEach((d) => {
-    if (d.terisi <= 0 || !d.best_before) return;
-    if (!deepFallbackByBb[d.best_before]) deepFallbackByBb[d.best_before] = [];
-    if (!deepFallbackByBb[d.best_before].some((x) => x.id_deep === d.id_deep)) {
-      deepFallbackByBb[d.best_before].push({ id_deep: d.id_deep, level: d.level, deep: d.deep, terisi: d.terisi, kapasitas: d.kapasitas });
-    }
-  });
-  // Sertakan juga deep terisi dari hasil deteksi bila belum ada di layout (data fresh dari DB)
-  (frag?.pecah || []).forEach((p) => {
-    const bb = normBb(p.best_before);
-    if (!bb) return;
-    if (!deepFallbackByBb[bb]) deepFallbackByBb[bb] = [];
-    (p.deeps || []).forEach((x) => {
-      if (!deepFallbackByBb[bb].some((y) => y.id_deep === x.id_deep)) {
-        deepFallbackByBb[bb].push({ ...x });
-      }
-    });
-  });
-  const rapikanBbOptions = Array.from(new Set([...(frag?.pecah || []).map((p) => normBb(p.best_before)), ...bbFallback, ...Object.keys(deepFallbackByBb).map(normBb)])).filter(Boolean);
-  // Asal: hanya palet terisi dengan BB yang dipilih (banding tanggal saja, abaikan jam/format).
-  const rapikanAsalOptions = (deepFallbackByBb[normBb(rapikanBb)] || []).filter((x) => x.terisi > 0);
-  // Tujuan: tampilkan SEMUA palet se-line kecuali asal, biar tidak ada yang "hilang".
-  // Yang tidak memenuhi syarat ditampilkan disabled beserta alasannya.
-  const lvlNum = (v: unknown) => {
-    const n = parseInt(String(v ?? "").replace(/[^0-9]/g, ""), 10);
-    return isNaN(n) ? 99 : n;
-  };
-  type TujuanOpt = { id_deep: number; level: string; deep: number; terisi: number; kapasitas: number; bb: string; ok: boolean; alasan: string };
-  const tujuanSemua: TujuanOpt[] = allDeeps
-    .filter((x) => String(x.id_deep) !== String(rapikanAsal))
-    .map((x) => {
-      const bb = normBb(x.best_before);
-      if (x.terisi >= x.kapasitas && x.kapasitas > 0) {
-        return { id_deep: x.id_deep, level: x.level, deep: x.deep, terisi: x.terisi, kapasitas: x.kapasitas, bb, ok: false, alasan: "penuh" };
-      }
-      if (x.terisi > 0 && bb !== normBb(rapikanBb)) {
-        return { id_deep: x.id_deep, level: x.level, deep: x.deep, terisi: x.terisi, kapasitas: x.kapasitas, bb, ok: false, alasan: `BB ${bb || "-"} beda` };
-      }
-      return { id_deep: x.id_deep, level: x.level, deep: x.deep, terisi: x.terisi, kapasitas: x.kapasitas, bb, ok: true, alasan: "" };
-    })
-    .sort((a, b) => {
-      const rank = (o: TujuanOpt) => (o.ok && o.terisi > 0 ? 0 : o.ok ? 1 : 2);
-      const r = rank(a) - rank(b);
-      if (r !== 0) return r;
-      if (rank(a) === 0) return b.terisi - a.terisi;
-      if (rank(a) === 1) return lvlNum(a.level) - lvlNum(b.level) || a.deep - b.deep;
-      return lvlNum(a.level) - lvlNum(b.level) || a.deep - b.deep;
-    });
-  const tujuanTerisi = tujuanSemua.filter((x) => x.ok && x.terisi > 0);
-  const tujuanKosong = tujuanSemua.filter((x) => x.ok && x.terisi <= 0);
-  const tujuanTakBisa = tujuanSemua.filter((x) => !x.ok);
-
-  useEffect(() => {
-    if (tab !== "rapikan") return;
-    if (!lokAktif) return;
-    setFragLoading(true);
-    apiGet<{ pecah: { id_produk: number; best_before: string; deeps: { id_deep: number; level: string; deep: number; terisi: number; kapasitas: number }[] }[]; gantung: boolean }[]>(
-      `/layout-gudang/deteksi-fragmentasi?id_pengguna_lokasi=${encodeURIComponent(lokAktif)}&id_line=${edit.idLine}`
-    )
-      .then((r) => {
-        const row = (r.data || [])[0] || null;
-        setFrag(row);
-        const first = row?.pecah?.[0] || null;
-        const fb = first?.best_before || bbFallback[0] || Object.keys(deepFallbackByBb)[0] || "";
-        if (fb) setRapikanBb((prev) => prev || fb);
-      })
-      .catch(() => setFrag(null))
-      .finally(() => setFragLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, edit.idLine, lokAktif]);
-
-  // Auto-pilih: asal = palet terkecil, tujuan = palet terisi BB sama yang paling penuh dulu
-  // (baru ke palet kosong kalau tidak ada pasangan gabung). Asal tidak jadi tujuan.
-  useEffect(() => {
-    if (tab !== "rapikan" || !rapikanBb) return;
-    let asalId = rapikanAsal;
-    if (!asalId && rapikanAsalOptions.length) {
-      const sorted = [...rapikanAsalOptions].sort((a, b) => a.terisi - b.terisi);
-      asalId = String(sorted[0].id_deep);
-      setRapikanAsal(asalId);
-      setRapikanQty((prev) => prev || String(sorted[0].terisi));
-    }
-    if (!rapikanTujuan) {
-      const terisi = tujuanTerisi.filter((x) => String(x.id_deep) !== String(asalId));
-      const pick = terisi[0] || tujuanKosong[0];
-      if (pick) setRapikanTujuan(String(pick.id_deep));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, rapikanBb, frag, edit.idLine]);
-
-  const submitRapikan = async () => {
-    const qty = angka(rapikanQty);
-    if (!rapikanBb || !rapikanAsal || !rapikanTujuan) {
-      notify("warning", "Data belum lengkap", "Pilih BB, deep asal, dan deep tujuan.");
-      return;
-    }
-    if (rapikanAsal === rapikanTujuan) {
-      notify("warning", "Deep tidak valid", "Deep asal dan tujuan tidak boleh sama.");
-      return;
-    }
-    if (qty <= 0) {
-      notify("warning", "Jumlah tidak valid", "Jumlah wajib lebih dari 0.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await apiPost<{ qty_pindah: number }>("/layout-gudang/rapikan-deep", {
-        id_pengguna_lokasi: lokAktif,
-        id_pengguna: angka(session.user.id_pengguna),
-        id_deep_asal: angka(rapikanAsal),
-        id_deep_tujuan: angka(rapikanTujuan),
-        id_produk: edit.idProduk,
-        best_before: rapikanBb,
-        qty,
-        catatan: `Rapikan se-line via modal ${edit.lineLabel}`,
-      });
-      notify("success", "Berhasil dirapikan", `Dipindah ${res.data?.qty_pindah ?? qty} pcs. Pecahan sudah digabung.`);
-      setBusy(false);
-      onChanged();
-    } catch (e) {
-      setBusy(false);
-      notify("error", "Gagal merapikan", (e as Error).message || "Gagal merapikan pecahan.");
-    }
-  };
 
   const blockTujuanOptions = blockList.filter(
     (b) => angka(b.id_lokasi ?? 0) === 0 || angka(b.id_lokasi ?? 0) === idLokasiTujuan
@@ -683,7 +539,7 @@ export default function LineEditModal({
               </button>
             </div>
 
-            <div className="lg-tabs" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+            <div className="lg-tabs">
               <button
                 type="button"
                 className={`lg-tab-btn ${tab === "bb" ? "active" : ""}`}
@@ -697,13 +553,6 @@ export default function LineEditModal({
                 onClick={() => setTab("transfer")}
               >
                 Transfer
-              </button>
-              <button
-                type="button"
-                className={`lg-tab-btn ${tab === "rapikan" ? "active" : ""}`}
-                onClick={() => setTab("rapikan")}
-              >
-                Rapikan
               </button>
             </div>
 
@@ -973,123 +822,6 @@ export default function LineEditModal({
                     Tutup
                   </button>
                   <button type="button" className="lg-save-btn" onClick={submitTransfer}>
-                    Simpan
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {tab === "rapikan" && (
-              <div>
-                <div className="lg-section-title">Gabung pecahan se-line</div>
-                <div className="lg-info">
-                  1 kotak = 1 palet. Pecah (mis. 30 + 8) terjadi bila 1 tanggal+produk tersebar di &gt;1 palet. Pilih BB yang sama, pindah dari palet kecil ke palet yang masih muat.
-                </div>
-                {fragLoading && <div className="lg-info">Memeriksa pecahan...</div>}
-                {!fragLoading && frag && (!frag.pecah || !frag.pecah.length) && !frag.gantung && (
-                  <div className="lg-info">Line ini sudah rapi, tidak ada pecahan/gantung.</div>
-                )}
-                {!fragLoading && frag && !!frag.gantung && (
-                  <div className="lg-info">Gantung terdeteksi: bawah (L1) kosong tapi atas berisi. Turunkan dulu via rapikan.</div>
-                )}
-                <div className="lg-field">
-                  <label className="lg-label">Tanggal (best before) — harus sama</label>
-                  <select
-                    className="lg-select"
-                    value={rapikanBb}
-                    onChange={(e) => {
-                      setRapikanBb(e.target.value);
-                      setRapikanAsal("");
-                      setRapikanTujuan("");
-                      setRapikanQty("");
-                    }}
-                  >
-                    <option value="">Pilih BB</option>
-                    {rapikanBbOptions.map((bb) => {
-                      const det = (frag?.pecah || []).find((p) => p.best_before === bb);
-                      const label = det
-                        ? `${bb} — ${det.deeps.map((x) => `L${x.level}/D${x.deep}=${x.terisi}`).join(", ")}`
-                        : `${bb} — semua palet se-line`;
-                      return (
-                        <option key={bb} value={bb}>
-                          {label}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
-                <div className="lg-origin-grid">
-                  <div className="lg-field">
-                    <label className="lg-label">Dari palet (asal, yang ada isinya)</label>
-                    <select
-                      className="lg-select"
-                      value={rapikanAsal}
-                      onChange={(e) => {
-                        setRapikanAsal(e.target.value);
-                        const found = rapikanAsalOptions.find((x) => String(x.id_deep) === e.target.value);
-                        if (found) setRapikanQty((prev) => prev || String(found.terisi));
-                      }}
-                    >
-                      <option value="">Pilih deep asal</option>
-                      {rapikanAsalOptions.map((x) => (
-                        <option key={x.id_deep} value={x.id_deep}>
-                          L{x.level}/D{x.deep} = {x.terisi}/{x.kapasitas}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="lg-field">
-                    <label className="lg-label">Ke palet (tujuan)</label>
-                    <select className="lg-select" value={rapikanTujuan} onChange={(e) => setRapikanTujuan(e.target.value)}>
-                      <option value="">Pilih deep tujuan</option>
-                      {tujuanTerisi.length > 0 && (
-                        <optgroup label="Disarankan — gabung ke palet terisi BB sama">
-                          {tujuanTerisi.map((x) => (
-                            <option key={x.id_deep} value={x.id_deep}>
-                              L{x.level}/D{x.deep} = {x.terisi}/{x.kapasitas} (sisa {x.kapasitas - x.terisi})
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      {tujuanKosong.length > 0 && (
-                        <optgroup label="Palet kosong se-line">
-                          {tujuanKosong.map((x) => (
-                            <option key={x.id_deep} value={x.id_deep}>
-                              L{x.level}/D{x.deep} = kosong
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      {tujuanTakBisa.length > 0 && (
-                        <optgroup label="Tidak bisa dipilih">
-                          {tujuanTakBisa.map((x) => (
-                            <option key={x.id_deep} value={x.id_deep} disabled>
-                              L{x.level}/D{x.deep} = {x.terisi}/{x.kapasitas} ({x.alasan})
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      {tujuanTerisi.length === 0 && tujuanKosong.length === 0 && tujuanTakBisa.length === 0 && (
-                        <option value="" disabled>
-                          Tidak ada palet di line ini
-                        </option>
-                      )}
-                    </select>
-                  </div>
-                </div>
-                <div className="lg-field">
-                  <label className="lg-label">Jumlah dipindah</label>
-                  <input type="number" min="1" className="lg-input" value={rapikanQty} onChange={(e) => setRapikanQty(e.target.value)} />
-                </div>
-                <button type="button" className="lg-transfer-btn" onClick={submitRapikan}>
-                  Gabungkan sekarang
-                </button>
-                <div className="lg-divider"></div>
-                <div className="lg-actions">
-                  <button type="button" className="lg-cancel-btn" onClick={onClose}>
-                    Tutup
-                  </button>
-                  <button type="button" className="lg-save-btn" onClick={submitRapikan}>
                     Simpan
                   </button>
                 </div>

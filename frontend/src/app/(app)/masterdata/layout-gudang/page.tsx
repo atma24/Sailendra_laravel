@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import { isMultiRole, SUPERADMIN_ROLES, SUPERVISOR_ROLES, useSession } from "@/lib/auth";
 import LineEditModal, { type BbItem, type EditLine } from "@/components/LineEditModal";
 import UploadModal from "@/components/UploadModal";
@@ -42,7 +42,7 @@ type LayoutBlock = {
 };
 type PecahDeep = { id_deep: number; level: string; deep: number; terisi: number; kapasitas: number };
 type PecahGroup = { id_produk: number; best_before: string; deeps: PecahDeep[]; saran: string };
-type FragInfo = { id_line: number; label_line: string; pecah: PecahGroup[]; gantung: boolean; total_l1: number; total_l2plus: number };
+type FragInfo = { id_line: number; label_line: string; pecah: PecahGroup[]; gantung: boolean; bolong?: boolean; total_l1: number; total_l2plus: number };
 
 const css = `
 .warehouse-page { display: flex; flex-direction: column; gap: 7px; }
@@ -136,6 +136,7 @@ const css = `
 .frag-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 8px; font-size: 9px; font-weight: 900; border: 1px solid transparent; white-space: nowrap; }
 .frag-pecah { color: #B7791F; background: rgba(249, 168, 37, 0.14); border-color: rgba(249, 168, 37, 0.45); }
 .frag-gantung { color: #C62828; background: rgba(211, 47, 47, 0.10); border-color: rgba(211, 47, 47, 0.45); }
+.frag-bolong { color: #1565C0; background: rgba(21, 101, 192, 0.10); border-color: rgba(21, 101, 192, 0.45); }
 
 .line-edit-btn {
   width: 25px; height: 25px; border: 0; outline: 0; border-radius: 8px;
@@ -146,6 +147,50 @@ const css = `
 .line-edit-btn:hover {
   background: var(--primary); color: #FFFFFF; transform: translateY(-1px);
   box-shadow: 0 6px 14px rgba(25, 25, 112, 0.13);
+}
+.line-actions { display: flex; align-items: flex-start; gap: 6px; flex-shrink: 0; }
+.line-rapikan-btn {
+  border: 0; outline: 0; border-radius: 8px; min-height: 25px; padding: 0 10px;
+  background: #2E7D32; color: #FFFFFF; font-size: 10px; font-weight: 900;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  cursor: pointer; white-space: nowrap;
+  transition: background .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.line-rapikan-btn:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 6px 14px rgba(46,125,50,0.25); }
+.line-rapikan-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.sailendra-toast-wrap {
+  position: fixed; top: 18px; right: 18px; z-index: 3000;
+  display: flex; flex-direction: column; gap: 10px;
+  width: min(360px, calc(100vw - 32px)); pointer-events: none;
+}
+.sailendra-toast {
+  pointer-events: auto; background: #FFFFFF; border: 1px solid #e5e7eb;
+  border-left: 5px solid var(--primary); border-radius: 14px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16); padding: 12px 13px;
+  display: flex; align-items: flex-start; gap: 10px;
+  animation: sailendraToastIn .22s ease-out;
+}
+.sailendra-toast-icon {
+  width: 28px; height: 28px; border-radius: 999px; display: flex;
+  align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px;
+}
+.sailendra-toast-content { min-width: 0; flex: 1; }
+.sailendra-toast-title { font-size: 12px; font-weight: 900; color: var(--text-main); line-height: 1.25; margin-bottom: 2px; }
+.sailendra-toast-message { font-size: 11px; font-weight: 700; color: var(--text-soft); line-height: 1.35; }
+.sailendra-toast-close { border: 0; background: transparent; color: #9ca3af; font-size: 14px; line-height: 1; padding: 2px; cursor: pointer; }
+.sailendra-toast.success { border-left-color: #2E7D32; }
+.sailendra-toast.success .sailendra-toast-icon { background: rgba(46, 125, 50, 0.12); color: #2E7D32; }
+.sailendra-toast.error { border-left-color: #D32F2F; }
+.sailendra-toast.error .sailendra-toast-icon { background: rgba(211, 47, 47, 0.12); color: #D32F2F; }
+.sailendra-toast.info { border-left-color: var(--primary); }
+.sailendra-toast.info .sailendra-toast-icon { background: var(--primary-soft); color: var(--primary); }
+@keyframes sailendraToastIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 768px) {
+  .sailendra-toast-wrap { top: 12px; right: 12px; left: 12px; width: auto; }
 }
 
 .deep-grid { display: flex; flex-direction: column; gap: 4px; }
@@ -390,6 +435,7 @@ export default function LayoutGudangPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [importing, setImporting] = useState(false);
   const [fragMap, setFragMap] = useState<Record<number, FragInfo>>({});
+  const [rapikanBusyId, setRapikanBusyId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!session || !isMulti) return;
@@ -412,6 +458,39 @@ export default function LayoutGudangPage() {
   const penggunaLokasiFinal = isMulti
     ? penggunaLokasi
     : String(session?.user.id_pengguna_lokasi || "");
+
+  const [toasts, setToasts] = useState<{ id: number; type: string; title: string; msg: string }[]>([]);
+
+  const notify = (type: string, title: string, msg: string) => {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, type, title, msg }]);
+    window.setTimeout(() => {
+      setToasts((t) => t.filter((x) => x.id !== id));
+    }, type === "error" ? 9000 : 6000);
+  };
+
+  const rapikanLine = async (idLine: number) => {
+    if (!penggunaLokasiFinal || idLine <= 0 || rapikanBusyId !== null) return;
+    setRapikanBusyId(idLine);
+    try {
+      const r = await apiPost<{ total_pindah?: number; dipadatkan?: number }>("/layout-gudang/rapikan-otomatis-line", {
+        id_pengguna_lokasi: penggunaLokasiFinal,
+        id_line: idLine,
+      });
+      const total = Number((r.data as { total_pindah?: number } | undefined)?.total_pindah ?? 0);
+      const palet = Number((r.data as { palet?: number } | undefined)?.palet ?? 0);
+      if (total > 0) {
+        notify("success", "Line berhasil dirapikan", r.message || (palet > 0 ? `${palet} palet ditata ulang.` : `${total} pcs dipindah.`));
+      } else {
+        notify("info", "Line sudah rapi", r.message || "Tidak ada yang perlu digabung.");
+      }
+      setRefresh((v) => v + 1);
+    } catch (e) {
+      notify("error", "Gagal merapikan line", (e as Error).message || "Gagal merapikan line.");
+    } finally {
+      setRapikanBusyId(null);
+    }
+  };
 
   const downloadTemplate = async () => {
     try {
@@ -737,7 +816,7 @@ export default function LayoutGudangPage() {
                     </div>
                     {(() => {
                       const f = fragMap[angka(line.id_line)];
-                      if (!f || ((!f.pecah || !f.pecah.length) && !f.gantung)) return null;
+                      if (!f || ((!f.pecah || !f.pecah.length) && !f.gantung && !f.bolong)) return null;
                       return (
                         <div className="frag-badges">
                           {!!f.pecah?.length && (
@@ -750,32 +829,49 @@ export default function LayoutGudangPage() {
                               <i className="bi bi-arrow-down-circle-fill"></i> Gantung: bawah kosong
                             </span>
                           )}
+                          {!!f.bolong && (
+                            <span className="frag-badge frag-bolong" title="Ada palet kosong di depan palet terisi (seharusnya terisi runtut dari kiri-bawah). Klik Rapikan untuk memadatkan.">
+                              <i className="bi bi-grid-1x2-fill"></i> Bolong: palet kosong tersebar
+                            </span>
+                          )}
                         </div>
                       );
                     })()}
                   </div>
 
                   {SUPERVISOR_ROLES.includes(session.user.role) && (
-                    <button
-                      type="button"
-                      className="line-edit-btn"
-                      title="Ubah BB, Transfer & Rapikan Stok"
-                      onClick={() =>
-                        setEdit({
-                          idLine: angka(line.id_line),
-                          idProduk: angka(line.id_produk),
-                          lineLabel: `Block ${kodeBlockAktif} - Line ${angka(line.nomor_line)}`,
-                          product: String(line.nama_produk || "").trim() || "-",
-                          total: angka(line.total_terpakai),
-                          bbItems: buildBbItems(line),
-                          deepItems: buildDeepItems(line),
-                          idLokasiAsal: angka(idLokasi),
-                          idBlockAsal: angka(selectedBlock?.id_block),
-                        })
-                      }
-                    >
-                      <i className="bi bi-pencil-fill"></i>
-                    </button>
+                    <div className="line-actions">
+                      <button
+                        type="button"
+                        className="line-rapikan-btn"
+                        title="Rapikan otomatis: gabung pecahan + padatkan + turunkan gantung"
+                        disabled={rapikanBusyId === angka(line.id_line)}
+                        onClick={() => rapikanLine(angka(line.id_line))}
+                      >
+                        <i className="bi bi-magic"></i>
+                        {rapikanBusyId === angka(line.id_line) ? "Merapikan..." : "Rapikan"}
+                      </button>
+                      <button
+                        type="button"
+                        className="line-edit-btn"
+                        title="Ubah BB & Transfer Stok"
+                        onClick={() =>
+                          setEdit({
+                            idLine: angka(line.id_line),
+                            idProduk: angka(line.id_produk),
+                            lineLabel: `Block ${kodeBlockAktif} - Line ${angka(line.nomor_line)}`,
+                            product: String(line.nama_produk || "").trim() || "-",
+                            total: angka(line.total_terpakai),
+                            bbItems: buildBbItems(line),
+                            deepItems: buildDeepItems(line),
+                            idLokasiAsal: angka(idLokasi),
+                            idBlockAsal: angka(selectedBlock?.id_block),
+                          })
+                        }
+                      >
+                        <i className="bi bi-pencil-fill"></i>
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -922,6 +1018,28 @@ export default function LayoutGudangPage() {
         onSubmit={importStock}
         busy={importing}
       />
+
+      <div className="sailendra-toast-wrap" aria-live="polite" aria-atomic="true">
+        {toasts.map((t) => (
+          <div key={t.id} className={`sailendra-toast ${t.type}`}>
+            <div className="sailendra-toast-icon">
+              <i className={`bi ${t.type === "success" ? "bi-check-circle-fill" : t.type === "error" ? "bi-x-circle-fill" : "bi-info-circle-fill"}`}></i>
+            </div>
+            <div className="sailendra-toast-content">
+              <div className="sailendra-toast-title">{t.title}</div>
+              <div className="sailendra-toast-message">{t.msg}</div>
+            </div>
+            <button
+              type="button"
+              className="sailendra-toast-close"
+              aria-label="Tutup"
+              onClick={() => setToasts((arr) => arr.filter((x) => x.id !== t.id))}
+            >
+              <i className="bi bi-x-lg"></i>
+            </button>
+          </div>
+        ))}
+      </div>
     </>
   );
 }
