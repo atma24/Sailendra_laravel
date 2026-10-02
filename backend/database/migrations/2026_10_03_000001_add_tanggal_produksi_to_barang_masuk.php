@@ -8,10 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Tanggal produksi per shipment inbound (wajib diisi manual form,
-        // wajib dilengkapi di detail sebelum confirm). Nullable agar data
-        // Selesai lama + Draft OTM lama tidak pecah; kewajiban ditegakkan
-        // di validasi aplikasi (store/storeBatch + gate submit/konfirmasi).
+        // Tanggal produksi per item inbound. Diturunkan otomatis dari
+        // best before (BB - 2 tahun) di aplikasi; nullable agar data lama
+        // tidak pecah saat kolom ditambahkan.
         Schema::table('barang_masuk', function (Blueprint $table) {
             $table->date('tanggal_produksi')->nullable()->after('tanggal_masuk');
         });

@@ -134,4 +134,22 @@ class PengaturanProduk extends Model
 
         return static::$cacheTanpaBatch[$idProduk];
     }
+
+    /**
+     * Tanggal produksi diturunkan otomatis dari best before: BB - 2 tahun.
+     * BB kosong atau 9999-12-31 (tanpa batch / REJECT) => null.
+     */
+    public static function tanggalProduksiDariBb(?string $bestBefore): ?string
+    {
+        $bb = trim((string) $bestBefore);
+        if ($bb === '' || $bb >= '9999-01-01') {
+            return null;
+        }
+        $dt = \DateTime::createFromFormat('Y-m-d', $bb);
+        if (! $dt || $dt->format('Y-m-d') !== $bb) {
+            return null;
+        }
+
+        return $dt->modify('-2 years')->format('Y-m-d');
+    }
 }

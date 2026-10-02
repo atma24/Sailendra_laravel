@@ -136,7 +136,7 @@ class LaporanController extends Controller
             ->leftJoin('pengguna as u', 'u.id_pengguna', '=', 'bm.id_pengguna')
             ->select(
                 'bm.id_pengguna_lokasi', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh',
-                'bm.tanggal_masuk', 'bm.nama_driver', 'bm.no_mobil', 'bm.no_dn',
+                'bm.tanggal_masuk', 'bm.tanggal_produksi', 'bm.nama_driver', 'bm.no_mobil', 'bm.no_dn',
                 'bm.tipe_penerimaan', 'bm.asal_pabrik', 'bm.nama_produk', 'bm.jumlah',
                 'bm.best_before', DB::raw('COALESCE(bm.batch_sekarang, bm.batch) AS batch'),
                 'bm.satuan', 'bm.status', 'bm.diperbarui_oleh', 'bm.catatan', 'bm.catatan_perubahan',

@@ -109,6 +109,8 @@ const css = `
 .dialog-field input, .dialog-field textarea, .dialog-field select { width: 100%; min-height: 36px; border: 1px solid #dedede; border-radius: 8px; padding: 8px 12px; font-size: 13px; font-weight: 500; outline: none; background: #fbfcff; color: var(--text-main); box-sizing: border-box; }
 .dialog-field textarea { min-height: 72px; resize: vertical; }
 .dialog-field input[readonly] { background: #f6f7f9; color: #6b7280; }
+.dialog-field input[type="date"] { cursor: pointer; -webkit-appearance: none; appearance: none; }
+.dialog-field input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.85; }
 .dialog-field input:focus, .dialog-field textarea:focus { border-color: var(--primary); background: #FFFFFF; box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #dedede; }
 .dialog-btn { border: 0; border-radius: 8px; min-height: 36px; padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -251,7 +253,6 @@ export default function InboundDetailPage() {
   }, []);
 
   const [hTanggal, setHTanggal] = useState("");
-  const [hTanggalProduksi, setHTanggalProduksi] = useState("");
   const [hMobil, setHMobil] = useState("");
   const [hDn, setHDn] = useState("");
   const [hDriver, setHDriver] = useState("");
@@ -396,6 +397,18 @@ export default function InboundDetailPage() {
   const globalStatus = isCanceledAll ? 'Canceled' : hasDraft ? 'Draft' : hasPendingLegacy ? 'Pending' : 'Selesai';
   const ss = statusStyle(globalStatus);
 
+  // Tanggal produksi otomatis = best before − 2 tahun (per item).
+  const produksiDariBb = (bb: unknown): string => {
+    const v = norm(bb).slice(0, 10);
+    if (!v || v >= "9999-01-01") return "-";
+    const d = new Date(v + "T00:00:00");
+    if (isNaN(d.getTime())) return "-";
+    d.setFullYear(d.getFullYear() - 2);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const tpHint = showItem ? produksiDariBb(showItem.best_before) : "-";
+
   const getTimerPayload = () => {
     let waktuMulaiStr: string | undefined = undefined;
     let durasiDetik: number | undefined = undefined;
@@ -414,11 +427,6 @@ export default function InboundDetailPage() {
   const submitDraftBooking = async () => {
     setBusy(true);
     try {
-      const prodHeader = norm(first?.tanggal_produksi);
-      if (!prodHeader) throw new Error("Tanggal produksi wajib diisi sebelum konfirmasi. Lengkapi via Edit Detail.");
-      if (first && norm(first.tanggal_masuk) && prodHeader > norm(first.tanggal_masuk).slice(0, 10)) {
-        throw new Error("Tanggal produksi tidak boleh melebihi tanggal masuk.");
-      }
       const draftItems = items.filter(i => (i.status || "").toLowerCase() === "draft");
 
       for (const i of draftItems) {
@@ -455,7 +463,6 @@ export default function InboundDetailPage() {
          shipment_id: first.shipment_id || "",
          id_pengguna_lokasi: aktifLokasiId(session),
          items: payloadItems,
-         tanggal_produksi: norm(first.tanggal_produksi),
          waktu_mulai_input: timerData.waktu_mulai_input,
          durasi_detik: timerData.durasi_detik
       });
@@ -472,11 +479,6 @@ export default function InboundDetailPage() {
   const konfirmasiPending = async () => {
     setBusy(true);
     try {
-      const prodHeader = norm(first?.tanggal_produksi);
-      if (!prodHeader) throw new Error("Tanggal produksi wajib diisi sebelum konfirmasi. Lengkapi via Edit Detail.");
-      if (first && norm(first.tanggal_masuk) && prodHeader > norm(first.tanggal_masuk).slice(0, 10)) {
-        throw new Error("Tanggal produksi tidak boleh melebihi tanggal masuk.");
-      }
       const timerData = getTimerPayload();
 
       await apiPost('/barang-masuk/konfirmasi', {
@@ -528,7 +530,6 @@ export default function InboundDetailPage() {
   const openHeader = () => {
     if (!first) return;
     setHTanggal(norm(first.tanggal_masuk).slice(0, 10));
-    setHTanggalProduksi(norm(first.tanggal_produksi).slice(0, 10));
     setHMobil(norm(first.no_mobil));
     setHDn(norm(first.no_dn));
     setHDriver(norm(first.nama_driver));
@@ -541,17 +542,12 @@ export default function InboundDetailPage() {
   const simpanHeader = async () => {
     if (!first || !items.length) return;
     const isReject = (first.tipe_penerimaan || "").toUpperCase() === "REJECT";
-    if (norm(hTanggalProduksi) === "") { notify("error", "Tanggal produksi wajib diisi."); return; }
-    if (norm(hTanggal) !== "" && norm(hTanggalProduksi) > norm(hTanggal)) {
-      notify("error", "Tanggal produksi tidak boleh melebihi tanggal masuk."); return;
-    }
     setBusy(true);
     try {
       const payload: Record<string, unknown> = {
         id_pengguna_lokasi: aktifLokasiId(session),
         nama_pengguna: session.user.username,
         tanggal_masuk: hTanggal,
-        tanggal_produksi: norm(hTanggalProduksi),
         nama_driver: hDriver || "Tanpa nama driver",
         no_mobil: hMobil,
       };
@@ -689,8 +685,8 @@ export default function InboundDetailPage() {
               </div>
               <div className="id-text-row">
                 <div className="id-text-label">Tanggal Produksi</div>
-                <div className="id-text-value" style={!norm(first.tanggal_produksi) ? { color: "#DC2626" } : undefined}>
-                  {norm(first.tanggal_produksi).slice(0, 10) || "Belum diisi *"}
+                <div className="id-text-value" style={{ color: "#64748B", fontWeight: 600 }}>
+                  Otomatis per item (BB − 2 tahun)
                 </div>
               </div>
               <div className="id-text-row">
@@ -741,11 +737,6 @@ export default function InboundDetailPage() {
 
             {!isSelesaiAll && !isCanceledAll && (
               <div className="id-actions" style={{ marginTop: 8 }}>
-                {!norm(first.tanggal_produksi) && (
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "#DC2626", background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: 8, padding: "8px 10px" }}>
-                    Tanggal produksi belum diisi — wajib dilengkapi via Edit Detail sebelum konfirmasi.
-                  </div>
-                )}
                 {canBatalkan && (
                   <button type="button" className="id-delete-all" onClick={openBatalkan}>
                     <i className="bi bi-x-circle"></i>
@@ -835,6 +826,7 @@ export default function InboundDetailPage() {
                     </div>
                     <div className="id-rencana-meta">
                       Batch: {norm(item.batch) || "-"} | BB: {norm(item.best_before) || "-"}
+                      {produksiDariBb(item.best_before) !== "-" && <> | Produksi: {produksiDariBb(item.best_before)}</>}
                     </div>
                   </div>
                 )}
@@ -864,6 +856,11 @@ export default function InboundDetailPage() {
                     )}
                     {draftSaveState[item.id_barang_masuk] === "error" && (
                       <div style={{ marginTop: 4, fontSize: 10, fontWeight: 750, color: "#DC2626" }}>Gagal tersimpan otomatis — coba isi ulang</div>
+                    )}
+                    {!(isItemReject || noBatch) && produksiDariBb(draftBb[item.id_barang_masuk] || item.best_before) !== "-" && (
+                      <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: "#64748B" }}>
+                        Tanggal Produksi: {produksiDariBb(draftBb[item.id_barang_masuk] || item.best_before)} (otomatis)
+                      </div>
                     )}
                     {((["SECONDARY", "FOC"].includes((item.tipe_penerimaan || "").toUpperCase()))) && (
                       <div style={{ marginTop: 6 }}>
@@ -933,8 +930,9 @@ export default function InboundDetailPage() {
                 <input type="date" value={hTanggal} onChange={(e) => setHTanggal(e.target.value)} />
               </div>
               <div className="dialog-field">
-                <label>Tanggal Produksi *</label>
-                <input type="date" value={hTanggalProduksi} max={hTanggal || undefined} onChange={(e) => setHTanggalProduksi(e.target.value)} />
+                <label>Tanggal Produksi (otomatis)</label>
+                <input type="date" value={tpHint} readOnly disabled />
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B" }}>Dihitung otomatis dari Best Before − 2 tahun.</div>
               </div>
               <div className="dialog-field">
                 <label>No Mobil</label>

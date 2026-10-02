@@ -1948,6 +1948,7 @@ $in = $request->all();
                         'jumlah'              => $bk->jumlah,
                         'satuan'              => $bk->satuan,
                         'tanggal_masuk'       => $bk->tanggal_keluar,
+                        'tanggal_produksi'    => \App\Models\PengaturanProduk::tanggalProduksiDariBb($bestBeforeBk),
                         'tipe_penerimaan'     => $tipeAutoInbound,
                         'best_before'         => $bestBeforeBk,
                         'batch'               => $batchBk,
