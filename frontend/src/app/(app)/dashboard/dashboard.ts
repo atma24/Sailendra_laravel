@@ -51,7 +51,9 @@ export type ExpiredRow = {
   qty: number;
   best_before: string;
   production_date: string | null;
+  production_fallback?: boolean;
   aging_hari: number | null;
+  sisa_hari: number | null;
   expired: boolean;
 };
 

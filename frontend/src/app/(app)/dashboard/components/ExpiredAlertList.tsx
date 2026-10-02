@@ -77,11 +77,14 @@ export default function ExpiredAlertList({
                 <th className="py-2 pr-2 font-semibold">Expired Date</th>
                 <th className="py-2 pr-2 font-semibold">Production Date</th>
                 <th className="py-2 text-right font-semibold">Aging Day</th>
+                <th className="py-2 text-right font-semibold">Waktu Menuju Exp</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => {
                 const aging = r.aging_hari;
+                const sisa = r.sisa_hari ?? null;
+                const isFallback = Boolean(r.production_fallback);
                 return (
                   <tr
                     key={`${r.nama_produk}-${r.best_before}-${i}`}
@@ -98,20 +101,35 @@ export default function ExpiredAlertList({
                     </td>
                     <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">
                       {fmtTanggalSlash(r.production_date)}
+                      {isFallback && r.production_date ? (
+                        <span
+                          className="ml-1 font-bold text-amber-600"
+                          title="Data lama: fallback ke tanggal masuk"
+                        >
+                          *
+                        </span>
+                      ) : undefined}
+                    </td>
+                    <td className="py-2 text-right">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">
+                        {aging === null || aging === undefined
+                          ? "-"
+                          : `${fmt(aging)} day`}
+                      </span>
                     </td>
                     <td className="py-2 text-right">
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${
-                          aging === null || aging === undefined
+                          sisa === null || sisa === undefined
                             ? "bg-slate-100 text-slate-500"
                             : r.expired
                               ? "bg-red-100 text-red-700"
                               : "bg-slate-100 text-slate-600"
                         }`}
                       >
-                        {aging === null || aging === undefined
+                        {sisa === null || sisa === undefined
                           ? "-"
-                          : `${fmt(aging)} day`}
+                          : `${fmt(sisa)} day`}
                       </span>
                     </td>
                   </tr>

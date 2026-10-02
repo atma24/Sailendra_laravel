@@ -17,12 +17,15 @@ class AlertService
      * satu baris per produk + best_before.
      *
      * Kolom: nama_produk, qty (agregat), best_before (expired date),
-     * production_date (MIN tanggal_masuk inbound terkait), aging_hari
-     * (best_before - hari ini, realtime dalam hari; negatif = sudah lewat expired).
+     * production_date (COALESCE MIN tanggal_produksi -> MIN tanggal_masuk
+     * sebagai fallback sementara data lama), production_fallback (true bila
+     * memakai tanggal_masuk), aging_hari (best_before - production_date,
+     * shelf-life dalam hari), sisa_hari (best_before - hari ini, realtime
+     * dalam hari; negatif = sudah lewat expired).
      *
      * @param  array<int,string>  $produkFilter
      * @param  string  $mode  'h30' (default) atau 'all'
-     * @return array<int,array{nama_produk:string,qty:int,best_before:string,production_date:?string,aging_hari:?int,expired:bool}>
+     * @return array<int,array{nama_produk:string,qty:int,best_before:string,production_date:?string,production_fallback:bool,aging_hari:?int,sisa_hari:?int,expired:bool}>
      */
     public function expired(?array $lokasiFilter, array $produkFilter = [], string $mode = 'h30'): array
     {
@@ -43,9 +46,9 @@ class AlertService
         }
         $q = $q
             ->selectRaw('sg.nama_produk AS nama_produk')
-            ->selectRaw('sg.nama_produk AS nama_produk')
             ->selectRaw('sg.best_before AS best_before')
-            ->selectRaw('MIN(bm.tanggal_masuk) AS production_date')
+            ->selectRaw('COALESCE(MIN(bm.tanggal_produksi), MIN(bm.tanggal_masuk)) AS production_date')
+            ->selectRaw('CASE WHEN MIN(bm.tanggal_produksi) IS NULL THEN 1 ELSE 0 END AS production_fallback')
             ->selectRaw('SUM(sd.jumlah) AS qty')
             ->groupBy('sg.nama_produk', 'sg.best_before')
             ->orderBy('sg.best_before');
@@ -59,16 +62,29 @@ class AlertService
         foreach ($q->get() as $row) {
             $bb = (string) $row->best_before;
             $prod = $row->production_date !== null ? (string) $row->production_date : null;
+            $isFallback = (int) ($row->production_fallback ?? 0) === 1;
             $aging = null;
-            if ($bb !== '') {
-                $aging = (int) now()->parse($today)->diffInDays(now()->parse($bb), false);
+            $sisa = null;
+            try {
+                if ($bb !== '') {
+                    // Waktu menuju expired: best_before - hari ini (realtime).
+                    $sisa = (int) now()->parse($today)->diffInDays(now()->parse($bb), false);
+                }
+                if ($bb !== '' && $prod !== null && $prod !== '') {
+                    // Aging: best_before - tanggal produksi.
+                    $aging = (int) now()->parse(substr($prod, 0, 10))->diffInDays(now()->parse($bb), false);
+                }
+            } catch (\Throwable $e) {
+                // Biarkan null bila format tanggal tidak valid.
             }
             $list[] = [
                 'nama_produk' => $row->nama_produk,
                 'qty' => (int) $row->qty,
                 'best_before' => $bb,
                 'production_date' => $prod,
+                'production_fallback' => $isFallback,
                 'aging_hari' => $aging,
+                'sisa_hari' => $sisa,
                 'expired' => $bb !== '' && $bb < $today,
             ];
         }
