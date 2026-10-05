@@ -30,6 +30,10 @@ class BarangKeluarController extends Controller
         $idBarangKeluar = (int) $request->input('id_barang_keluar', 0);
         $cari = trim($request->input('cari', ''));
         $tanggal = trim($request->input('tanggal', ''));
+        $tglDari = trim((string) $request->input('tanggal_dari', ''));
+        $tglSampai = trim((string) $request->input('tanggal_sampai', ''));
+        $tipeRaw = trim((string) $request->input('tipe', ''));
+        $tipeDetailRaw = trim((string) $request->input('tipe_detail', ''));
         $status = trim($request->input('status', ''));
 
         $query = DB::table('barang_keluar as bk')
@@ -69,8 +73,79 @@ class BarangKeluarController extends Controller
                     ->orWhere('bk.tipe_pengeluaran', 'LIKE', "%{$cari}%")
                     ->orWhere('bk.nama_produk', 'LIKE', "%{$cari}%")
                     ->orWhere('bk.tujuan', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.gin_no', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.so_number', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.lokasi_block', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.catatan', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.status', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.satuan', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.best_before', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.tanggal_keluar', 'LIKE', "%{$cari}%")
+                    ->orWhere('bk.jumlah', 'LIKE', "%{$cari}%")
                     ->orWhere('bk.id_barang_keluar', 'LIKE', "%{$cari}%");
             });
+        }
+
+        // Range tanggal_keluar: YYYY-MM-DD. Jika dari > sampai, tukar otomatis.
+        $dari = substr($tglDari, 0, 10);
+        $sampai = substr($tglSampai, 0, 10);
+        if ($dari !== '' && $dari !== '0000-00-00' && $sampai !== '' && $sampai !== '0000-00-00' && $dari > $sampai) {
+            [$dari, $sampai] = [$sampai, $dari];
+        }
+        if ($dari !== '' && $dari !== '0000-00-00') {
+            $query->whereDate('bk.tanggal_keluar', '>=', $dari);
+        }
+        if ($sampai !== '' && $sampai !== '0000-00-00') {
+            $query->whereDate('bk.tanggal_keluar', '<=', $sampai);
+        }
+
+        // Filter detail baru (prioritas): tipe_detail=primary,secondary,foc,pemusnahan
+        // (koma, case-insensitive). Fallback legacy: tipe=primary|secondary|foc|normal.
+        $normTipeDetail = function (string $v): string {
+            $v = strtolower(trim($v));
+            $map = [
+                'primary' => 'primary',
+                'secondary' => 'secondary',
+                'foc' => 'foc',
+                'pemusnahan' => 'pemusnahan',
+                'musnah' => 'pemusnahan',
+            ];
+            return $map[$v] ?? '';
+        };
+        $detailTokens = array_values(array_unique(array_filter(array_map(
+            $normTipeDetail,
+            $tipeDetailRaw !== '' ? explode(',', $tipeDetailRaw) : []
+        ))));
+        if (! empty($detailTokens)) {
+            $tipeMap = [
+                'primary' => 'Primary',
+                'secondary' => 'Secondary',
+                'foc' => 'FOC',
+                'pemusnahan' => 'Pemusnahan',
+            ];
+            $bases = [];
+            foreach ($detailTokens as $t) {
+                $bases[] = $tipeMap[$t];
+            }
+            $query->whereIn('bk.tipe_pengeluaran', array_values(array_unique($bases)));
+        } elseif ($tipeRaw !== '') {
+            $single = strtolower(trim($tipeRaw));
+            // Primary mencakup Pemusnahan mengikuti pengelompokan lama di frontend.
+            // normal (URL lama) = semua non-FOC.
+            if ($single === 'primary') {
+                $query->whereIn('bk.tipe_pengeluaran', ['Primary', 'Pemusnahan']);
+            } elseif ($single === 'secondary') {
+                $query->where('bk.tipe_pengeluaran', 'Secondary');
+            } elseif ($single === 'foc') {
+                $query->where('bk.tipe_pengeluaran', 'FOC');
+            } elseif ($single === 'normal') {
+                $query->where('bk.tipe_pengeluaran', '<>', 'FOC');
+            } else {
+                $up = strtoupper(trim($tipeRaw));
+                if ($up !== '') {
+                    $query->whereIn('bk.tipe_pengeluaran', array_map('trim', explode(',', $tipeRaw)));
+                }
+            }
         }
 
         $rows = $query->orderBy('bk.id_barang_keluar', 'DESC')->get()->map(function ($row) {
@@ -1948,7 +2023,7 @@ $in = $request->all();
                         'jumlah'              => $bk->jumlah,
                         'satuan'              => $bk->satuan,
                         'tanggal_masuk'       => $bk->tanggal_keluar,
-                        'tanggal_produksi'    => \App\Models\PengaturanProduk::tanggalProduksiDariBb($bestBeforeBk),
+                        'tanggal_produksi'    => \App\Models\PengaturanProduk::tanggalProduksiDariBb($bestBeforeBk, null, (int) ($bk->id_produk ?? 0)),
                         'tipe_penerimaan'     => $tipeAutoInbound,
                         'best_before'         => $bestBeforeBk,
                         'batch'               => $batchBk,
@@ -1978,7 +2053,7 @@ $in = $request->all();
                             'jumlah'              => $bk->jumlah,
                             'satuan'              => $jugRow->satuan,
                             'tanggal_masuk'       => $bk->tanggal_keluar,
-                            'tanggal_produksi'    => \App\Models\PengaturanProduk::tanggalProduksiDariBb($bestBeforeBk),
+                            'tanggal_produksi'    => \App\Models\PengaturanProduk::tanggalProduksiDariBb($bestBeforeBk, null, (int) ($jugRow->id_produk ?? 0)),
                             'tipe_penerimaan'     => $tipeAutoInbound,
                             'best_before'         => null,
                             'batch'               => null,

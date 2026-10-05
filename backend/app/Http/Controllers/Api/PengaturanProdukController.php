@@ -26,17 +26,28 @@ class PengaturanProdukController extends Controller
 
         $cari = trim((string) $request->input('cari', ''));
 
+        // Aman pre-migrasi: kolom masa_simpan_hari mungkin belum ada di DB.
+        $adaKolomSimpan = false;
+        try {
+            $adaKolomSimpan = \Illuminate\Support\Facades\Schema::hasColumn('produk', 'masa_simpan_hari');
+        } catch (\Throwable $e) {
+            $adaKolomSimpan = false;
+        }
+
+        $kolom = ['p.id_produk', 'p.nama_produk', 'p.satuan', 'p.tanpa_batch'];
+        if ($adaKolomSimpan) {
+            $kolom[] = 'p.masa_simpan_hari';
+        }
+        $kolom[] = 'pp.id_pengaturan';
+        $kolom[] = 'pp.ikut_fefo';
+        $kolom[] = 'pp.urutan_blok';
+
         $query = DB::table('produk as p')
             ->leftJoin('pengaturan_produk as pp', function ($j) use ($idPenggunaLokasi) {
                 $j->on('pp.id_produk', '=', 'p.id_produk')
                     ->where('pp.id_pengguna_lokasi', '=', $idPenggunaLokasi);
             })
-            ->select(
-                'p.id_produk', 'p.nama_produk', 'p.satuan', 'p.tanpa_batch',
-                'pp.id_pengaturan',
-                'pp.ikut_fefo',
-                'pp.urutan_blok'
-            )
+            ->select($kolom)
             ->orderBy('p.id_produk');
 
         if ($cari !== '') {
@@ -48,6 +59,8 @@ class PengaturanProdukController extends Controller
 
         $rows = $query->get()->map(function ($r) {
             $arr = (array) $r;
+            $hari = (int) ($arr['masa_simpan_hari'] ?? 730);
+            $arr['masa_simpan_hari'] = $hari > 0 ? $hari : 730;
             $arr['ikut_fefo'] = $arr['id_pengaturan'] === null ? true : (bool) $arr['ikut_fefo'];
             $arr['urutan_blok'] = PengaturanProduk::normalisasiUrutan($arr['urutan_blok']);
             $arr['is_default'] = $arr['id_pengaturan'] === null;

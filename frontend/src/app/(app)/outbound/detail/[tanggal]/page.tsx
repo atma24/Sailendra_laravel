@@ -159,6 +159,7 @@ export default function OutboundDetailPage() {
   const driver = searchParams.get("driver") || "";
   const lok = searchParams.get("lok") || "";
   const tipeFilter = searchParams.get("tipe") || "";
+  const tipeDetailParam = searchParams.get("tipe_detail") || "";
 
   const [items, setItems] = useState<BkDetail[]>([]);
   const [header, setHeader] = useState<BkDetail | null>(null);
@@ -238,7 +239,16 @@ export default function OutboundDetailPage() {
         if (cancelled) return;
         const rows = r.data || [];
         const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+        const detailArr = tipeDetailParam.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+        const kategoriOf = (x: BkDetail): string => {
+          const t = tipeNorm(x.tipe_pengeluaran);
+          if (t === "SECONDARY") return "secondary";
+          if (t === "FOC") return "foc";
+          if (t === "PEMUSNAHAN") return "pemusnahan";
+          return "primary";
+        };
         const matchTipe = (x: BkDetail) => {
+          if (detailArr.length > 0) return detailArr.includes(kategoriOf(x));
           if (!tipeFilter) return true;
           const t = tipeNorm(x.tipe_pengeluaran);
           if (tipeFilter === "primary") return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
@@ -335,7 +345,12 @@ export default function OutboundDetailPage() {
   const hiddenCount = Math.max(0, driverRowCount - items.length);
   // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan keluar permanen).
   const adaAutoInbound = items.some((it) => ["SECONDARY", "FOC"].includes(String(it.tipe_pengeluaran || "").trim().toUpperCase()));
-  const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `${lok ? "&" : "?"}tipe=${tipeFilter}` : ""}`;
+  const backQs = new URLSearchParams();
+  if (lok) backQs.set("lok", lok);
+  if (tipeDetailParam) backQs.set("tipe_detail", tipeDetailParam);
+  if (tipeFilter) backQs.set("tipe", tipeFilter);
+  const backQsStr = backQs.toString();
+  const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${backQsStr ? `?${backQsStr}` : ""}`;
 
   const openHeader = () => {
     setHMobil(norm(header?.no_mobil));

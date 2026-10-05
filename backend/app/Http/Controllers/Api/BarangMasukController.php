@@ -30,6 +30,12 @@ class BarangMasukController extends Controller
     {
         $cari = trim((string) $request->input('cari', ''));
         $tgl = trim((string) $request->input('tanggal', ''));
+        $tglDari = trim((string) $request->input('tanggal_dari', ''));
+        $tglSampai = trim((string) $request->input('tanggal_sampai', ''));
+        $tipeRaw = trim((string) $request->input('tipe', ''));
+        $tipeDetailRaw = trim((string) $request->input('tipe_detail', ''));
+        // Kompatibilitas: frontend lama mengirim sumber=normal|outbound bersama tipe.
+        $sumberRaw = strtolower(trim((string) $request->input('sumber', '')));
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi', ''));
         $idPenggunaLokasiMulti = trim((string) $request->input('id_pengguna_lokasi_multi', ''));
 
@@ -74,12 +80,152 @@ class BarangMasukController extends Controller
                     ->orWhere('bm.asal_pabrik', 'LIKE', $like)
                     ->orWhere('bm.batch', 'LIKE', $like)
                     ->orWhere('bm.nama_driver', 'LIKE', $like)
+                    ->orWhere('bm.no_mobil', 'LIKE', $like)
+                    ->orWhere('bm.no_dn', 'LIKE', $like)
+                    ->orWhere('bm.shipment_id', 'LIKE', $like)
+                    ->orWhere('bm.tipe_penerimaan', 'LIKE', $like)
+                    ->orWhere('bm.status', 'LIKE', $like)
+                    ->orWhere('bm.catatan', 'LIKE', $like)
+                    ->orWhere('bm.satuan', 'LIKE', $like)
+                    ->orWhere('bm.best_before', 'LIKE', $like)
+                    ->orWhere('bm.tanggal_masuk', 'LIKE', $like)
+                    ->orWhere('bm.jumlah', 'LIKE', $like)
                     ->orWhere('bm.lokasi_block', 'LIKE', $like);
             });
         }
 
         if ($tgl !== '') {
             $query->where('bm.tanggal_masuk', $tgl);
+        }
+
+        // Range tanggal: YYYY-MM-DD. Jika dari > sampai, tukar otomatis.
+        $dari = substr($tglDari, 0, 10);
+        $sampai = substr($tglSampai, 0, 10);
+        if ($dari !== '' && $dari !== '0000-00-00' && $sampai !== '' && $sampai !== '0000-00-00' && $dari > $sampai) {
+            [$dari, $sampai] = [$sampai, $dari];
+        }
+        if ($dari !== '' && $dari !== '0000-00-00') {
+            $query->whereDate('bm.tanggal_masuk', '>=', $dari);
+        }
+        if ($sampai !== '' && $sampai !== '0000-00-00') {
+            $query->whereDate('bm.tanggal_masuk', '<=', $sampai);
+        }
+
+        // Filter detail baru (prioritas): tipe_detail=primary,secondary_manual,
+        // secondary_outbound,xwh,foc_manual,foc_outbound,reject (koma, case-insensitive).
+        // Fallback legacy: tipe=primary|secondary|xwh|foc (+ sumber=normal|outbound).
+        $normTipeDetail = function (string $v): string {
+            $v = strtolower(trim($v));
+            $v = str_replace([' ', '-'], '_', $v);
+            $v = str_replace(['__', '___'], '_', $v);
+            $map = [
+                'primary' => 'primary',
+                'secondary' => 'secondary_manual',
+                'secondary_manual' => 'secondary_manual',
+                'secondary_normal' => 'secondary_manual',
+                'manual_secondary' => 'secondary_manual',
+                'secondary_outbound' => 'secondary_outbound',
+                'secondary_dari_outbound' => 'secondary_outbound',
+                'dari_outbound_secondary' => 'secondary_outbound',
+                'xwh' => 'xwh',
+                'primary_xwh' => 'xwh',
+                'primaryxwh' => 'xwh',
+                'foc' => 'foc_manual',
+                'foc_manual' => 'foc_manual',
+                'foc_normal' => 'foc_manual',
+                'manual_foc' => 'foc_manual',
+                'foc_outbound' => 'foc_outbound',
+                'foc_dari_outbound' => 'foc_outbound',
+                'dari_outbound_foc' => 'foc_outbound',
+                'reject' => 'reject',
+            ];
+            return $map[$v] ?? '';
+        };
+        $detailTokens = array_values(array_unique(array_filter(array_map(
+            $normTipeDetail,
+            $tipeDetailRaw !== '' ? explode(',', $tipeDetailRaw) : []
+        ))));
+        if (! empty($detailTokens)) {
+            $query->where(function ($q) use ($detailTokens) {
+                foreach ($detailTokens as $t) {
+                    $q->orWhere(function ($qq) use ($t) {
+                        switch ($t) {
+                            case 'primary':
+                                $qq->where('bm.tipe_penerimaan', 'Primary');
+                                break;
+                            case 'secondary_manual':
+                                $qq->where('bm.tipe_penerimaan', 'Secondary')
+                                    ->where(function ($w) {
+                                        // NULL = manual (konsisten dengan pengelompokan frontend).
+                                        $w->where('bm.catatan', 'NOT LIKE', '%Auto dari Outbound%')
+                                            ->orWhereNull('bm.catatan');
+                                    });
+                                break;
+                            case 'secondary_outbound':
+                                $qq->where('bm.tipe_penerimaan', 'Secondary')
+                                    ->where('bm.catatan', 'LIKE', '%Auto dari Outbound%');
+                                break;
+                            case 'xwh':
+                                $qq->where('bm.tipe_penerimaan', 'Primary XWH');
+                                break;
+                            case 'foc_manual':
+                                $qq->where('bm.tipe_penerimaan', 'FOC')
+                                    ->where(function ($w) {
+                                        // NULL = manual (konsisten dengan pengelompokan frontend).
+                                        $w->where('bm.catatan', 'NOT LIKE', '%Auto dari Outbound%')
+                                            ->orWhereNull('bm.catatan');
+                                    });
+                                break;
+                            case 'foc_outbound':
+                                $qq->where('bm.tipe_penerimaan', 'FOC')
+                                    ->where('bm.catatan', 'LIKE', '%Auto dari Outbound%');
+                                break;
+                            case 'reject':
+                                $qq->where('bm.tipe_penerimaan', 'REJECT');
+                                break;
+                        }
+                    });
+                }
+            });
+        } elseif ($tipeRaw !== '') {
+            $normBase = function (string $v): string {
+                $v = strtoupper(trim($v));
+                if ($v === 'XWH' || $v === 'PRIMARY_XWH' || $v === 'PRIMARY-XWH') return 'PRIMARY XWH';
+                return $v;
+            };
+            $bases = array_values(array_unique(array_filter(array_map(
+                $normBase,
+                explode(',', $tipeRaw)
+            ))));
+            // Legacy single value lowercase (primary/secondary/xwh/foc) dari driver/detail.
+            // Primary mencakup REJECT mengikuti pengelompokan lama di frontend.
+            if (count($bases) === 1) {
+                $single = strtolower($tipeRaw);
+                if ($single === 'primary') $bases = ['PRIMARY', 'REJECT'];
+                elseif ($single === 'secondary') $bases = ['SECONDARY'];
+                elseif ($single === 'xwh') $bases = ['PRIMARY XWH'];
+                elseif ($single === 'foc') $bases = ['FOC'];
+            }
+            if (! empty($bases)) {
+                $query->whereIn('bm.tipe_penerimaan', $bases);
+            }
+            if ($sumberRaw === 'outbound') {
+                $query->where('bm.catatan', 'LIKE', '%Auto dari Outbound%');
+            } elseif ($sumberRaw === 'normal') {
+                $query->where(function ($w) {
+                    $w->where('bm.catatan', 'NOT LIKE', '%Auto dari Outbound%')
+                        ->orWhereNull('bm.catatan');
+                });
+            }
+        } elseif ($sumberRaw === 'outbound' || $sumberRaw === 'normal') {
+            if ($sumberRaw === 'outbound') {
+                $query->where('bm.catatan', 'LIKE', '%Auto dari Outbound%');
+            } else {
+                $query->where(function ($w) {
+                    $w->where('bm.catatan', 'NOT LIKE', '%Auto dari Outbound%')
+                        ->orWhereNull('bm.catatan');
+                });
+            }
         }
 
         $rows = $query->orderBy('bm.id_barang_masuk', 'DESC')->get();
@@ -442,8 +588,8 @@ class BarangMasukController extends Controller
             return $this->fail('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
         }
 
-        // Tanggal produksi otomatis per item = best before - 2 tahun.
-        $tanggalProduksi = $this->tanggalProduksiDariBb($bestBefore);
+        // Tanggal produksi otomatis per item = best before - masa simpan produk.
+        $tanggalProduksi = $this->tanggalProduksiDariBb($bestBefore, $idProduk);
 
         // Pengaturan produk: produk non-FEFO boleh campur BB dalam satu line/deep.
         $ikutFefo = PengaturanProduk::untuk($idPenggunaLokasi, $idProduk)['ikut_fefo'];
@@ -698,7 +844,7 @@ class BarangMasukController extends Controller
         }
 
         // Tanggal produksi TIDAK lagi diinput manual: diturunkan otomatis per
-        // item dari best before (BB - 2 tahun) di dalam store().
+        // item dari best before (BB - masa simpan produk) di dalam store().
         unset($header['tanggal_produksi']);
 
         $hasil = [];
@@ -1123,7 +1269,7 @@ class BarangMasukController extends Controller
                         'jumlah' => $item['jumlah'],
                         'satuan' => $item['satuan'],
                         'tanggal_masuk' => $payload['tanggal_masuk'],
-                        'tanggal_produksi' => $this->tanggalProduksiDariBb($item['best_before'] ?? null),
+                        'tanggal_produksi' => $this->tanggalProduksiDariBb($item['best_before'] ?? null, (int) ($item['id_produk'] ?? 0)),
                         'tipe_penerimaan' => $payload['tipe_penerimaan'],
                         'asal_pabrik' => $payload['asal_pabrik'],
                         'no_dn' => $payload['no_dn'],
@@ -1235,7 +1381,7 @@ class BarangMasukController extends Controller
                         'best_before' => $bbReq,
                         'batch' => $batchBaru,
                         'batch_sekarang' => $batchBaru,
-                        'tanggal_produksi' => $this->tanggalProduksiDariBb($bbReq),
+                        'tanggal_produksi' => $this->tanggalProduksiDariBb($bbReq, (int) $draft->id_produk),
                         'diperbarui_pada' => now()
                     ];
                     if ($waktuMulai !== null) {
@@ -1284,7 +1430,7 @@ class BarangMasukController extends Controller
                     'batch' => $batchBaru,
                     'batch_sekarang' => $batchBaru,
                     'lokasi_block' => $lokasiAkhirStr,
-                    'tanggal_produksi' => $this->tanggalProduksiDariBb($bbReq),
+                    'tanggal_produksi' => $this->tanggalProduksiDariBb($bbReq, (int) $draft->id_produk),
                     'diperbarui_pada' => now()
                 ];
 
@@ -1765,7 +1911,7 @@ class BarangMasukController extends Controller
                         'jumlah' => $jumlahLine,
                         'satuan' => $r['satuan'],
                         'tanggal_masuk' => $r['tanggal_masuk'],
-                        'tanggal_produksi' => $this->tanggalProduksiDariBb($bestBefore),
+                        'tanggal_produksi' => $this->tanggalProduksiDariBb($bestBefore, (int) ($r['id_produk'] ?? 0)),
                         'tipe_penerimaan' => $r['kategori'] === 'XWH' ? 'Primary XWH' : 'Primary',
                         'best_before' => $bestBefore,
                         'batch' => $r['batch'],
@@ -1960,13 +2106,13 @@ class BarangMasukController extends Controller
                     $upd['best_before'] = '9999-12-31';
                 }
 
-                // Tanggal produksi = best before - 2 tahun (otomatis, per item).
+                // Tanggal produksi = best before - masa simpan produk (otomatis, per item).
                 if ($tipePenerimaan === 'REJECT') {
                     $upd['tanggal_produksi'] = null;
                 } elseif ($bestBefore !== null) {
-                    $upd['tanggal_produksi'] = $this->tanggalProduksiDariBb($bestBefore);
+                    $upd['tanggal_produksi'] = $this->tanggalProduksiDariBb($bestBefore, $idProdukFix);
                 } else {
-                    $upd['tanggal_produksi'] = $this->tanggalProduksiDariBb($bbLama);
+                    $upd['tanggal_produksi'] = $this->tanggalProduksiDariBb($bbLama, $idProdukFix);
                 }
 
                 $forceUpdateAsal = false;
@@ -4064,10 +4210,11 @@ class BarangMasukController extends Controller
      * Best before "9999-12-31" (tanpa batch / REJECT) => null (tidak ada produksi).
      */
     /**
-     * Tanggal produksi diturunkan otomatis dari best before: BB - 2 tahun.
+     * Tanggal produksi diturunkan otomatis dari best before:
+     * BB - masa simpan produk (default 730 hari = 2 tahun).
      */
-    private function tanggalProduksiDariBb(?string $bestBefore): ?string
+    private function tanggalProduksiDariBb(?string $bestBefore, ?int $idProduk = null): ?string
     {
-        return PengaturanProduk::tanggalProduksiDariBb($bestBefore);
+        return PengaturanProduk::tanggalProduksiDariBb($bestBefore, null, $idProduk);
     }
 }

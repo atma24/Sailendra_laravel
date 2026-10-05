@@ -40,32 +40,28 @@ export function weekIndexInMonth(iso: string, monthStart: string): number {
 }
 
 export type TrendMode = {
-  /** true = harian (satu titik per hari); false = agregasi per minggu. */
+  /**
+   * true = satu minggu dipilih (satu titik per hari, label nama hari).
+   * false = "Semua minggu" (satu titik per tanggal 1–akhir bulan, label angka tanggal).
+   */
   isWeekly: boolean;
   /** Tanggal awal periode (YYYY-MM-DD). */
   mulai: string;
-  /** Awal bulan (YYYY-MM-DD) — acuan indeks minggu. Jika kosong, pakai `mulai`. */
+  /** Awal bulan (YYYY-MM-DD) — dipertahankan untuk kompatibilitas, tidak lagi dipakai agregasi. */
   monthStart?: string;
   bulan?: string;
   tahun?: string;
 };
 
-const fmtRange = (a: string, b: string) => {
-  const [, ma, da] = a.split("-");
-  const [, mb, db] = b.split("-");
-  if (ma === mb) return `${Number(da)}–${Number(db)} ${NAMA_BULAN_SINGKAT[Number(ma) - 1] ?? ""}`;
-  return `${Number(da)} ${NAMA_BULAN_SINGKAT[Number(ma) - 1] ?? ""} – ${Number(db)} ${NAMA_BULAN_SINGKAT[Number(mb) - 1] ?? ""}`.trim();
-};
-
 /**
  * Bangun titik-titik trend (label + planned + actual) dari dua deret harian.
- * - Mode harian: satu titik per hari (label nama hari).
- * - Mode mingguan: agregasi per minggu ke-N dalam bulan (label "Minggu N" + rentang tgl).
+ * - Satu minggu dipilih: satu titik per hari (label nama hari, mis. Sen..Min).
+ * - Semua minggu: satu titik per tanggal 1–akhir bulan (label angka tanggal, mis. 1..30).
  */
 export function buildTrendData(
   planned: SeriesPoint[],
   actual: SeriesPoint[],
-  { isWeekly, mulai, monthStart, bulan, tahun }: TrendMode
+  { isWeekly }: TrendMode
 ): TrendDatum[] {
   if (isWeekly) {
     const actualMap = new Map(actual.map((p) => [p.tanggal, p.qty]));
@@ -78,36 +74,31 @@ export function buildTrendData(
     }));
   }
 
-  const anchor = monthStart || mulai;
-  const bucket = new Map<
-    number,
-    { planned: number; actual: number; first: string; last: string }
-  >();
-  const put = (iso: string, plannedQty: number, actualQty: number) => {
-    const idx = weekIndexInMonth(iso, anchor);
-    const cur =
-      bucket.get(idx) ?? { planned: 0, actual: 0, first: iso, last: iso };
-    cur.planned += plannedQty;
-    cur.actual += actualQty;
-    if (iso < cur.first) cur.first = iso;
-    if (iso > cur.last) cur.last = iso;
-    bucket.set(idx, cur);
-  };
-
+  // Semua minggu: tampilkan harian tanggal 1–akhir bulan (tanpa agregasi mingguan).
+  const plannedMap = new Map(planned.map((p) => [p.tanggal, p.qty]));
   const actualMap = new Map(actual.map((p) => [p.tanggal, p.qty]));
-  planned.forEach((p) => put(p.tanggal, p.qty, actualMap.get(p.tanggal) ?? 0));
-  actual.forEach((p) => {
-    if (!planned.some((q) => q.tanggal === p.tanggal)) put(p.tanggal, 0, p.qty);
-  });
+  const dates = Array.from(new Set([...plannedMap.keys(), ...actualMap.keys()])).sort();
+  return dates.map((iso) => ({
+    key: iso,
+    label: String(Number(iso.slice(8, 10)) || iso),
+    full: fmtTanggalFull(iso),
+    planned: plannedMap.get(iso) ?? 0,
+    actual: actualMap.get(iso) ?? 0,
+  }));
+}
 
-  const bln = bulan ? `${NAMA_BULAN_SINGKAT[Number(bulan) - 1] ?? ""} ` : "";
-  return Array.from(bucket.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([idx, v]) => ({
-      key: `w${idx}`,
-      label: `Minggu ${idx + 1}`,
-      full: `Minggu ${idx + 1} · ${bln}${tahun ?? ""} (${fmtRange(v.first, v.last)})`.trim(),
-      planned: v.planned,
-      actual: v.actual,
-    }));
+/**
+ * Subtitle kartu untuk mode "Semua minggu": "Harian (1–30 Sep)".
+ * Dihitung dari deret tanggal backend (selalu 1–akhir bulan).
+ */
+export function monthlySubtitle(planned: SeriesPoint[], bulan?: string): string {
+  if (planned.length === 0) return "Harian";
+  const first = planned[0].tanggal;
+  const last = planned[planned.length - 1].tanggal;
+  const d1 = Number(first.slice(8, 10));
+  const d2 = Number(last.slice(8, 10));
+  const m = Number(bulan ?? last.slice(5, 7));
+  const mon = NAMA_BULAN_SINGKAT[m - 1] ?? "";
+  if (!Number.isFinite(d1) || !Number.isFinite(d2)) return "Harian";
+  return `Harian (${d1}–${d2}${mon ? ` ${mon}` : ""})`;
 }

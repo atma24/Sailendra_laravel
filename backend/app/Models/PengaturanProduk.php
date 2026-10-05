@@ -25,16 +25,27 @@ class PengaturanProduk extends Model
     /** ID produk tanpa batch versi lama (fallback bila kolom produk.tanpa_batch belum ada). */
     public const LEGACY_TANPA_BATCH = [10516938, 10516939];
 
+    /** Masa simpan default 2 tahun (dalam hari) bila produk belum diatur. */
+    public const MASA_SIMPAN_DEFAULT_HARI = 730;
+
     /** Cache per-request agar tidak N+1 saat dipakai di loop alokasi. */
     protected static array $cachePengaturan = [];
 
     protected static array $cacheTanpaBatch = [];
+
+    protected static array $cacheMasaSimpan = [];
 
     /** Hapus cache per-request (dipakai setelah simpan/reset). */
     public static function lupakan(string $idPenggunaLokasi, int $idProduk): void
     {
         unset(static::$cachePengaturan[$idPenggunaLokasi.'|'.$idProduk]);
         unset(static::$cacheTanpaBatch[$idProduk]);
+        unset(static::$cacheMasaSimpan[$idProduk]);
+    }
+
+    public static function lupakanMasaSimpan(int $idProduk): void
+    {
+        unset(static::$cacheMasaSimpan[$idProduk]);
     }
 
     /**
@@ -136,10 +147,33 @@ class PengaturanProduk extends Model
     }
 
     /**
-     * Tanggal produksi diturunkan otomatis dari best before: BB - 2 tahun.
+     * Masa simpan produk dalam hari (global per produk).
+     * Aman pre-migrasi: fallback ke default 2 tahun bila kolom belum ada.
+     */
+    public static function masaSimpanHari(int $idProduk): int
+    {
+        if (! array_key_exists($idProduk, static::$cacheMasaSimpan)) {
+            try {
+                $val = DB::table('produk')->where('id_produk', $idProduk)->value('masa_simpan_hari');
+                $hari = (int) ($val ?? self::MASA_SIMPAN_DEFAULT_HARI);
+                if ($hari <= 0) {
+                    $hari = self::MASA_SIMPAN_DEFAULT_HARI;
+                }
+                static::$cacheMasaSimpan[$idProduk] = min(3650, $hari);
+            } catch (\Throwable $e) {
+                static::$cacheMasaSimpan[$idProduk] = self::MASA_SIMPAN_DEFAULT_HARI;
+            }
+        }
+
+        return static::$cacheMasaSimpan[$idProduk];
+    }
+
+    /**
+     * Tanggal produksi diturunkan otomatis dari best before:
+     * BB - masa simpan produk (default 730 hari = 2 tahun).
      * BB kosong atau 9999-12-31 (tanpa batch / REJECT) => null.
      */
-    public static function tanggalProduksiDariBb(?string $bestBefore): ?string
+    public static function tanggalProduksiDariBb(?string $bestBefore, ?int $masaSimpanHari = null, ?int $idProduk = null): ?string
     {
         $bb = trim((string) $bestBefore);
         if ($bb === '' || $bb >= '9999-01-01') {
@@ -150,6 +184,25 @@ class PengaturanProduk extends Model
             return null;
         }
 
-        return $dt->modify('-2 years')->format('Y-m-d');
+        $hari = $masaSimpanHari;
+        if ($hari === null && $idProduk !== null && $idProduk > 0) {
+            $hari = self::masaSimpanHari($idProduk);
+        }
+        if ($hari === null || $hari <= 0) {
+            $hari = self::MASA_SIMPAN_DEFAULT_HARI;
+        }
+        $hari = min(3650, $hari);
+
+        // Kelipatan tahun genap (1-5 tahun dari dropdown) dihitung kalender
+        // persis (-N years) agar tidak geser sehari saat ada tahun kabisat.
+        // Nilai 730 hari (default legacy 2 tahun) termasuk di sini.
+        if ($hari % 365 === 0) {
+            $tahun = (int) ($hari / 365);
+            if ($tahun >= 1 && $tahun <= 5) {
+                return $dt->modify("-{$tahun} years")->format('Y-m-d');
+            }
+        }
+
+        return $dt->modify("-{$hari} days")->format('Y-m-d');
     }
 }

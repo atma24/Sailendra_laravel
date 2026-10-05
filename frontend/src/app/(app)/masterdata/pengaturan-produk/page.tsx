@@ -11,6 +11,7 @@ type SettingRow = {
   nama_produk: string;
   satuan: string;
   tanpa_batch?: number | boolean;
+  masa_simpan_hari?: number;
   id_pengaturan: number | null;
   ikut_fefo: boolean;
   urutan_blok: string[];
@@ -20,6 +21,18 @@ type SettingRow = {
 type Lokasi = { id_pengguna_lokasi: string; nama_pengguna_lokasi: string };
 
 const sekel = (v: unknown) => String(v ?? "");
+// Masa simpan hanya boleh 1-5 tahun (disimpan sebagai hari: tahun * 365).
+const TAHUN_OPSI = [1, 2, 3, 4, 5];
+const tahunKeHari = (t: unknown) => {
+  const n = Number(t ?? 2);
+  const th = Number.isFinite(n) ? Math.min(5, Math.max(1, Math.round(n))) : 2;
+  return th * 365;
+};
+const hariKeTahun = (h: unknown) => {
+  const n = Number(h ?? 730);
+  if (!Number.isFinite(n) || n <= 0) return 2;
+  return Math.min(5, Math.max(1, Math.round(n / 365)));
+};
 const KAT_LABEL: Record<string, string> = {
   MOBIL: "Mobil",
   RECEH: "Receh",
@@ -42,7 +55,9 @@ const css = `
 .ppeng-select { height: 36px; border-radius: 9px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 12px; font-weight: 700; color: var(--text-main); outline: none; }
 .ppeng-note { padding: 10px 14px; font-size: 11px; font-weight: 600; color: var(--text-soft); line-height: 1.5; }
 .ppeng-table-card { overflow-x: auto; }
-.ppeng-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+.ppeng-table { width: 100%; border-collapse: collapse; min-width: 1080px; }
+.ppeng-num { width: 110px; height: 32px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 8px; font-size: 12px; font-weight: 800; color: var(--text-main); outline: none; }
+.ppeng-num:focus { background: #fff; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
 .ppeng-table thead th { background: #F8FAFC; color: #475569; font-size: 11px; font-weight: 800; padding: 10px 12px; border-bottom: 1px solid #E2E8F0; text-align: left; white-space: nowrap; }
 .ppeng-table tbody td { font-size: 12px; font-weight: 600; color: #1E293B; padding: 10px 12px; border-bottom: 1px solid #F1F5F9; vertical-align: middle; }
 .ppeng-table tbody tr:hover { background: #F8FAFC; }
@@ -141,8 +156,12 @@ export default function PengaturanProdukPage() {
 
   const isBatchOff = (v: unknown) => v === true || v === 1 || v === "1";
   const normBatch = (v: unknown) => (isBatchOff(v) ? 1 : 0);
+  const normSimpan = (v: unknown) => {
+    const n = Number(v ?? 730);
+    return Number.isFinite(n) && n > 0 ? Math.min(3650, Math.round(n)) : 730;
+  };
   const kunci = (r: SettingRow) =>
-    JSON.stringify([normBatch(r.tanpa_batch), !!r.ikut_fefo, r.urutan_blok]);
+    JSON.stringify([normBatch(r.tanpa_batch), normSimpan(r.masa_simpan_hari), !!r.ikut_fefo, r.urutan_blok]);
 
   const petaAsal = new Map(asal.map((a) => [a.id_produk, kunci(a)]));
   const barisBerubah = rows.filter((r) => petaAsal.get(r.id_produk) !== kunci(r));
@@ -174,11 +193,15 @@ export default function PengaturanProdukPage() {
     for (const row of barisBerubah) {
       try {
         const a = asal.find((x) => x.id_produk === row.id_produk);
-        if (!a || normBatch(a.tanpa_batch) !== normBatch(row.tanpa_batch)) {
+        if (!a || normBatch(a.tanpa_batch) !== normBatch(row.tanpa_batch)
+          || normSimpan(a.masa_simpan_hari) !== normSimpan(row.masa_simpan_hari)) {
           try {
             await api(`/produk/${row.id_produk}`, {
               method: "PUT",
-              body: JSON.stringify({ tanpa_batch: normBatch(row.tanpa_batch) }),
+              body: JSON.stringify({
+                tanpa_batch: normBatch(row.tanpa_batch),
+                masa_simpan_hari: normSimpan(row.masa_simpan_hari),
+              }),
             });
           } catch (e) {
             if ((e as Error).message !== "Tidak ada perubahan") throw e;
@@ -231,7 +254,8 @@ export default function PengaturanProdukPage() {
           )}
         </div>
         <div className="ppeng-note">
-          Atur sesukamu untuk lokasi <strong>{lok || "-"}</strong> — Tanpa Batch, FEFO, dan urutan blok (no. 1 diambil paling dulu).
+          Atur sesukamu untuk lokasi <strong>{lok || "-"}</strong> — Tanpa Batch, masa simpan (1–5 tahun), FEFO, dan urutan blok (no. 1 diambil paling dulu).
+          Tanggal produksi inbound dihitung otomatis: <strong>Best Before − masa simpan</strong> (default 2 tahun).
           Lalu tekan <strong>Simpan Semua</strong> di bawah halaman untuk menyimpan sekaligus.
           Produk tanpa pengaturan memakai default: Mobil → Receh → Transit → Reguler + FEFO aktif.
         </div>
@@ -246,6 +270,7 @@ export default function PengaturanProdukPage() {
               <tr>
                     <th>Produk</th>
                     <th>Tanpa Batch</th>
+                    <th>Masa Simpan</th>
                     <th>Ikut FEFO</th>
                     <th>Urutan Pengambilan Blok</th>
                 <th>Status</th>
@@ -274,6 +299,26 @@ export default function PengaturanProdukPage() {
                         <div style={{ fontSize: 12, fontWeight: 800 }}>{isBatchOff(row.tanpa_batch) ? "Ya" : "Tidak"}</div>
                         <div style={{ fontSize: 10, color: "#94A3B8", fontWeight: 600 }}>
                           {isBatchOff(row.tanpa_batch) ? "BB otomatis 9999" : "BB wajib diisi"}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <select
+                        className="ppeng-num"
+                        value={hariKeTahun(row.masa_simpan_hari)}
+                        disabled={menyimpan}
+                        title="Masa simpan produk (Produksi = BB − masa simpan)"
+                        onChange={(e) => patchRow(row.id_produk, { masa_simpan_hari: tahunKeHari(e.target.value) })}
+                      >
+                        {TAHUN_OPSI.map((t) => (
+                          <option key={t} value={t}>{t} tahun</option>
+                        ))}
+                      </select>
+                      <div style={{ lineHeight: 1.3 }}>
+                        <div style={{ fontSize: 10, color: "#94A3B8", fontWeight: 600 }}>
+                          {normSimpan(row.masa_simpan_hari)} hari
                         </div>
                       </div>
                     </div>

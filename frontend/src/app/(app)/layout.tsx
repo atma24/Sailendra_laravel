@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Sidebar from "@/components/Sidebar";
@@ -68,6 +68,28 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- route change must reset sheet UI state
     setSidebarOpen(false);
+  }, [pathname]);
+
+  // Reset filter inbound/outbound saat pengguna membuka halaman lain.
+  // Filter tetap bertahan saat bolak-balik /inbound → driver → detail
+  // (dan begitu pula /outbound → driver → detail).
+  const prevPath = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevPath.current || "";
+    const cur = pathname || "";
+    if (prev.startsWith("/inbound") && !cur.startsWith("/inbound")) {
+      try {
+        sessionStorage.removeItem("sailendra_inbound_filter_v1");
+        sessionStorage.removeItem("sailendra_inbound_driver_sort_v1");
+      } catch { /* abaikan */ }
+    }
+    if (prev.startsWith("/outbound") && !cur.startsWith("/outbound")) {
+      try {
+        sessionStorage.removeItem("sailendra_outbound_filter_v1");
+        sessionStorage.removeItem("sailendra_outbound_driver_sort_v1");
+      } catch { /* abaikan */ }
+    }
+    prevPath.current = pathname;
   }, [pathname]);
 
   // Kunci scroll body + tombol Escape saat sheet terbuka.

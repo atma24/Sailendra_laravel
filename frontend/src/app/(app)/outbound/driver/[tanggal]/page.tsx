@@ -71,7 +71,22 @@ const css = `
 .driver-sub { font-size: 10px; font-weight: 750; color: var(--text-soft); line-height: 1.3; }
 .outbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; }
 .status-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 900; white-space: nowrap; }
+.outbound-sort-row { display: flex; align-items: center; gap: 6px; padding: 0 8px 8px; }
+.outbound-sort-label { font-size: 10px; font-weight: 850; color: var(--text-soft); white-space: nowrap; }
+.outbound-sort-select { height: 29px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 8px; font-size: 11px; font-weight: 800; color: var(--text-main); outline: none; cursor: pointer; max-width: 100%; }
+.outbound-sort-select:focus { border-color: var(--primary); background: #FFFFFF; }
 `;
+
+const SORT_KEY = "sailendra_outbound_driver_sort_v1";
+const SORT_OPTIONS = [
+  { v: "nama-az", label: "Nama A–Z" },
+  { v: "nama-za", label: "Nama Z–A" },
+  { v: "baru", label: "Paling baru" },
+  { v: "lama", label: "Paling lama" },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]["v"];
+const isSortKey = (v: unknown): v is SortKey =>
+  SORT_OPTIONS.some((o) => o.v === v);
 
 const STATUS_OPTIONS = [
   { v: "", label: "Semua" },
@@ -93,11 +108,28 @@ export default function OutboundDriverPage() {
   const lok = searchParams.get("lok") || "";
   const statusFilter = searchParams.get("status") || "";
   const tipeFilter = searchParams.get("tipe") || "";
+  const tipeDetailRaw = searchParams.get("tipe_detail") || "";
+  const tipeDetailList = tipeDetailRaw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const [rows, setRows] = useState<BkRow[]>([]);
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [hapusTarget, setHapusTarget] = useState<HapusTarget | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState<SortKey>(() => {
+    if (typeof window === "undefined") return "nama-az";
+    try {
+      const s = sessionStorage.getItem(SORT_KEY);
+      return isSortKey(s) ? s : "nama-az";
+    } catch {
+      return "nama-az";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SORT_KEY, sort);
+    } catch { /* abaikan */ }
+  }, [sort]);
 
   useEffect(() => {
     if (!session || !tanggal) return;
@@ -162,7 +194,15 @@ export default function OutboundDriverPage() {
 
   const kw = q.trim().toLowerCase();
   const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const kategoriOf = (r: BkRow): string => {
+    const t = tipeNorm(r.tipe_pengeluaran);
+    if (t === "SECONDARY") return "secondary";
+    if (t === "FOC") return "foc";
+    if (t === "PEMUSNAHAN") return "pemusnahan";
+    return "primary";
+  };
   const matchTipe = (r: BkRow) => {
+    if (tipeDetailList.length > 0) return tipeDetailList.includes(kategoriOf(r));
     if (!tipeFilter) return true;
     const t = tipeNorm(r.tipe_pengeluaran);
     if (tipeFilter === "primary") return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
@@ -173,9 +213,15 @@ export default function OutboundDriverPage() {
     return true;
   };
   const filteredRows = rows.filter(matchTipe);
-  const sectionLabel = tipeFilter === "foc" ? "FOC" : tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "normal" ? "Normal" : "";
+  const detailLabelMap: Record<string, string> = { primary: "Primary", secondary: "Secondary", foc: "FOC", pemusnahan: "Pemusnahan" };
+  const detailLabel = tipeDetailList.length > 0
+    ? (tipeDetailList.length <= 2 ? tipeDetailList.map((t) => detailLabelMap[t] || t).join(" + ") : `${tipeDetailList.length} tipe`)
+    : "";
+  const sectionLabel = detailLabel
+    || (tipeFilter === "foc" ? "FOC" : tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "normal" ? "Normal" : "");
   const driverMap: Record<string, DriverItem> = {};
   const hapusMap: Record<string, { id: number; id_lokasi: string }[]> = {};
+  const driverMaxId: Record<string, number> = {};
   filteredRows.forEach((row) => {
     const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";
     if (kw !== "" && !nama.toLowerCase().includes(kw)) return;
@@ -185,9 +231,11 @@ export default function OutboundDriverPage() {
         no_mobil: row.no_mobil || "", status: row.status || "", _semua_selesai: true, _semua_batal: true,
       } as DriverItem & { _semua_batal: boolean };
       hapusMap[nama] = [];
+      driverMaxId[nama] = 0;
     }
     driverMap[nama].total_item++;
     driverMap[nama].total_qty += angka(row.jumlah);
+    if (angka(row.id_barang_keluar) > (driverMaxId[nama] || 0)) driverMaxId[nama] = angka(row.id_barang_keluar);
     if (!driverMap[nama].no_mobil && row.no_mobil) driverMap[nama].no_mobil = row.no_mobil;
     const st = (row.status || "").toLowerCase();
     if (st !== "selesai" && st !== "confirmed") driverMap[nama]._semua_selesai = false;
@@ -214,7 +262,20 @@ export default function OutboundDriverPage() {
   });
   const totalDriverAll = Object.keys(driverMap).length;
 
-  let driverList = Object.values(driverMap).sort((a, b) => a.nama_driver.localeCompare(b.nama_driver, "id"));
+  const sortDrivers = (arr: DriverItem[]) => {
+    const by = [...arr];
+    switch (sort) {
+      case "nama-za":
+        return by.sort((a, b) => b.nama_driver.localeCompare(a.nama_driver, "id"));
+      case "baru":
+        return by.sort((a, b) => (driverMaxId[b.nama_driver] || 0) - (driverMaxId[a.nama_driver] || 0));
+      case "lama":
+        return by.sort((a, b) => (driverMaxId[a.nama_driver] || 0) - (driverMaxId[b.nama_driver] || 0));
+      default:
+        return by.sort((a, b) => a.nama_driver.localeCompare(b.nama_driver, "id"));
+    }
+  };
+  let driverList = sortDrivers(Object.values(driverMap));
   if (statusFilter !== "") driverList = driverList.filter((d) => d.status.toLowerCase() === statusFilter.toLowerCase());
 
   const buildUrl = (sv: string) => {
@@ -222,12 +283,13 @@ export default function OutboundDriverPage() {
     if (q.trim()) p.set("q", q.trim());
     if (lok) p.set("lok", lok);
     if (sv) p.set("status", sv);
+    if (tipeDetailRaw) p.set("tipe_detail", tipeDetailRaw);
     if (tipeFilter) p.set("tipe", tipeFilter);
     const qs = p.toString();
     return `/outbound/driver/${encodeURIComponent(tanggal)}${qs ? `?${qs}` : ""}`;
   };
 
-  const backHref = `/outbound${lok ? `?lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `${lok ? "&" : "?"}tipe=${tipeFilter}` : ""}`;
+  const backHref = `/outbound`;
 
   return (
     <div className="outbound-page">
@@ -266,6 +328,14 @@ export default function OutboundDriverPage() {
             );
           })}
         </div>
+        <div className="outbound-sort-row">
+          <span className="outbound-sort-label"><i className="bi bi-sort-down"></i> Urutan</span>
+          <select className="outbound-sort-select" value={sort} onChange={(e) => { if (isSortKey(e.target.value)) setSort(e.target.value); }} aria-label="Urutan tampilan">
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.v} value={o.v}>{o.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {driverList.length === 0 ? (
@@ -278,7 +348,7 @@ export default function OutboundDriverPage() {
             return (
               <div key={d.nama_driver} className="outbound-card outbound-driver-card">
                 <Link className="outbound-driver-link"
-                  href={`/outbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${tipeFilter ? `&tipe=${tipeFilter}` : ""}`}>
+                  href={`/outbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${tipeDetailRaw ? `&tipe_detail=${encodeURIComponent(tipeDetailRaw)}` : ""}${tipeFilter ? `&tipe=${tipeFilter}` : ""}`}>
                   <div className="driver-top">
                     <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
                     <div style={{ flex: 1, minWidth: 0 }}>

@@ -48,12 +48,16 @@ export type KategoriItem = {
 
 export type ExpiredRow = {
   nama_produk: string;
+  batch?: string | null;
   qty: number;
   best_before: string;
   production_date: string | null;
   production_fallback?: boolean;
+  tanggal_masuk?: string | null;
+  lokasi?: string | null;
   aging_hari: number | null;
   sisa_hari: number | null;
+  status?: string;
   expired: boolean;
 };
 

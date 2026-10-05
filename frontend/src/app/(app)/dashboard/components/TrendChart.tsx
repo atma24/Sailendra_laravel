@@ -31,16 +31,24 @@ type Props = {
 };
 
 export default function TrendChart({ data, height = 280 }: Props) {
+  // Mode sebulan (28–31 titik) butuh bar lebih ramping + label dijarangkan otomatis.
+  const dense = data.length > 10;
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ left: -12, right: 8, top: 4 }} barGap={2}>
+      <BarChart
+        data={data}
+        margin={{ left: -12, right: 8, top: 4 }}
+        barGap={dense ? 1 : 2}
+        barCategoryGap={dense ? "28%" : "35%"}
+      >
         <CartesianGrid stroke={COLORS.grid} vertical={false} />
         <XAxis
           dataKey="label"
           tick={{ fontSize: 11, fill: COLORS.text }}
           axisLine={{ stroke: COLORS.grid }}
           tickLine={false}
-          interval={0}
+          interval={dense ? "preserveStartEnd" : 0}
+          minTickGap={dense ? 8 : 0}
         />
         <YAxis
           tick={{ fontSize: 11, fill: COLORS.text }}
@@ -70,8 +78,8 @@ export default function TrendChart({ data, height = 280 }: Props) {
           formatter={(v) => (v === "planned" ? "Planned" : "Terkonfirmasi")}
           wrapperStyle={{ fontSize: 11.5 }}
         />
-        <Bar dataKey="planned" fill={COLORS.planned} radius={[4, 4, 0, 0]} barSize={16} />
-        <Bar dataKey="actual" fill={COLORS.actual} radius={[4, 4, 0, 0]} barSize={16} />
+        <Bar dataKey="planned" fill={COLORS.planned} radius={[4, 4, 0, 0]} barSize={dense ? 6 : 16} />
+        <Bar dataKey="actual" fill={COLORS.actual} radius={[4, 4, 0, 0]} barSize={dense ? 6 : 16} />
       </BarChart>
     </ResponsiveContainer>
   );

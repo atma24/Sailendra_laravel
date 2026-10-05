@@ -75,7 +75,22 @@ const css = `
 .inbound-status-chip .chip-count { font-size: 9px; font-weight: 900; background: rgba(0,0,0,0.06); border-radius: 999px; padding: 1px 6px; }
 .inbound-status-chip.is-active .chip-count { background: rgba(255,255,255,0.22); }
 .status-badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.inbound-sort-row { display: flex; align-items: center; gap: 6px; padding: 0 8px 8px; }
+.inbound-sort-label { font-size: 10px; font-weight: 850; color: var(--text-soft); white-space: nowrap; }
+.inbound-sort-select { height: 29px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 8px; font-size: 11px; font-weight: 800; color: var(--text-main); outline: none; cursor: pointer; max-width: 100%; }
+.inbound-sort-select:focus { border-color: var(--primary); background: #FFFFFF; }
 `;
+
+const SORT_KEY = "sailendra_inbound_driver_sort_v1";
+const SORT_OPTIONS = [
+  { v: "nama-az", label: "Nama A–Z" },
+  { v: "nama-za", label: "Nama Z–A" },
+  { v: "baru", label: "Paling baru" },
+  { v: "lama", label: "Paling lama" },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]["v"];
+const isSortKey = (v: unknown): v is SortKey =>
+  SORT_OPTIONS.some((o) => o.v === v);
 
 export default function InboundDriverPage() {
   const params = useParams<{ tanggal: string }>();
@@ -89,10 +104,37 @@ export default function InboundDriverPage() {
   const [rows, setRows] = useState<BmRow[]>([]);
   const [q, setQ] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [sort, setSort] = useState<SortKey>(() => {
+    if (typeof window === "undefined") return "nama-az";
+    try {
+      const s = sessionStorage.getItem(SORT_KEY);
+      return isSortKey(s) ? s : "nama-az";
+    } catch {
+      return "nama-az";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SORT_KEY, sort);
+    } catch { /* abaikan */ }
+  }, [sort]);
   const sumberFilter = searchParams.get("sumber") || "";
   const tipeFilter = searchParams.get("tipe") || "";
+  const tipeDetailRaw = searchParams.get("tipe_detail") || "";
+  const tipeDetailList = tipeDetailRaw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const kategoriOf = (r: BmRow): string => {
+    const t = tipeNorm(r.tipe_penerimaan);
+    const auto = (r.catatan || "").includes("Auto dari Outbound");
+    if (t === "SECONDARY") return auto ? "secondary_outbound" : "secondary_manual";
+    if (t === "FOC") return auto ? "foc_outbound" : "foc_manual";
+    if (t === "PRIMARY XWH") return "xwh";
+    if (t === "REJECT") return "reject";
+    return "primary";
+  };
   const matchTipe = (r: BmRow) => {
+    if (tipeDetailList.length > 0) return tipeDetailList.includes(kategoriOf(r));
     if (!tipeFilter) return true;
     const t = tipeNorm(r.tipe_penerimaan);
     if (tipeFilter === "primary") return t === "PRIMARY" || t === "REJECT" || t === "";
@@ -136,9 +178,15 @@ export default function InboundDriverPage() {
   const bySumber = sumberFilter === "outbound" ? rows.filter(isAutoOutbound) : sumberFilter === "normal" ? rows.filter((r) => !isAutoOutbound(r)) : rows;
   const filteredRows = bySumber.filter(matchTipe);
   const tipeLabel = tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "xwh" ? "XWH" : tipeFilter === "foc" ? "FOC" : "";
-  const sectionLabel = sumberFilter === "outbound" ? `Dari Outbound${tipeLabel ? ` · ${tipeLabel}` : ""}` : sumberFilter === "normal" ? `${tipeLabel || "Normal"}` : tipeLabel;
+  const detailLabelMap: Record<string, string> = { primary: "Primary", secondary_manual: "Secondary Manual", secondary_outbound: "Secondary Dari Outbound", xwh: "XWH", foc_manual: "FOC Manual", foc_outbound: "FOC Dari Outbound", reject: "REJECT" };
+  const detailLabel = tipeDetailList.length > 0
+    ? (tipeDetailList.length <= 2 ? tipeDetailList.map((t) => detailLabelMap[t] || t).join(" + ") : `${tipeDetailList.length} tipe`)
+    : "";
+  const baseLabel = detailLabel || tipeLabel;
+  const sectionLabel = sumberFilter === "outbound" ? `Dari Outbound${baseLabel ? ` · ${baseLabel}` : ""}` : sumberFilter === "normal" ? `${baseLabel || "Normal"}` : baseLabel;
   // Satu kartu per (driver + shipment_id), mirip GIN di outbound
   const shipMap: Record<string, ShipmentItem> = {};
+  const shipMaxId: Record<string, number> = {};
   filteredRows.forEach((row) => {
     const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";
     const ship = (row.shipment_id || "").trim() || "Tanpa Shipment";
@@ -146,9 +194,11 @@ export default function InboundDriverPage() {
     const key = `${nama}::${ship}`;
     if (!shipMap[key]) {
       shipMap[key] = { nama_driver: nama, shipment_id: ship, total_item: 0, total_qty: 0, no_mobil: row.no_mobil || "", no_dn: row.no_dn || "", status: row.status || "", _semua_selesai: true, _semua_batal: true } as ShipmentItem & { _semua_batal: boolean };
+      shipMaxId[key] = 0;
     }
     shipMap[key].total_item++;
     shipMap[key].total_qty += angka(row.jumlah);
+    if (angka(row.id_barang_masuk) > (shipMaxId[key] || 0)) shipMaxId[key] = angka(row.id_barang_masuk);
     if (!shipMap[key].no_mobil && row.no_mobil) shipMap[key].no_mobil = row.no_mobil;
     if (!shipMap[key].no_dn && row.no_dn) shipMap[key].no_dn = row.no_dn;
     const st = (row.status || "").toLowerCase();
@@ -173,7 +223,20 @@ export default function InboundDriverPage() {
   });
   const totalShipAll = Object.keys(shipMap).length;
 
-  let shipmentList = Object.values(shipMap).sort((a, b) => a.nama_driver.localeCompare(b.nama_driver, "id") || a.shipment_id.localeCompare(b.shipment_id, "id"));
+  const sortShipments = (arr: ShipmentItem[]) => {
+    const by = [...arr];
+    switch (sort) {
+      case "nama-za":
+        return by.sort((a, b) => b.nama_driver.localeCompare(a.nama_driver, "id") || b.shipment_id.localeCompare(a.shipment_id, "id"));
+      case "baru":
+        return by.sort((a, b) => (shipMaxId[`${b.nama_driver}::${b.shipment_id}`] || 0) - (shipMaxId[`${a.nama_driver}::${a.shipment_id}`] || 0));
+      case "lama":
+        return by.sort((a, b) => (shipMaxId[`${a.nama_driver}::${a.shipment_id}`] || 0) - (shipMaxId[`${b.nama_driver}::${b.shipment_id}`] || 0));
+      default:
+        return by.sort((a, b) => a.nama_driver.localeCompare(b.nama_driver, "id") || a.shipment_id.localeCompare(b.shipment_id, "id"));
+    }
+  };
+  let shipmentList = sortShipments(Object.values(shipMap));
   if (statusFilter !== "") shipmentList = shipmentList.filter((d) => d.status.toLowerCase() === statusFilter.toLowerCase());
 
   const buildUrl = (sv: string) => {
@@ -181,18 +244,14 @@ export default function InboundDriverPage() {
     if (q.trim()) p.set("q", q.trim());
     if (lok) p.set("lok", lok);
     if (sv) p.set("status", sv);
+    if (tipeDetailRaw) p.set("tipe_detail", tipeDetailRaw);
     if (sumberFilter) p.set("sumber", sumberFilter);
     if (tipeFilter) p.set("tipe", tipeFilter);
     const qs = p.toString();
     return `/inbound/driver/${encodeURIComponent(tanggal)}${qs ? `?${qs}` : ""}`;
   };
 
-  const backQs = new URLSearchParams();
-  if (lok) backQs.set("lok", lok);
-  if (sumberFilter) backQs.set("sumber", sumberFilter);
-  if (tipeFilter) backQs.set("tipe", tipeFilter);
-  const backQsStr = backQs.toString();
-  const backHref = `/inbound${backQsStr ? `?${backQsStr}` : ""}`;
+  const backHref = `/inbound`;
 
   return (
     <div className="inbound-page">
@@ -231,6 +290,14 @@ export default function InboundDriverPage() {
             );
           })}
         </div>
+        <div className="inbound-sort-row">
+          <span className="inbound-sort-label"><i className="bi bi-sort-down"></i> Urutan</span>
+          <select className="inbound-sort-select" value={sort} onChange={(e) => { if (isSortKey(e.target.value)) setSort(e.target.value); }} aria-label="Urutan tampilan">
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.v} value={o.v}>{o.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {shipmentList.length === 0 ? (
@@ -241,7 +308,7 @@ export default function InboundDriverPage() {
             const ss = statusStyle(d.status);
             return (
             <Link key={`${d.nama_driver}::${d.shipment_id}`} className="inbound-card inbound-driver-card"
-              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${sumberFilter ? `&sumber=${sumberFilter}` : ""}${tipeFilter ? `&tipe=${tipeFilter}` : ""}`}>
+              href={`/inbound/detail/${encodeURIComponent(tanggal)}?driver=${encodeURIComponent(d.nama_driver)}${d.shipment_id && d.shipment_id !== "Tanpa Shipment" ? `&shipment=${encodeURIComponent(d.shipment_id)}` : ""}${lok ? `&lok=${encodeURIComponent(lok)}` : ""}${tipeDetailRaw ? `&tipe_detail=${encodeURIComponent(tipeDetailRaw)}` : ""}${sumberFilter ? `&sumber=${sumberFilter}` : ""}${tipeFilter ? `&tipe=${tipeFilter}` : ""}`}>
               <div className="driver-top">
                 <i className="bi bi-truck" style={{ color: "var(--primary)", fontSize: 16 }}></i>
                 <div style={{ flex: 1, minWidth: 0 }}>

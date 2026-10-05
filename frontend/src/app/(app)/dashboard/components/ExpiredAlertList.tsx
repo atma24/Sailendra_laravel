@@ -16,6 +16,15 @@ const MODE_OPTS: { value: ExpiredMode; label: string }[] = [
   { value: "all", label: "All Time" },
 ];
 
+const statusClass = (status: unknown, expired: boolean) => {
+  const s = String(status || (expired ? "Expired" : "Fresh"));
+  if (s === "Expired" || expired)
+    return "bg-red-100 text-red-700";
+  if (s === "Warning")
+    return "bg-amber-100 text-amber-700";
+  return "bg-green-100 text-green-700";
+};
+
 export default function ExpiredAlertList({
   rows,
   mode = "h30",
@@ -68,36 +77,36 @@ export default function ExpiredAlertList({
           }
         />
       ) : (
-        <div className="max-h-[340px] overflow-y-auto">
-          <table className="w-full text-[12px]">
+        <div className="max-h-[340px] overflow-auto">
+          <table className="w-full min-w-[880px] text-[12px]">
             <thead className="sticky top-0 bg-white">
               <tr className="border-b border-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-2 font-semibold">Product</th>
-                <th className="py-2 pr-2 text-right font-semibold">Qty</th>
-                <th className="py-2 pr-2 font-semibold">Expired Date</th>
-                <th className="py-2 pr-2 font-semibold">Production Date</th>
-                <th className="py-2 text-right font-semibold">Aging Day</th>
-                <th className="py-2 text-right font-semibold">Waktu Menuju Exp</th>
+                <th className="py-2 pr-2 font-semibold">Produk</th>
+                <th className="py-2 pr-2 font-semibold">Batch</th>
+                <th className="py-2 pr-2 font-semibold">Tgl Produksi</th>
+                <th className="py-2 pr-2 font-semibold">Tgl Inbound</th>
+                <th className="py-2 pr-2 font-semibold">Best Before</th>
+                <th className="py-2 pr-2 font-semibold">Lokasi</th>
+                <th className="py-2 pr-2 text-right font-semibold">Kuantiti</th>
+                <th className="py-2 pr-2 text-right font-semibold">Aging (Hari)</th>
+                <th className="py-2 text-right font-semibold">Status</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => {
                 const aging = r.aging_hari;
-                const sisa = r.sisa_hari ?? null;
                 const isFallback = Boolean(r.production_fallback);
+                const status = r.status || (r.expired ? "Expired" : "Fresh");
                 return (
                   <tr
-                    key={`${r.nama_produk}-${r.best_before}-${i}`}
+                    key={`${r.nama_produk}-${r.batch || ""}-${r.best_before}-${i}`}
                     className="border-b border-slate-50 last:border-0"
                   >
-                    <td className="max-w-[220px] truncate py-2 pr-2 font-medium text-slate-700">
+                    <td className="max-w-[180px] truncate py-2 pr-2 font-medium text-slate-700">
                       {r.nama_produk}
                     </td>
-                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">
-                      {fmt(r.qty)}
-                    </td>
                     <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">
-                      {fmtTanggalSlash(r.best_before)}
+                      {r.batch || "-"}
                     </td>
                     <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">
                       {fmtTanggalSlash(r.production_date)}
@@ -110,26 +119,31 @@ export default function ExpiredAlertList({
                         </span>
                       ) : undefined}
                     </td>
-                    <td className="py-2 text-right">
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">
-                        {aging === null || aging === undefined
-                          ? "-"
-                          : `${fmt(aging)} day`}
-                      </span>
+                    <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">
+                      {fmtTanggalSlash(r.tanggal_masuk)}
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">
+                      {fmtTanggalSlash(r.best_before)}
+                    </td>
+                    <td className="max-w-[140px] truncate py-2 pr-2 text-slate-500">
+                      {r.lokasi || "-"}
+                    </td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">
+                      {fmt(r.qty)}
+                    </td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-700">
+                      {aging === null || aging === undefined ? "-" : fmt(aging)}
                     </td>
                     <td className="py-2 text-right">
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${
-                          sisa === null || sisa === undefined
-                            ? "bg-slate-100 text-slate-500"
-                            : r.expired
-                              ? "bg-red-100 text-red-700"
-                              : "bg-slate-100 text-slate-600"
-                        }`}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${statusClass(status, r.expired)}`}
+                        title={
+                          r.sisa_hari === null || r.sisa_hari === undefined
+                            ? undefined
+                            : `Sisa ${fmt(r.sisa_hari)} hari ke best before`
+                        }
                       >
-                        {sisa === null || sisa === undefined
-                          ? "-"
-                          : `${fmt(sisa)} day`}
+                        {status}
                       </span>
                     </td>
                   </tr>

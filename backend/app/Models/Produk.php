@@ -12,7 +12,7 @@ class Produk extends Model
 
     public $timestamps = false;
 
-    protected $fillable = ['id_produk', 'nama_produk', 'satuan', 'isi_per_pcs', 'tanpa_batch', 'created_at'];
+    protected $fillable = ['id_produk', 'nama_produk', 'satuan', 'isi_per_pcs', 'tanpa_batch', 'masa_simpan_hari', 'created_at'];
 
-    protected $casts = ['tanpa_batch' => 'boolean'];
+    protected $casts = ['tanpa_batch' => 'boolean', 'masa_simpan_hari' => 'integer'];
 }

@@ -7,7 +7,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import { useToast } from "@/components/ToastProvider";
 
-type Produk = { id_produk: number; nama_produk: string; satuan: string };
+type Produk = { id_produk: number; nama_produk: string; satuan: string; masa_simpan_hari?: number };
 
 type BmRow = {
   id_barang_masuk: number;
@@ -178,8 +178,20 @@ export default function InboundDetailPage() {
   const lok = searchParams.get("lok") || "";
   const sumberFilter = searchParams.get("sumber") || "";
   const tipeFilter = searchParams.get("tipe") || "";
+  const tipeDetailParam = searchParams.get("tipe_detail") || "";
+  const tipeDetailList = tipeDetailParam.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+  const kategoriOf = (x: BmRow): string => {
+    const t = tipeNorm(x.tipe_penerimaan);
+    const auto = (x.catatan || "").includes("Auto dari Outbound");
+    if (t === "SECONDARY") return auto ? "secondary_outbound" : "secondary_manual";
+    if (t === "FOC") return auto ? "foc_outbound" : "foc_manual";
+    if (t === "PRIMARY XWH") return "xwh";
+    if (t === "REJECT") return "reject";
+    return "primary";
+  };
   const matchTipe = (x: BmRow) => {
+    if (tipeDetailList.length > 0) return tipeDetailList.includes(kategoriOf(x));
     if (!tipeFilter) return true;
     const t = tipeNorm(x.tipe_penerimaan);
     if (tipeFilter === "primary") return t === "PRIMARY" || t === "REJECT" || t === "";
@@ -332,7 +344,13 @@ export default function InboundDetailPage() {
           const isAutoOut = (x.catatan || "").includes("Auto dari Outbound");
           const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
           const t = String(x.tipe_penerimaan ?? "").trim().toUpperCase();
-          const sameTipe = !tipeFilter
+          const autoOut = (x.catatan || "").includes("Auto dari Outbound");
+          const kat = t === "SECONDARY" ? (autoOut ? "secondary_outbound" : "secondary_manual")
+            : t === "FOC" ? (autoOut ? "foc_outbound" : "foc_manual")
+            : t === "PRIMARY XWH" ? "xwh" : t === "REJECT" ? "reject" : "primary";
+          const detailArr = tipeDetailParam.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+          const sameTipe = detailArr.length > 0 ? detailArr.includes(kat)
+            : !tipeFilter
             || (tipeFilter === "primary" && (t === "PRIMARY" || t === "REJECT" || t === ""))
             || (tipeFilter === "secondary" && t === "SECONDARY")
             || (tipeFilter === "xwh" && t === "PRIMARY XWH")
@@ -357,7 +375,7 @@ export default function InboundDetailPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, tanggal, lok, driver, shipment, sumberFilter, tipeFilter, multi]);
+  }, [session, tanggal, lok, driver, shipment, sumberFilter, tipeFilter, tipeDetailParam, multi]);
 
   if (!session || !loaded) return null;
 
@@ -381,6 +399,7 @@ export default function InboundDetailPage() {
   const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
   const backQs = new URLSearchParams();
   if (lok) backQs.set("lok", lok);
+  if (tipeDetailList.length > 0) backQs.set("tipe_detail", tipeDetailList.join(","));
   if (sumberFilter) backQs.set("sumber", sumberFilter);
   if (tipeFilter) backQs.set("tipe", tipeFilter);
   const backQsStr = backQs.toString();
@@ -397,17 +416,28 @@ export default function InboundDetailPage() {
   const globalStatus = isCanceledAll ? 'Canceled' : hasDraft ? 'Draft' : hasPendingLegacy ? 'Pending' : 'Selesai';
   const ss = statusStyle(globalStatus);
 
-  // Tanggal produksi otomatis = best before − 2 tahun (per item).
-  const produksiDariBb = (bb: unknown): string => {
+  // Tanggal produksi otomatis = best before − masa simpan produk (per item).
+  const masaSimpanOf = (idProduk: unknown): number => {
+    const id = Number(idProduk ?? 0);
+    const found = produkList.find((p) => Number(p.id_produk) === id);
+    const n = Number(found?.masa_simpan_hari ?? 730);
+    return Number.isFinite(n) && n > 0 ? Math.min(3650, Math.round(n)) : 730;
+  };
+  const produksiDariBb = (bb: unknown, idProduk?: unknown): string => {
     const v = norm(bb).slice(0, 10);
     if (!v || v >= "9999-01-01") return "-";
     const d = new Date(v + "T00:00:00");
     if (isNaN(d.getTime())) return "-";
-    d.setFullYear(d.getFullYear() - 2);
+    const hari = masaSimpanOf(idProduk);
+    if (hari % 365 === 0 && hari / 365 >= 1 && hari / 365 <= 5) {
+      d.setFullYear(d.getFullYear() - hari / 365);
+    } else {
+      d.setDate(d.getDate() - hari);
+    }
     const pad = (n: number) => n.toString().padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   };
-  const tpHint = showItem ? produksiDariBb(showItem.best_before) : "-";
+  const tpHint = showItem ? produksiDariBb(showItem.best_before, (showItem as BmRow).id_produk) : "-";
 
   const getTimerPayload = () => {
     let waktuMulaiStr: string | undefined = undefined;
@@ -826,7 +856,7 @@ export default function InboundDetailPage() {
                     </div>
                     <div className="id-rencana-meta">
                       Batch: {norm(item.batch) || "-"} | BB: {norm(item.best_before) || "-"}
-                      {produksiDariBb(item.best_before) !== "-" && <> | Produksi: {produksiDariBb(item.best_before)}</>}
+                      {produksiDariBb(item.best_before, item.id_produk) !== "-" && <> | Produksi: {produksiDariBb(item.best_before, item.id_produk)}</>}
                     </div>
                   </div>
                 )}
@@ -857,9 +887,9 @@ export default function InboundDetailPage() {
                     {draftSaveState[item.id_barang_masuk] === "error" && (
                       <div style={{ marginTop: 4, fontSize: 10, fontWeight: 750, color: "#DC2626" }}>Gagal tersimpan otomatis — coba isi ulang</div>
                     )}
-                    {!(isItemReject || noBatch) && produksiDariBb(draftBb[item.id_barang_masuk] || item.best_before) !== "-" && (
+                    {!(isItemReject || noBatch) && produksiDariBb(draftBb[item.id_barang_masuk] || item.best_before, item.id_produk) !== "-" && (
                       <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: "#64748B" }}>
-                        Tanggal Produksi: {produksiDariBb(draftBb[item.id_barang_masuk] || item.best_before)} (otomatis)
+                        Tanggal Produksi: {produksiDariBb(draftBb[item.id_barang_masuk] || item.best_before, item.id_produk)} (otomatis)
                       </div>
                     )}
                     {((["SECONDARY", "FOC"].includes((item.tipe_penerimaan || "").toUpperCase()))) && (
@@ -932,7 +962,7 @@ export default function InboundDetailPage() {
               <div className="dialog-field">
                 <label>Tanggal Produksi (otomatis)</label>
                 <input type="date" value={tpHint} readOnly disabled />
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B" }}>Dihitung otomatis dari Best Before − 2 tahun.</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#64748B" }}>Dihitung otomatis dari Best Before − masa simpan produk.</div>
               </div>
               <div className="dialog-field">
                 <label>No Mobil</label>

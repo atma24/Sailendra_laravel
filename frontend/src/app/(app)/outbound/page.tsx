@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
-import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
+import Pagination, { paginate, totalPagesOf } from "@/components/Pagination";
 import { useToast } from "@/components/ToastProvider";
 
 type BkRow = {
@@ -17,103 +17,100 @@ type BkRow = {
   tanggal_keluar: string;
   nama_driver: string;
   status: string;
+  catatan: string;
   tipe_pengeluaran: string;
 };
 
-type TanggalItem = { tanggal: string; total_item: number; total_qty: number };
+type TanggalItem = {
+  tanggal: string;
+  total_item: number;
+  total_qty: number;
+  breakdown: Record<string, number>;
+};
+
+const PAGE_SIZE_LOCAL = 10;
+const FILTER_KEY = "sailendra_outbound_filter_v1";
+
+const TIPE_OPTIONS = [
+  { v: "primary", label: "Primary", dot: "#1D4ED8" },
+  { v: "secondary", label: "Secondary", dot: "#D97706" },
+  { v: "foc", label: "FOC", dot: "#DB2777" },
+  { v: "pemusnahan", label: "Pemusnahan", dot: "#991B1B" },
+] as const;
+
+type SavedFilter = { q: string; tipe: string[]; dari: string; sampai: string };
+
+const loadSaved = (): SavedFilter => {
+  try {
+    const raw = sessionStorage.getItem(FILTER_KEY);
+    if (!raw) return { q: "", tipe: [], dari: "", sampai: "" };
+    const p = JSON.parse(raw) as Partial<SavedFilter>;
+    const validTipe: string[] = TIPE_OPTIONS.map((o) => o.v);
+    return {
+      q: typeof p.q === "string" ? p.q : "",
+      tipe: Array.isArray(p.tipe) ? p.tipe.filter((t) => validTipe.includes(t)) : [],
+      dari: typeof p.dari === "string" ? p.dari.slice(0, 10) : "",
+      sampai: typeof p.sampai === "string" ? p.sampai.slice(0, 10) : "",
+    };
+  } catch {
+    return { q: "", tipe: [], dari: "", sampai: "" };
+  }
+};
 
 const angka = (v: unknown) => {
   const n = parseInt(String(v ?? ""), 10);
   return isNaN(n) ? 0 : n;
 };
 const dateOnly = (v: unknown) => String(v ?? "").slice(0, 10);
-
-const OUT_ACCENT: Record<string, { card: string; icon: string }> = {
-  primary: { card: "accent-primary", icon: "#1D4ED8" },
-  secondary: { card: "accent-secondary", icon: "#D97706" },
-  foc: { card: "accent-foc", icon: "#DB2777" },
+const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
+const kategoriOf = (r: BkRow): string => {
+  const t = tipeNorm(r.tipe_pengeluaran);
+  if (t === "SECONDARY") return "secondary";
+  if (t === "FOC") return "foc";
+  if (t === "PEMUSNAHAN") return "pemusnahan";
+  return "primary";
 };
-
-function PagedTanggal({ items, emptyMsg, resetKey, section, accent }: { items: TanggalItem[]; emptyMsg: string; resetKey: string; section?: string; accent?: string }) {
-  const [page, setPage] = useState(1);
-  useEffect(() => { setPage(1); }, [resetKey]);
-  if (items.length === 0) {
-    return <div className="outbound-card outbound-empty">{emptyMsg}</div>;
-  }
-  const total = totalPagesOf(items.length, PAGE_SIZE);
-  const paged = paginate(items, page, PAGE_SIZE);
-  const tipeParam = section ? `?tipe=${section}` : "";
-  const acc = OUT_ACCENT[String(accent || section || "primary").toLowerCase()] || OUT_ACCENT.primary;
-  return (
-    <>
-      <div className="outbound-grid">
-        {paged.map((item) => (
-          <Link key={item.tanggal} className={`outbound-card outbound-date-card ${acc.card}`}
-            href={`/outbound/driver/${encodeURIComponent(item.tanggal)}${tipeParam}`}>
-            <div className="outbound-card-top">
-              <i className="bi bi-calendar3" style={{ color: acc.icon, fontSize: 16 }}></i>
-              <div>
-                <div className="outbound-date-title">{item.tanggal}</div>
-                <div className="outbound-meta">{item.total_item} item · {item.total_qty} qty</div>
-              </div>
-              <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
-            </div>
-          </Link>
-        ))}
-      </div>
-      <Pagination page={page} totalPages={total} totalItems={items.length} pageSize={PAGE_SIZE} onChange={setPage} />
-    </>
-  );
-}
+const kategoriLabel = (k: string) => TIPE_OPTIONS.find((o) => o.v === k)?.label || k;
+const kategoriDot = (k: string) => TIPE_OPTIONS.find((o) => o.v === k)?.dot || "#6b7280";
 
 const css = `
 .outbound-page { display: flex; flex-direction: column; gap: 7px; }
 .outbound-card { background: #FFFFFF; border: 1px solid #e9edf5; border-radius: 11px; box-shadow: none; }
-.outbound-toolbar { padding: 8px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; align-items: center; }
-.outbound-search-wrap { position: relative; }
-.outbound-search-input { width: 100%; height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 31px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
+.outbound-toolbar { padding: 8px; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.outbound-search-wrap { position: relative; flex: 1; min-width: 200px; }
+.outbound-search-input { width: 100%; height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 31px 0 12px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
 .outbound-search-input:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
+.outbound-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-soft); border: 0; background: transparent; cursor: pointer; }
+.outbound-reset-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: transparent; border: 1px dashed #cbd5e1; color: var(--text-soft); font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.outbound-reset-btn:hover { color: #DC2626; border-color: #DC2626; }
 .outbound-add-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
 .outbound-add-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
-.outbound-page { scroll-behavior: smooth; }
-.outbound-toolbar-right { display: flex; gap: 7px; }
+.outbound-filter-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.outbound-filter-title { font-size: 11px; font-weight: 900; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.4px; }
+.outbound-tipe-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.outbound-tipe-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: var(--text-main); border: 1px solid #e2e7f0; background: #fbfcff; border-radius: 999px; padding: 5px 11px; cursor: pointer; user-select: none; }
+.outbound-tipe-check input { accent-color: var(--primary); }
+.outbound-tipe-check.is-on { background: var(--primary-soft); border-color: rgba(25,25,112,0.3); }
+.outbound-tipe-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+.outbound-date-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.outbound-date-field { display: flex; flex-direction: column; gap: 4px; }
+.outbound-date-field label { font-size: 10px; font-weight: 850; color: var(--text-soft); }
+.outbound-date-field input { height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
+.outbound-date-field input:focus { background: #FFFFFF; border-color: var(--primary); }
+.outbound-active-hint { font-size: 10px; font-weight: 750; color: var(--text-soft); }
 .outbound-grid { display: flex; flex-direction: column; gap: 7px; }
-.outbound-date-card { padding: 8px 8px 8px 11px; text-decoration: none; color: inherit; display: block; border-left-width: 3px; }
-.outbound-date-card.accent-primary { border-left-color: #3B82F6; }
-.outbound-date-card.accent-secondary { border-left-color: #F59E0B; }
-.outbound-date-card.accent-foc { border-left-color: #EC4899; }
+.outbound-date-card { padding: 8px 8px 8px 11px; text-decoration: none; color: inherit; display: block; border-left: 3px solid #3B82F6; }
 .outbound-date-card:hover { transform: translateY(-1px); border-color: rgba(25,25,112,.18); box-shadow: 0 8px 20px rgba(15,23,42,0.06); }
 .outbound-card-top { display: flex; align-items: center; gap: 8px; }
 .outbound-date-title { font-size: 12px; font-weight: 900; color: var(--text-main); letter-spacing: -0.2px; }
 .outbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; }
 .outbound-meta { font-size: 10px; font-weight: 750; color: var(--text-soft); margin-top: 3px; }
-.outbound-section-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; }
-.outbound-section-divider-line { flex: 1; height: 1px; background: #e5e7eb; }
-.outbound-section-divider-label { font-size: 11px; font-weight: 900; color: #7c3aed; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
-.outbound-section-count { font-size: 10px; font-weight: 800; color: #374151; background: rgba(255,255,255,.85); border: 1px solid rgba(0,0,0,.06); padding: 2px 8px; border-radius: 10px; }
-.outbound-3col { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; align-items: start; }
-.outbound-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; scroll-margin-top: 12px; }
-.outbound-col-head { font-size: 12px; font-weight: 900; color: var(--text-main); display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; border: 1px solid #e9edf5; background: #f8faff; }
-.outbound-col-head .tipe-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
-.outbound-col-head.tipe-primary { background: #EFF6FF; border-color: #BFDBFE; color: #1D4ED8; }
-.outbound-col-head.tipe-primary .tipe-dot { background: #1D4ED8; }
-.outbound-col-head.tipe-secondary { background: #FFFBEB; border-color: #FDE68A; color: #92400E; }
-.outbound-col-head.tipe-secondary .tipe-dot { background: #D97706; }
-.outbound-col-head.tipe-foc { background: #FDF2F8; border-color: #F9A8D4; color: #9D174D; }
-.outbound-col-head.tipe-foc .tipe-dot { background: #DB2777; }
-.outbound-chip-nav { display: none; }
-@media (max-width: 1024px) {
-  .outbound-3col { grid-template-columns: 1fr; gap: 18px; }
-  .outbound-col { scroll-margin-top: 108px; }
-  .outbound-chip-nav { display: flex; gap: 6px; overflow-x: auto; padding: 8px; position: sticky; top: 8px; z-index: 30; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); border: 1px solid #e9edf5; border-radius: 12px; scrollbar-width: none; }
-  .outbound-chip-nav::-webkit-scrollbar { display: none; }
-  .outbound-chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 850; text-decoration: none; padding: 6px 11px; border-radius: 999px; border: 1px solid; }
-  .outbound-chip .tipe-dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
-  .outbound-chip.chip-primary { color: #1D4ED8; background: #EFF6FF; border-color: #BFDBFE; }
-  .outbound-chip.chip-secondary { color: #92400E; background: #FFFBEB; border-color: #FDE68A; }
-  .outbound-chip.chip-foc { color: #9D174D; background: #FDF2F8; border-color: #F9A8D4; }
-  .outbound-col-head { position: sticky; top: 60px; z-index: 20; box-shadow: 0 4px 14px rgba(15,23,42,.07); }
-}
+.outbound-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.outbound-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 850; border-radius: 999px; padding: 2px 8px; background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; white-space: nowrap; }
+.outbound-badge .outbound-tipe-dot { width: 6px; height: 6px; }
+.outbound-toolbar-right { display: flex; gap: 6px; flex-wrap: wrap; }
+.outbound-upload-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border: none; white-space: nowrap; }
+.outbound-upload-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
 `;
 
 export default function OutboundTanggalPage() {
@@ -121,89 +118,92 @@ export default function OutboundTanggalPage() {
   const { toast } = useToast();
   const session = useSession();
   const multi = !!session && isMultiRole(session.user.role);
+
+  // Filter tersimpan (tetap saat bolak-balik driver/detail).
+  // Direset otomatis oleh AppLayout saat pindah ke halaman selain /outbound*.
+  const [savedOnce] = useState<SavedFilter>(() =>
+    typeof window === "undefined" ? { q: "", tipe: [], dari: "", sampai: "" } : loadSaved()
+  );
   const [rows, setRows] = useState<BkRow[]>([]);
-  const [keyword, setKeyword] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(savedOnce.q);
+  const [keyword, setKeyword] = useState(savedOnce.q);
+  const [tipe, setTipe] = useState<string[]>(savedOnce.tipe);
+  const [dari, setDari] = useState(savedOnce.dari);
+  const [sampai, setSampai] = useState(savedOnce.sampai);
   const [loaded, setLoaded] = useState(false);
+  const [page, setPage] = useState(1);
   const [modal, setModal] = useState<"" | "upload" | "primary" | "import" | "foc">("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
-  const [lokasiList, setLokasiList] = useState<{ id_pengguna_lokasi: string; nama_pengguna_lokasi: string }[]>([]);
-  const [uploadLok, setUploadLok] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Simpan setiap perubahan filter.
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ q: keyword, tipe, dari, sampai }));
+    } catch { /* abaikan */ }
+  }, [keyword, tipe, dari, sampai]);
+
+  // Debounce search → keyword (search server-side ke semua kolom).
+  useEffect(() => {
+    const t = setTimeout(() => setKeyword(search.trim()), 500);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const tipeKey = useMemo(() => [...tipe].sort().join(","), [tipe]);
+
+  const fetchData = async (signal?: AbortSignal) => {
+    if (!session) return;
+    try {
+      const q = new URLSearchParams(lokasiParam(session));
+      if (keyword.trim()) q.append("cari", keyword.trim());
+      if (tipeKey) q.append("tipe_detail", tipeKey);
+      if (dari) q.append("tanggal_dari", dari);
+      if (sampai) q.append("tanggal_sampai", sampai);
+      const r = await apiGet<BkRow[]>(`/barang-keluar?${q.toString()}`);
+      if (!signal?.aborted) setRows(r.data || []);
+    } catch {
+      /* keep old */
+    } finally {
+      if (!signal?.aborted) setLoaded(true);
+    }
+  };
 
   useEffect(() => {
     if (!session) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const q = new URLSearchParams(lokasiParam(session));
-        if (keyword.trim()) q.append("cari", keyword.trim());
-        const r = await apiGet<BkRow[]>(`/barang-keluar?${q.toString()}`);
-        if (!cancelled) setRows(r.data || []);
-      } catch {
-        /* keep old */
-      } finally {
-        if (!cancelled) setLoaded(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [session, keyword]);
+    const controller = new AbortController();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async fetch syncs server data into state
+    fetchData(controller.signal);
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, keyword, tipeKey, dari, sampai]);
 
-  if (!session || !loaded) return null;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
+    setPage(1);
+  }, [keyword, tipeKey, dari, sampai, rows]);
 
-  const q = search.trim().toLowerCase();
-  const canAdd = !!session && ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
-  const isSuperAdmin = !!session && session.user.role === "SuperAdmin";
-
-  const buildTanggalMap = (source: BkRow[]) => {
-    const map: Record<string, TanggalItem> = {};
-    source.forEach((row) => {
-      const t = dateOnly(row.tanggal_keluar);
-      if (!t || t.startsWith("0000")) return;
-      const key = `${t} ${row.nama_driver || ""} ${row.nama_produk || ""}`.toLowerCase();
-      if (q !== "" && !key.includes(q)) return;
-      if (!map[t]) map[t] = { tanggal: t, total_item: 0, total_qty: 0 };
-      map[t].total_item++;
-      map[t].total_qty += angka(row.jumlah);
-    });
-    return map;
+  const toggleTipe = (v: string) => {
+    setTipe((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
   };
 
-  // Split rows ke 3 kolom: Primary+Pemusnahan (kiri) | Secondary (tengah) | FOC (kanan).
-  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
-  const primaryRows = rows.filter((r) => {
-    const t = tipeNorm(r.tipe_pengeluaran);
-    return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
-  });
-  const secondaryRows = rows.filter((r) => tipeNorm(r.tipe_pengeluaran) === "SECONDARY");
-  const focRows = rows.filter((r) => tipeNorm(r.tipe_pengeluaran) === "FOC");
+  const resetFilter = () => {
+    setSearch("");
+    setKeyword("");
+    setTipe([]);
+    setDari("");
+    setSampai("");
+    setPage(1);
+    try { sessionStorage.removeItem(FILTER_KEY); } catch { /* abaikan */ }
+  };
 
-  const primaryMap = buildTanggalMap(primaryRows);
-  const secondaryMap = buildTanggalMap(secondaryRows);
-  const focMap = buildTanggalMap(focRows);
-  const primaryList = Object.values(primaryMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
-  const secondaryList = Object.values(secondaryMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
-  const focList = Object.values(focMap).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
-
-  const openModal = async (which: "upload" | "primary" | "import" | "foc") => {
+  const openModal = (which: "upload" | "primary" | "import" | "foc") => {
     setUploadMsg("");
-    setUploadLok("");
     setProgressText("");
-    if (fileRef.current) fileRef.current.value = "";
-    if (multi && which !== "foc") {
-      try {
-        const r = await apiGet<{ id_pengguna_lokasi: string; nama_pengguna_lokasi: string }[]>("/pengguna-lokasi");
-        setLokasiList(r.data || []);
-      } catch {
-        setLokasiList([]);
-      }
-    }
     setModal(which);
   };
 
   const uploadFileSubmit = async (file: File) => {
-    const lok = uploadLok || String(session!.user.id_pengguna_lokasi || "");
+    const lok = String(session!.user.id_pengguna_lokasi || "");
     if (!lok) { setUploadMsg("Pilih lokasi upload."); return; }
     setUploadBusy(true);
     setUploadMsg("");
@@ -226,7 +226,6 @@ export default function OutboundTanggalPage() {
       if (!res.ok || body.success === false) throw new Error(body.message || "Upload gagal.");
 
       sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: body.message || "Upload selesai.", type: "success" }));
-      setKeyword(" "); setKeyword("");
       window.setTimeout(() => setModal(""), 500);
       window.location.reload();
     } catch (e) {
@@ -255,7 +254,6 @@ export default function OutboundTanggalPage() {
       if (!res.ok || body.success === false) throw new Error(body.message || "Upload FOC gagal.");
 
       sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: body.message || "Upload FOC selesai.", type: "success" }));
-      setKeyword(" "); setKeyword("");
       window.setTimeout(() => setModal(""), 500);
       window.location.reload();
     } catch (e) {
@@ -264,6 +262,48 @@ export default function OutboundTanggalPage() {
     } finally { setUploadBusy(false); }
   };
 
+  if (!session || !loaded) return null;
+
+  const canAdd = !!session && ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
+  const isSuperAdmin = !!session && session.user.role === "SuperAdmin";
+  const filterActive = tipe.length > 0 || dari !== "" || sampai !== "" || keyword.trim() !== "";
+
+  // All data campur: satu kartu per tanggal berisi semua tipe pengeluaran.
+  // 1 transaksi = 1 driver pada tanggal itu, sama seperti halaman driver
+  // (bukan jumlah baris item). Badge per tipe = jumlah driver (klasifikasi
+  // kategori terbanyak milik driver) sehingga total badge = total transaksi.
+  const map: Record<string, TanggalItem> = {};
+  const groupCat: Record<string, Record<string, Record<string, number>>> = {};
+  rows.forEach((row) => {
+    const t = dateOnly(row.tanggal_keluar);
+    if (!t || t.startsWith("0000")) return;
+    const g = (row.nama_driver || "").trim() || "Tanpa nama driver";
+    if (!map[t]) {
+      map[t] = { tanggal: t, total_item: 0, total_qty: 0, breakdown: {} };
+      groupCat[t] = {};
+    }
+    if (!groupCat[t][g]) {
+      groupCat[t][g] = {};
+      map[t].total_item++;
+    }
+    const k = kategoriOf(row);
+    groupCat[t][g][k] = (groupCat[t][g][k] || 0) + 1;
+    map[t].total_qty += angka(row.jumlah);
+  });
+  Object.entries(groupCat).forEach(([t, groups]) => {
+    Object.values(groups).forEach((catCounts) => {
+      let best = "";
+      let bestN = -1;
+      Object.entries(catCounts).forEach(([c, n]) => {
+        if (n > bestN) { best = c; bestN = n; }
+      });
+      if (best) map[t].breakdown[best] = (map[t].breakdown[best] || 0) + 1;
+    });
+  });
+  const list = Object.values(map).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const totalPages = totalPagesOf(list.length, PAGE_SIZE_LOCAL);
+  const paged = paginate(list, page, PAGE_SIZE_LOCAL);
+
   return (
     <div className="outbound-page">
       <style>{css}</style>
@@ -271,32 +311,38 @@ export default function OutboundTanggalPage() {
         <div className="outbound-toolbar">
           <div className="outbound-search-wrap">
             <input type="text" className="outbound-search-input" value={search}
-              placeholder="Cari tanggal contoh: 2026-05-09" autoComplete="off"
+              placeholder="Cari produk, driver, GIN, SO, tujuan, catatan..." autoComplete="off"
               onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") setKeyword(search); }} />
-            {keyword.trim() !== "" && (
-              <a href="#" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "var(--text-soft)", textDecoration: "none" }}
-                onClick={(e) => { e.preventDefault(); setSearch(""); setKeyword(""); }}>
+              onKeyDown={(e) => { if (e.key === "Enter") setKeyword(search.trim()); }} />
+            {search.trim() !== "" && (
+              <button type="button" className="outbound-search-clear" aria-label="Bersihkan pencarian"
+                onClick={() => { setSearch(""); setKeyword(""); }}>
                 <i className="bi bi-x-lg"></i>
-              </a>
+              </button>
             )}
           </div>
+          {filterActive && (
+            <button type="button" className="outbound-reset-btn" onClick={resetFilter}>
+              <i className="bi bi-arrow-counterclockwise"></i>
+              Reset
+            </button>
+          )}
           {canAdd && (
             <div className="outbound-toolbar-right">
-              <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("upload")}>
+              <button type="button" className="outbound-upload-btn" onClick={() => openModal("upload")}>
                 <i className="bi bi-file-earmark-excel"></i>
                 Upload Excel
               </button>
-              <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("primary")}>
+              <button type="button" className="outbound-upload-btn" onClick={() => openModal("primary")}>
                 <i className="bi bi-file-earmark-excel"></i>
                 Upload Primary
               </button>
-              <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("foc")}>
+              <button type="button" className="outbound-upload-btn" onClick={() => openModal("foc")}>
                 <i className="bi bi-file-earmark-excel"></i>
                 Upload FOC
               </button>
               {isSuperAdmin && (
-                <button type="button" className="outbound-add-btn" style={{ border: "none", cursor: "pointer" }} onClick={() => openModal("import")}>
+                <button type="button" className="outbound-upload-btn" onClick={() => openModal("import")}>
                   <i className="bi bi-clock-history"></i>
                   Import Historical
                 </button>
@@ -308,50 +354,81 @@ export default function OutboundTanggalPage() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* === Chip navigasi antar seksi (mobile only, sticky) === */}
-      <nav className="outbound-chip-nav" aria-label="Navigasi seksi outbound">
-        <a className="outbound-chip chip-primary" href="#seksi-ob-primary"><span className="tipe-dot"></span>Primary · {primaryList.length}</a>
-        <a className="outbound-chip chip-secondary" href="#seksi-ob-secondary"><span className="tipe-dot"></span>Secondary · {secondaryList.length}</a>
-        <a className="outbound-chip chip-foc" href="#seksi-ob-foc"><span className="tipe-dot"></span>FOC · {focList.length}</a>
-      </nav>
-
-      {/* === 3 KOLOM: Primary+Pemusnahan | Secondary | FOC === */}
-      <div className="outbound-3col">
-        {/* KOLOM KIRI: Primary + Pemusnahan */}
-        <div className="outbound-col" id="seksi-ob-primary">
-          <div className="outbound-col-head tipe-primary">
-            <span className="tipe-dot"></span>
-            <i className="bi bi-truck"></i>
-            Primary
-            <span className="outbound-section-count">{primaryList.length}</span>
+        <div className="outbound-filter-panel">
+          <div>
+            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Tipe Pengeluaran</div>
+            <div className="outbound-tipe-grid">
+              {TIPE_OPTIONS.map((o) => {
+                const on = tipe.includes(o.v);
+                return (
+                  <label key={o.v} className={`outbound-tipe-check ${on ? "is-on" : ""}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggleTipe(o.v)} />
+                    <span className="outbound-tipe-dot" style={{ background: o.dot }}></span>
+                    {o.label}
+                  </label>
+                );
+              })}
+            </div>
           </div>
-          <PagedTanggal items={primaryList} emptyMsg="Tidak ada data outbound primary." resetKey={`${search}|${keyword}|${primaryRows.length}`} section="primary" accent="primary" />
-        </div>
-
-        {/* KOLOM TENGAH: Secondary */}
-        <div className="outbound-col" id="seksi-ob-secondary">
-          <div className="outbound-col-head tipe-secondary">
-            <span className="tipe-dot"></span>
-            <i className="bi bi-arrow-repeat"></i>
-            Secondary
-            <span className="outbound-section-count">{secondaryList.length}</span>
+          <div>
+            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Range Tanggal</div>
+            <div className="outbound-date-row">
+              <div className="outbound-date-field">
+                <label>Dari</label>
+                <input type="date" value={dari} max={sampai || undefined} onChange={(e) => setDari(e.target.value)} />
+              </div>
+              <div className="outbound-date-field">
+                <label>Sampai</label>
+                <input type="date" value={sampai} min={dari || undefined} onChange={(e) => setSampai(e.target.value)} />
+              </div>
+            </div>
           </div>
-          <PagedTanggal items={secondaryList} emptyMsg="Tidak ada data outbound secondary." resetKey={`${search}|${keyword}|${secondaryRows.length}`} section="secondary" accent="secondary" />
-        </div>
-
-        {/* KOLOM KANAN: FOC */}
-        <div className="outbound-col" id="seksi-ob-foc">
-          <div className="outbound-col-head tipe-foc">
-            <span className="tipe-dot"></span>
-            <i className="bi bi-gift"></i>
-            FOC
-            <span className="outbound-section-count">{focList.length}</span>
+          <div className="outbound-active-hint">
+            Filter tersimpan otomatis — tetap aktif saat membuka driver/detail, ter-reset saat pindah halaman lain atau tekan Reset.
           </div>
-          <PagedTanggal items={focList} emptyMsg="Tidak ada data outbound FOC." resetKey={`${search}|${keyword}|${focRows.length}`} section="foc" accent="foc" />
         </div>
       </div>
+
+      {paged.length === 0 ? (
+        <div className="outbound-card outbound-empty">
+          {filterActive ? "Tidak ada data yang cocok dengan filter/pencarian." : "Tidak ada data tanggal outbound."}
+        </div>
+      ) : (
+        <div className="outbound-grid">
+          {paged.map((item) => {
+            const qp = new URLSearchParams();
+            if (tipeKey) qp.set("tipe_detail", tipeKey);
+            if (multi) {
+              const l = lokasiParam(session);
+              if (l) { const [k, v] = l.split("="); if (v) qp.set(k, v); }
+            }
+            const qs = qp.toString();
+            return (
+              <Link key={item.tanggal} className="outbound-card outbound-date-card"
+                href={`/outbound/driver/${encodeURIComponent(item.tanggal)}${qs ? `?${qs}` : ""}`}>
+                <div className="outbound-card-top">
+                  <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
+                  <div>
+                    <div className="outbound-date-title">{item.tanggal}</div>
+                    <div className="outbound-meta">{item.total_item} transaksi</div>
+                  </div>
+                  <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
+                </div>
+                <div className="outbound-badges">
+                  {Object.entries(item.breakdown).sort().map(([k, c]) => (
+                    <span key={k} className="outbound-badge">
+                      <span className="outbound-tipe-dot" style={{ background: kategoriDot(k) }}></span>
+                      {kategoriLabel(k)} · {c}
+                    </span>
+                  ))}
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+      <Pagination page={page} totalPages={totalPages} totalItems={list.length} pageSize={PAGE_SIZE_LOCAL} onChange={setPage} />
 
       {/* === MODALS === */}
       {modal && modal !== "foc" && (

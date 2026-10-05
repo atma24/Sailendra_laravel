@@ -9,7 +9,7 @@ import {
 import ChartCard, { EmptyChart } from "./ChartCard";
 import ChartGroup from "./ChartGroup";
 import TrendChart, { type TrendDatum } from "./TrendChart";
-import { buildTrendData } from "./trend";
+import { buildTrendData, monthlySubtitle } from "./trend";
 
 type Props = {
   /** Deret per tipe dari backend. */
@@ -17,10 +17,10 @@ type Props = {
   /** Deret total (semua tipe) untuk kartu "Inbound Total". */
   totalPlanned: SeriesPoint[];
   totalActual: SeriesPoint[];
-  /** Bila terisi ("1".."6"), mode harian; bila kosong, mode mingguan. */
+  /** Bila terisi ("1".."6"), harian satu minggu; bila kosong, harian 1–akhir bulan. */
   minggu: string;
   mulai: string;
-  /** Awal bulan (YYYY-MM-DD) — acuan indeks "Minggu N". */
+  /** Awal bulan (YYYY-MM-DD) — dipertahankan untuk kompatibilitas. */
   monthStart?: string;
   bulan?: string;
   tahun?: string;
@@ -59,10 +59,14 @@ function TrendCard({
   const sumPlanned = data.reduce((a, d) => a + d.planned, 0);
   const sumActual = data.reduce((a, d) => a + d.actual, 0);
 
+  const subtitle = mode.isWeekly
+    ? "Harian (Senin–Minggu)"
+    : monthlySubtitle(planned, mode.bulan);
+
   return (
     <ChartCard
       title={title}
-      subtitle={mode.isWeekly ? "Harian (Senin–Minggu)" : "Mingguan"}
+      subtitle={subtitle}
       className={highlight ? "border-emerald-200 ring-1 ring-emerald-100" : undefined}
       right={
         <div className="text-right text-[11.5px] leading-tight text-slate-500 tabular-nums">

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   fmt,
   type GallonZona,
+  type KategoriItem,
   type Summary,
   type ZonaStat,
 } from "../dashboard";
@@ -33,6 +34,9 @@ type Props = {
   produkPerKategori?: Summary["produk_per_kategori"];
   loading?: boolean;
 };
+
+/** Bulatkan ke 1 desimal (konsisten dengan backend). */
+const round1 = (v: number) => Math.round(v * 10) / 10;
 
 /** Label untuk tiap item produk. */
 const ITEM_LABEL: Record<string, string> = {
@@ -313,10 +317,69 @@ export default function StockSummaryCard({
 
   // Mode dinamis: tab lokasi selain SEMUA/GALLON menampilkan 1 card
   // berisi semua item produk pada lokasi tsb (mis. SPS, XWH).
-  const isDinamis = tabValid !== TAB_SEMUA && tabValid !== TAB_DEFAULT;
+  const isSemua = tabValid === TAB_SEMUA;
+  const isDinamis = !isSemua && tabValid !== TAB_DEFAULT;
   const itemsDinamis = isDinamis
     ? (produkPerKategori?.[tabValid]?.items ?? [])
     : [];
+
+  // Tab "Semua": gabungkan semua item dari seluruh kategori lokasi.
+  // Sebelumnya tab ini fallback ke angka gallon global sehingga terlihat
+  // sama persis dengan tab GALLON. Sekarang agregasikan produkPerKategori:
+  // qty + kapasitas per zona dijumlah, persen dihitung ulang.
+  const itemsSemua = useMemo<KategoriItem[]>(() => {
+    if (!isSemua) return [];
+    const agg = new Map<
+      string,
+      { nama: string; satuan: string; qty: number; zonaQty: Record<string, number>; zonaKap: Record<string, number> }
+    >();
+    for (const { items } of Object.values(produkPerKategori ?? {})) {
+      for (const it of items ?? []) {
+        const cur = agg.get(it.nama) ?? {
+          nama: it.nama,
+          satuan: it.satuan,
+          qty: 0,
+          zonaQty: { reguler: 0, mobil: 0, transit: 0, bad_reject: 0 },
+          zonaKap: { reguler: 0, mobil: 0, transit: 0, bad_reject: 0 },
+        };
+        cur.qty += it.qty;
+        (Object.keys(cur.zonaQty) as (keyof ZonaStat)[]).forEach((k) => {
+          cur.zonaQty[k] += it.zona[k]?.qty ?? 0;
+          cur.zonaKap[k] += it.zona[k]?.kapasitas ?? 0;
+        });
+        agg.set(it.nama, cur);
+      }
+    }
+    return Array.from(agg.values())
+      .map((a) => ({
+        nama: a.nama,
+        satuan: a.satuan,
+        qty: a.qty,
+        zona: {
+          reguler: {
+            qty: a.zonaQty.reguler,
+            kapasitas: a.zonaKap.reguler,
+            persen: a.zonaKap.reguler > 0 ? round1((a.zonaQty.reguler / a.zonaKap.reguler) * 100) : 0,
+          },
+          mobil: {
+            qty: a.zonaQty.mobil,
+            kapasitas: a.zonaKap.mobil,
+            persen: a.zonaKap.mobil > 0 ? round1((a.zonaQty.mobil / a.zonaKap.mobil) * 100) : 0,
+          },
+          transit: {
+            qty: a.zonaQty.transit,
+            kapasitas: a.zonaKap.transit,
+            persen: a.zonaKap.transit > 0 ? round1((a.zonaQty.transit / a.zonaKap.transit) * 100) : 0,
+          },
+          bad_reject: {
+            qty: a.zonaQty.bad_reject,
+            kapasitas: a.zonaKap.bad_reject,
+            persen: a.zonaKap.bad_reject > 0 ? round1((a.zonaQty.bad_reject / a.zonaKap.bad_reject) * 100) : 0,
+          },
+        },
+      }))
+      .sort((x, y) => y.qty - x.qty);
+  }, [isSemua, produkPerKategori]);
 
   return (
     <section className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
@@ -383,8 +446,33 @@ export default function StockSummaryCard({
         </div>
       </div>
 
-      {/* Detail gallon & jug, atau 1 card dinamis berisi item lokasi terpilih */}
-      {isDinamis ? (
+      {/* Detail gallon & jug, semua item, atau 1 card dinamis berisi item lokasi terpilih */}
+      {isSemua ? (
+        <Group title="Semua Item" icon="bi-boxes">
+          <div className="col-span-2 space-y-2 sm:col-span-3">
+            {loading ? (
+              <div className="rounded-xl border border-blue-100 bg-white px-3 py-4 text-center text-[12px] text-slate-400">
+                Memuat semua item…
+              </div>
+            ) : itemsSemua.length === 0 ? (
+              <div className="rounded-xl border border-blue-100 bg-white px-3 py-4 text-center text-[12px] text-slate-400">
+                Belum ada stok di gudang
+              </div>
+            ) : (
+              itemsSemua.map((it) => (
+                <DynamicItem
+                  key={it.nama}
+                  nama={it.nama}
+                  satuan={it.satuan}
+                  qty={it.qty}
+                  zona={it.zona}
+                  loading={loading}
+                />
+              ))
+            )}
+          </div>
+        </Group>
+      ) : isDinamis ? (
         <Group title={tabValid} icon="bi-boxes">
           <div className="col-span-2 space-y-2 sm:col-span-3">
             {loading ? (

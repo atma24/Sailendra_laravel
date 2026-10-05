@@ -57,14 +57,28 @@ class ProdukController extends Controller
         }
 
         try {
-            Produk::create([
+            $data = [
                 'id_produk' => $idProduk,
                 'nama_produk' => $namaProduk,
                 'satuan' => $satuan,
                 'isi_per_pcs' => $isiPerPcs,
                 'tanpa_batch' => filter_var($request->input('tanpa_batch') ?? false, FILTER_VALIDATE_BOOLEAN),
                 'created_at' => now(),
-            ]);
+            ];
+            if ($request->has('masa_simpan_hari')) {
+                $masaSimpan = (int) $request->input('masa_simpan_hari');
+                if ($masaSimpan <= 0 || $masaSimpan > 3650) {
+                    return $this->fail('masa_simpan_hari harus 1-3650 hari');
+                }
+                try {
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('produk', 'masa_simpan_hari')) {
+                        $data['masa_simpan_hari'] = $masaSimpan;
+                    }
+                } catch (\Throwable $e) {
+                    // Kolom belum ada (pre-migrasi): abaikan masa simpan.
+                }
+            }
+            Produk::create($data);
 
             return $this->okMessage('Produk ditambahkan', ['id_produk' => $idProduk]);
         } catch (\Throwable $e) {
@@ -113,11 +127,27 @@ class ProdukController extends Controller
             $produk->tanpa_batch = filter_var($request->input('tanpa_batch'), FILTER_VALIDATE_BOOLEAN);
         }
 
+        if ($request->has('masa_simpan_hari')) {
+            $masaSimpan = (int) $request->input('masa_simpan_hari');
+            if ($masaSimpan <= 0 || $masaSimpan > 3650) {
+                return $this->fail('masa_simpan_hari harus 1-3650 hari');
+            }
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('produk', 'masa_simpan_hari')) {
+                    $produk->masa_simpan_hari = $masaSimpan;
+                }
+            } catch (\Throwable $e) {
+                // Kolom belum ada (pre-migrasi): abaikan masa simpan.
+            }
+        }
+
         if (! $produk->isDirty()) {
             return $this->fail('Tidak ada perubahan');
         }
 
         $produk->save();
+
+        \App\Models\PengaturanProduk::lupakanMasaSimpan((int) $produk->id_produk);
 
         return $this->okMessage('Produk diperbarui');
     }
