@@ -109,6 +109,7 @@ class BarangKeluarController extends Controller
                 'foc' => 'foc',
                 'pemusnahan' => 'pemusnahan',
                 'musnah' => 'pemusnahan',
+                'xwh' => 'xwh',
             ];
             return $map[$v] ?? '';
         };
@@ -122,6 +123,7 @@ class BarangKeluarController extends Controller
                 'secondary' => 'Secondary',
                 'foc' => 'FOC',
                 'pemusnahan' => 'Pemusnahan',
+                'xwh' => 'XWH',
             ];
             $bases = [];
             foreach ($detailTokens as $t) {
@@ -138,6 +140,8 @@ class BarangKeluarController extends Controller
                 $query->where('bk.tipe_pengeluaran', 'Secondary');
             } elseif ($single === 'foc') {
                 $query->where('bk.tipe_pengeluaran', 'FOC');
+            } elseif ($single === 'xwh') {
+                $query->where('bk.tipe_pengeluaran', 'XWH');
             } elseif ($single === 'normal') {
                 $query->where('bk.tipe_pengeluaran', '<>', 'FOC');
             } else {
@@ -1323,7 +1327,7 @@ public function store(Request $request)
     {
         $idPenggunaLokasi = trim($in['id_pengguna_lokasi'] ?? '');
         $idPengguna = (int) ($in['id_pengguna'] ?? 0);
-        $tipePengeluaran = in_array(trim($in['tipe_pengeluaran'] ?? ''), ['Primary', 'Secondary', 'Pemusnahan', 'FOC']) ? trim($in['tipe_pengeluaran']) : 'Primary';
+        $tipePengeluaran = in_array(trim($in['tipe_pengeluaran'] ?? ''), ['Primary', 'Secondary', 'Pemusnahan', 'FOC', 'XWH']) ? trim($in['tipe_pengeluaran']) : 'Primary';
         $tujuan = trim($in['tujuan'] ?? '');
         $namaDriver = trim($in['nama_driver'] ?? '');
         $noMobil = trim($in['no_mobil'] ?? '');
@@ -1375,7 +1379,7 @@ public function store(Request $request)
         }
         $butuhMobilDriver = ! in_array($tipePengeluaran, ['Pemusnahan', 'FOC'], true);
         if ($butuhMobilDriver && ($namaDriver === '' || $noMobil === '')) {
-            throw new Exception('nama_driver dan no_mobil wajib untuk Primary / Secondary');
+            throw new Exception('nama_driver dan no_mobil wajib untuk Primary / Secondary / XWH');
         }
         if ($noMobil !== '' && $noMobil !== '-') {
             $noMobil = strtoupper($noMobil);
@@ -1383,10 +1387,10 @@ public function store(Request $request)
                 throw new Exception('No Mobil harus huruf+angka, tanpa spasi, minimal 5 karakter.');
             }
         }
-        if ($tipePengeluaran === 'Primary' && $tujuan === '' && $statusInput !== 'Draft') {
-            throw new Exception('Tujuan wajib diisi untuk Primary');
+        if (in_array($tipePengeluaran, ['Primary', 'XWH'], true) && $tujuan === '' && $statusInput !== 'Draft') {
+            throw new Exception('Tujuan wajib diisi untuk Primary / XWH');
         }
-        if ($tipePengeluaran !== 'Primary') {
+        if (! in_array($tipePengeluaran, ['Primary', 'XWH'], true)) {
             $tujuan = null;
         }
 
@@ -1426,6 +1430,9 @@ public function store(Request $request)
 
             $itemsOut = [];
             [$idLokasiDefault, $kategoriDefault] = $this->normalisasiLokasiOutbound($in);
+            if ($tipePengeluaran === 'XWH') {
+                [$idLokasiDefault, $kategoriDefault] = $this->paksaScopeXwh($idLokasiDefault, $kategoriDefault);
+            }
             foreach ($items as $it) {
                 $idProduk = (int) $it['id_produk'];
                 $jumlah = (int) $it['jumlah'];
@@ -1452,16 +1459,35 @@ public function store(Request $request)
                     $idLokasiItem = $idLokasiDefault;
                     $kategoriItem = $kategoriDefault;
                 }
+                if ($tipePengeluaran === 'XWH') {
+                    [$idLokasiItem, $kategoriItem] = $this->paksaScopeXwh($idLokasiItem, $kategoriItem);
+                }
 
                 $rencana = [];
                 if ($pakaiManual) {
-                    $rencana = $this->buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $idLineManual, $batchManual, $bestBeforeManual, $tipePengeluaran);
+                    try {
+                        $rencana = $this->buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $idLineManual, $batchManual, $bestBeforeManual, $tipePengeluaran);
+                    } catch (Exception $e) {
+                        if ($tipePengeluaran === 'XWH' && str_contains(strtolower($e->getMessage()), 'tidak mencukupi')) {
+                            throw new Exception(str_replace('Stok tidak mencukupi', 'Stok XWH tidak mencukupi', $e->getMessage()).' (hanya stok lokasi XWH yang dihitung)');
+                        }
+                        throw $e;
+                    }
                 } elseif ($statusInput !== 'Draft') {
-                    $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran, $idLokasiItem, $kategoriItem);
+                    try {
+                        $rencana = $this->buatRencanaFefoPerProduk($idPenggunaLokasi, $idProduk, $jumlah, $tipePengeluaran, $idLokasiItem, $kategoriItem);
+                    } catch (Exception $e) {
+                        if ($tipePengeluaran === 'XWH' && str_contains(strtolower($e->getMessage()), 'tidak mencukupi')) {
+                            throw new Exception(str_replace('Stok tidak mencukupi', 'Stok XWH tidak mencukupi', $e->getMessage()).' (hanya stok lokasi XWH yang dihitung)');
+                        }
+                        throw $e;
+                    }
                 }
 
                 if (empty($rencana) && $statusInput !== 'Draft') {
-                    throw new Exception("Rencana lokasi tidak ditemukan untuk produk ID {$idProduk}");
+                    throw new Exception($tipePengeluaran === 'XWH'
+                        ? "Rencana lokasi XWH tidak ditemukan untuk produk ID {$idProduk} (hanya stok lokasi XWH yang dihitung)"
+                        : "Rencana lokasi tidak ditemukan untuk produk ID {$idProduk}");
                 }
 
                 $bestBeforeItem = $rencana[0]['best_before'] ?? null;
@@ -1690,7 +1716,7 @@ $in = $request->all();
                 }
 
                 $tipeRef = strtoupper(trim((string) ($ref->tipe_pengeluaran ?? '')));
-                if ($tipeRef === 'PRIMARY') {
+                if (in_array($tipeRef, ['PRIMARY', 'XWH'], true)) {
                     $grupTujuanQuery = DB::table('barang_keluar');
                     $grupTujuanQuery = $this->terapkanFilterGrupOutbound($grupTujuanQuery, $ref, '');
                     $tujuanKosong = $grupTujuanQuery
@@ -1699,7 +1725,7 @@ $in = $request->all();
                             $q->whereNull('tujuan')->orWhereRaw("TRIM(COALESCE(tujuan, '')) = ''");
                         })->exists();
                     if ($tujuanKosong) {
-                        throw new Exception('Tujuan wajib diisi untuk Primary. Lengkapi tujuan di detail sebelum submit.');
+                        throw new Exception('Tujuan wajib diisi untuk Primary / XWH. Lengkapi tujuan di detail sebelum submit.');
                     }
                 }
 
@@ -1719,7 +1745,16 @@ $in = $request->all();
                 $stokBookingSementara = [];
                 foreach ($items as $item) {
                     DB::table('rencana_keluar_deep')->where('id_barang_keluar', $item->id_barang_keluar)->delete();
-                    $rencana = $this->buatRencanaFefoEditSelesai($idPenggunaLokasi, $item->id_produk, $item->jumlah, $stokBookingSementara, $item->tipe_pengeluaran ?? 'Primary');
+                    $tipeItemSubmit = trim($item->tipe_pengeluaran ?? 'Primary');
+                    $scopeXwh = ($tipeItemSubmit === 'XWH') ? [0, 'XWH'] : [0, ''];
+                    try {
+                        $rencana = $this->buatRencanaFefoEditSelesai($idPenggunaLokasi, $item->id_produk, $item->jumlah, $stokBookingSementara, $tipeItemSubmit, $scopeXwh[0], $scopeXwh[1]);
+                    } catch (Exception $e) {
+                        if ($tipeItemSubmit === 'XWH' && str_contains(strtolower($e->getMessage()), 'tidak mencukupi')) {
+                            throw new Exception(str_replace('Stok tidak mencukupi', 'Stok XWH tidak mencukupi', $e->getMessage()).' (hanya stok lokasi XWH yang dihitung)');
+                        }
+                        throw $e;
+                    }
                     $this->simpanRencanaPerBarangKeluar($idPenggunaLokasi, $item->id_barang_keluar, $rencana);
 
                     foreach ($rencana as $r) {
@@ -1790,7 +1825,11 @@ $in = $request->all();
         // 6e. UBAH HEADER STANDARD
         $updateData = [];
         if (array_key_exists('tipe_pengeluaran', $in)) {
-            $updateData['tipe_pengeluaran'] = trim($in['tipe_pengeluaran']);
+            $tipeBaru = trim($in['tipe_pengeluaran']);
+            if (! in_array($tipeBaru, ['Primary', 'Secondary', 'Pemusnahan', 'FOC', 'XWH'], true)) {
+                return $this->fail('tipe_pengeluaran tidak valid (Primary/Secondary/Pemusnahan/FOC/XWH).');
+            }
+            $updateData['tipe_pengeluaran'] = $tipeBaru;
         }
         if (array_key_exists('tujuan', $in)) {
             $updateData['tujuan'] = trim($in['tujuan']) ?: null;
@@ -1932,7 +1971,7 @@ $in = $request->all();
 
             // === AUTO-INBOUND: Buat barang_masuk dari outbound selesai ===
             // Hanya Secondary & FOC yang kembali sebagai inbound.
-            // Primary & Pemusnahan tidak membuat auto-inbound (barang keluar permanen).
+            // Primary, Pemusnahan & XWH tidak membuat auto-inbound (barang keluar permanen).
             // 1 GIN = 1 shipment_id, agar semua item dalam 1 GIN tampil sebagai
             // 1 detail inbound (bukan 1 detail per item).
             $itemsSelesai = DB::table('barang_keluar')
@@ -1940,7 +1979,7 @@ $in = $request->all();
                 ->whereIn('id_barang_keluar', $idsProses)
                 ->get()
                 ->reject(function ($bk) {
-                    return in_array(strtoupper(trim((string) ($bk->tipe_pengeluaran ?? ''))), ['PRIMARY', 'PEMUSNAHAN'], true);
+                    return in_array(strtoupper(trim((string) ($bk->tipe_pengeluaran ?? ''))), ['PRIMARY', 'PEMUSNAHAN', 'XWH'], true);
                 })
                 ->values();
 
@@ -2152,6 +2191,9 @@ $in = $request->all();
 
     private function buatRencanaEditJumlahOutbound($idPenggunaLokasi, $idProduk, $jumlahButuh, $batch = '', $bestBefore = '', $lokasiBlock = '', $tipePengeluaran = 'Primary', $idLokasi = 0, $kategoriLokasi = '')
     {
+        if ($tipePengeluaran === 'XWH') {
+            [$idLokasi, $kategoriLokasi] = $this->paksaScopeXwh($idLokasi, $kategoriLokasi);
+        }
         $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
         $scope = $this->scopeLokasiOutbound($idLokasi, $kategoriLokasi);
         $whereExtra = '';
@@ -2184,11 +2226,26 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
     private function buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $idLine, $batch, $bestBeforeManual = '', $tipePengeluaran = 'Primary')
     {
         $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
+        $filterXwh = '';
+        if ($tipePengeluaran === 'XWH') {
+            // Guard: line manual harus milik lokasi XWH.
+            $lokLine = DB::table('line as ln')
+                ->join('block as bl', 'bl.id_block', '=', 'ln.id_block')
+                ->join('lokasi as lk', 'lk.id_lokasi', '=', 'bl.id_lokasi')
+                ->where('ln.id_line', $idLine)
+                ->selectRaw("UPPER(TRIM(COALESCE(NULLIF(lk.kategori, ''), lk.nama_lokasi, ''))) AS kat")
+                ->first();
+            $katLine = strtoupper(trim((string) ($lokLine->kat ?? '')));
+            if ($katLine !== 'XWH') {
+                throw new Exception('Tipe pengeluaran XWH hanya boleh mengambil dari lokasi XWH');
+            }
+            $filterXwh = " AND UPPER(TRIM(COALESCE(NULLIF(lk.kategori, ''), lk.nama_lokasi, ''))) = 'XWH' ";
+        }
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
-            WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND ln.id_line = ? AND (sg.batch = ? OR COALESCE(sgd.batch, sg.batch) = ?) AND (? = '' OR sgd.best_before = ?) AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
+            WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND ln.id_line = ? AND (sg.batch = ? OR COALESCE(sgd.batch, sg.batch) = ?) AND (? = '' OR sgd.best_before = ?) AND sgd.jumlah > 0 $filterKhusus $filterXwh AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD')
             ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk)}
         ";
 
@@ -2197,6 +2254,9 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
 
     private function eksekusiRencanaFefoQuery($idPenggunaLokasi, $idProduk, $jumlahButuh, $stokBookingSementara, $tipePengeluaran, $idLokasi = 0, $kategoriLokasi = '')
     {
+        if ($tipePengeluaran === 'XWH') {
+            [$idLokasi, $kategoriLokasi] = $this->paksaScopeXwh($idLokasi, $kategoriLokasi);
+        }
         $filterKhusus = ($tipePengeluaran === 'Pemusnahan') ? $this->filterLokasiOutboundPemusnahan('bl', 'lk') : $this->filterLokasiOutboundNormal('bl', 'lk');
         $scope = $this->scopeLokasiOutbound($idLokasi, $kategoriLokasi);
         // Cek dulu di mana saja yang release (BB tertua), baru urutan blok.
@@ -2536,6 +2596,9 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
      */
     private function minBbReleaseScope($idPenggunaLokasi, $idProduk, $tipePengeluaran = 'Primary', $idLokasi = 0, $kategoriLokasi = '', $batch = '', $bestBefore = ''): ?string
     {
+        if ($tipePengeluaran === 'XWH') {
+            [$idLokasi, $kategoriLokasi] = $this->paksaScopeXwh($idLokasi, $kategoriLokasi);
+        }
         $idProduk = (int) $idProduk;
         if ($idProduk <= 0) {
             return null;
@@ -2659,6 +2722,31 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         }
 
         return [$idLokasi, $kat];
+    }
+
+    /**
+     * Paksa scope XWH untuk tipe pengeluaran XWH (strict: hanya lokasi XWH).
+     * Scope kosong -> default kategori XWH. Scope non-XWH -> ditolak.
+     */
+    private function paksaScopeXwh($idLokasi = 0, $kategoriLokasi = ''): array
+    {
+        $idLokasi = (int) $idLokasi;
+        $kat = strtoupper(trim((string) $kategoriLokasi));
+        if ($idLokasi > 0) {
+            $lokKategori = DB::table('lokasi')->where('id_lokasi', $idLokasi)->value('kategori');
+            $lokNama = DB::table('lokasi')->where('id_lokasi', $idLokasi)->value('nama_lokasi');
+            $efektif = strtoupper(trim((string) ($lokKategori !== null && trim((string) $lokKategori) !== '' ? $lokKategori : $lokNama)));
+            if ($efektif !== 'XWH') {
+                throw new Exception('Tipe pengeluaran XWH hanya boleh mengambil dari lokasi XWH');
+            }
+
+            return [$idLokasi, 'XWH'];
+        }
+        if ($kat !== '' && $kat !== 'XWH') {
+            throw new Exception('Tipe pengeluaran XWH hanya boleh mengambil dari lokasi XWH');
+        }
+
+        return [0, 'XWH'];
     }
 
     // =========================================================================

@@ -36,6 +36,7 @@ const TIPE_OPTIONS = [
   { v: "secondary", label: "Secondary", dot: "#D97706" },
   { v: "foc", label: "FOC", dot: "#DB2777" },
   { v: "pemusnahan", label: "Pemusnahan", dot: "#991B1B" },
+  { v: "xwh", label: "XWH", dot: "#0D9488" },
 ] as const;
 
 type SavedFilter = { q: string; tipe: string[]; dari: string; sampai: string };
@@ -68,6 +69,7 @@ const kategoriOf = (r: BkRow): string => {
   if (t === "SECONDARY") return "secondary";
   if (t === "FOC") return "foc";
   if (t === "PEMUSNAHAN") return "pemusnahan";
+  if (t === "XWH") return "xwh";
   return "primary";
 };
 const kategoriLabel = (k: string) => TIPE_OPTIONS.find((o) => o.v === k)?.label || k;

@@ -43,7 +43,7 @@ type TypeKey = (typeof TYPES)[number]["key"];
 
 /** Opsi filter tipe penerimaan (inbound) & tipe pengeluaran (outbound). */
 const TIPE_PENERIMAAN = ["Primary", "Primary XWH", "Secondary", "FOC", "REJECT"];
-const TIPE_PENGELUARAN = ["Primary", "Secondary", "Pemusnahan", "FOC"];
+const TIPE_PENGELUARAN = ["Primary", "Secondary", "Pemusnahan", "FOC", "XWH"];
 
 /** Jenis laporan snapshot: 1 tanggal + 1 depo per file. */
 const SNAPSHOT_TYPES: TypeKey[] = ["utilisasi"];

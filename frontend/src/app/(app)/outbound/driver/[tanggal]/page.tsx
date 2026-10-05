@@ -199,6 +199,7 @@ export default function OutboundDriverPage() {
     if (t === "SECONDARY") return "secondary";
     if (t === "FOC") return "foc";
     if (t === "PEMUSNAHAN") return "pemusnahan";
+    if (t === "XWH") return "xwh";
     return "primary";
   };
   const matchTipe = (r: BkRow) => {
@@ -208,17 +209,18 @@ export default function OutboundDriverPage() {
     if (tipeFilter === "primary") return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
     if (tipeFilter === "secondary") return t === "SECONDARY";
     if (tipeFilter === "foc") return t === "FOC";
+    if (tipeFilter === "xwh") return t === "XWH";
     // Kompatibilitas URL lama: ?tipe=normal = semua non-FOC.
     if (tipeFilter === "normal") return t !== "FOC";
     return true;
   };
   const filteredRows = rows.filter(matchTipe);
-  const detailLabelMap: Record<string, string> = { primary: "Primary", secondary: "Secondary", foc: "FOC", pemusnahan: "Pemusnahan" };
+  const detailLabelMap: Record<string, string> = { primary: "Primary", secondary: "Secondary", foc: "FOC", pemusnahan: "Pemusnahan", xwh: "XWH" };
   const detailLabel = tipeDetailList.length > 0
     ? (tipeDetailList.length <= 2 ? tipeDetailList.map((t) => detailLabelMap[t] || t).join(" + ") : `${tipeDetailList.length} tipe`)
     : "";
   const sectionLabel = detailLabel
-    || (tipeFilter === "foc" ? "FOC" : tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "normal" ? "Normal" : "");
+    || (tipeFilter === "foc" ? "FOC" : tipeFilter === "primary" ? "Primary" : tipeFilter === "secondary" ? "Secondary" : tipeFilter === "xwh" ? "XWH" : tipeFilter === "normal" ? "Normal" : "");
   const driverMap: Record<string, DriverItem> = {};
   const hapusMap: Record<string, { id: number; id_lokasi: string }[]> = {};
   const driverMaxId: Record<string, number> = {};

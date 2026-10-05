@@ -422,7 +422,12 @@ export default function InboundFormPage() {
         if (low.includes("kirim: alokasi") || low.includes("lokasi_line") || low.includes("lokasi_block")) {
           m = "Line produk tidak tersedia. Silakan buat layout baru atau tunggu line kembali.";
         }
-        if (low.includes("kapasitas line tidak cukup") || low.includes("kapasitas slot") || low.includes("alokasi deep kosong")) {
+        // Backend kini mengirim rincian diagnostik (butuh/sisa/line/penyebab) pada
+        // pesan "Kapasitas line tidak cukup" — tampilkan apa adanya agar user tahu
+        // akar masalahnya. Hanya pesan slot generik yang tetap disederhanakan.
+        if (low.startsWith("kapasitas line tidak cukup")) {
+          m = (e as Error).message || m;
+        } else if (low.includes("kapasitas slot") || low.includes("alokasi deep kosong")) {
           m = "Kapasitas line tidak cukup. Silakan buat layout baru atau tunggu line kembali.";
         }
         failed.push({ nama_produk: it.nama_produk || `Produk ID ${it.id_produk}`, message: m });

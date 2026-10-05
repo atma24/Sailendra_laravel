@@ -23,6 +23,14 @@ class BarangMasukController extends Controller
 
     private const BLOCK_KHUSUS = ['BS', 'BAD', 'BADSTOCK', 'BAD STOCK', 'REJECT', 'FESTIVE', 'HOLD'];
 
+    /**
+     * Lokasi yang boleh menerima inbound Primary (KATEGORI lokasi, uppercase).
+     * Dibandingkan dengan kategori efektif: COALESCE(kategori, nama_lokasi),
+     * karena nama bisa berbeda (mis. nama 'RAW-MATERIAL' berkategori 'RAW').
+     * RAW & RTP adalah gudang permanen seperti GALLON/SPS.
+     */
+    private const LOKASI_PRIMARY = ['GALLON', 'SPS', 'RAW', 'RTP'];
+
     // =========================================================================
     // 1. GET LIST INBOUND
     // =========================================================================
@@ -512,8 +520,8 @@ class BarangMasukController extends Controller
             $kodeBlockCompact = preg_replace('/\s+/', '', $kodeBlockCek);
             $namaLokasiCek = $cek['nama_lokasi'];
 
-            if ($tipePenerimaan === 'Primary' && ! in_array($namaLokasiCek, ['GALLON', 'SPS'], true)) {
-                return $this->fail('Penerimaan Primary hanya boleh masuk ke lokasi GALLON atau SPS.', 422);
+            if ($tipePenerimaan === 'Primary' && ! in_array($namaLokasiCek, self::LOKASI_PRIMARY, true)) {
+                return $this->fail('Penerimaan Primary hanya boleh masuk ke lokasi GALLON, SPS, RAW, atau RTP.', 422);
             }
             if ($tipePenerimaan === 'Primary XWH' && $namaLokasiCek !== 'XWH') {
                 return $this->fail('Penerimaan Primary XWH hanya boleh masuk ke lokasi XWH.', 422);
@@ -662,7 +670,7 @@ class BarangMasukController extends Controller
 
             $sisa = (int) $cap - $terisi;
             if ($sisa < $q) {
-                return $this->fail('Tidak dapat menyimpan barang. Kapasitas slot penyimpanan tidak mencukupi.', 422);
+                return $this->fail('Tidak dapat menyimpan barang. Kapasitas slot penyimpanan tidak mencukupi (deep '.$idd.': sisa '.$sisa.', diminta '.$q.').', 422);
             }
         }
 
@@ -3019,8 +3027,10 @@ class BarangMasukController extends Controller
             }
         }
 
+        $nDeepSebelumSaring = count($prior) + count($stagingCandidates);
         $prior = $this->saringCampurProduk($prior, $lineProductMap, $idProduk);
         $stagingCandidates = $this->saringCampurProduk($stagingCandidates, $lineProductMap, $idProduk);
+        $nBuangCampur = $nDeepSebelumSaring - (count($prior) + count($stagingCandidates));
 
         // Urutan gabung ikut bobot setting produk (Secondary + ada setting).
         // REGULER di depan staging = prior dulu, staging jadi fallback.
@@ -3034,6 +3044,16 @@ class BarangMasukController extends Controller
             ? array_merge($stagingCandidates, $prior)
             : array_merge($prior, $stagingCandidates);
 
+        // Potret pra-filter (untuk diagnostik): lokasi + line apa saja yang dicek
+        // SEBELUM saring campur-produk & filter BB menggugurkan kandidat.
+        $cekPerLokasi = [];
+        $labelAwalSet = [];
+        foreach ($finalCandidates as $rowAwal) {
+            $lokAwal = strtoupper(trim((string) ($rowAwal['nama_lokasi'] ?? '?')));
+            $cekPerLokasi[$lokAwal] = ($cekPerLokasi[$lokAwal] ?? 0) + 1;
+            $labelAwalSet[strtoupper(trim((string) ($rowAwal['kode_block'] ?? ''))).'-'.((int) ($rowAwal['nomor_line'] ?? 0)).' ('.$lokAwal.')'] = true;
+        }
+
         if (empty($finalCandidates)) {
             if ($previewMode) {
                 return array_merge($previewEmpty, [
@@ -3046,6 +3066,7 @@ class BarangMasukController extends Controller
         }
 
         // Filter BB
+        $nBuangBb = 0;
         if (! empty($finalCandidates) && $bestBefore !== null && $bestBefore !== '') {
             $labelLineSet = [];
             foreach ($finalCandidates as $row) {
@@ -3078,6 +3099,7 @@ class BarangMasukController extends Controller
                 }
             }
             $filtered = [];
+            $nSebelumBb = count($finalCandidates);
             foreach ($finalCandidates as $row) {
                 $lbl = strtoupper($row['kode_block']).'-'.((int) $row['nomor_line']);
                 if (! isset($bbMap[$lbl])) {
@@ -3088,6 +3110,7 @@ class BarangMasukController extends Controller
                     $filtered[] = $row;
                 }
             }
+            $nBuangBb = $nSebelumBb - count($filtered);
             $finalCandidates = $filtered;
         }
 
@@ -3105,6 +3128,7 @@ class BarangMasukController extends Controller
         }
 
         $terisiMap = [];
+        $bookingMap = [];
         $bbMinDeepMap = [];
         $bbMaxDeepMap = [];
         $terisiRows = DB::table('stok_gudang_deep as sd')
@@ -3138,6 +3162,8 @@ class BarangMasukController extends Controller
                 $terisiMap[$idD] = 0.0;
             }
             $terisiMap[$idD] += (float) $row->terisi;
+            // Peta booking saja (untuk diagnostik error kapasitas).
+            $bookingMap[$idD] = ($bookingMap[$idD] ?? 0.0) + (float) $row->terisi;
 
             if (!isset($bbMinDeepMap[$idD]) || ($row->bb_min !== null && $row->bb_min < $bbMinDeepMap[$idD])) {
                 $bbMinDeepMap[$idD] = $row->bb_min;
@@ -3172,11 +3198,17 @@ class BarangMasukController extends Controller
         }
 
         $totalLeftPrior = 0;
+        $nDeepTanpaKapasitas = 0;
+        $bookingPrior = 0.0;
         foreach ($finalCandidates as $r) {
             $idDeep = (int) $r['id_deep'];
             $cap = (float) $r['kapasitas'];
             $filled = $terisiMap[$idDeep] ?? 0.0;
             $totalLeftPrior += max(0.0, $cap - $filled);
+            if ($cap <= 0) {
+                $nDeepTanpaKapasitas++;
+            }
+            $bookingPrior += (float) ($bookingMap[$idDeep] ?? 0.0);
         }
 
         // KONVERSI LINE KOSONG DI BLOK YANG SAMA DULU SEBELUM NUMPANG
@@ -3253,6 +3285,7 @@ class BarangMasukController extends Controller
         $need = $qty;
         $alloc = [];
         $ringkasan = [];
+        $nSkipBbDeep = 0;
 
         foreach ($finalCandidates as $r) {
             if ($need <= 0) break;
@@ -3268,6 +3301,7 @@ class BarangMasukController extends Controller
             if ($tipePenerimaan !== 'REJECT' && $filled > 0 && $bestBefore !== null && $bestBefore !== ''
                 && ($bbMinDeep !== null || $bbMaxDeep !== null)
                 && ($bbMinDeep !== $bestBefore || $bbMaxDeep !== $bestBefore)) {
+                $nSkipBbDeep++;
                 continue;
             }
 
@@ -3302,7 +3336,44 @@ class BarangMasukController extends Controller
         }
 
         if ($need > 0) {
-            return ['error' => 'Kapasitas line tidak cukup. Silahkan buat layout/line baru untuk menambah kapasitas', 'code' => 422];
+            // Diagnostik: line apa saja yang dicek + kenapa kandidat gugur,
+            // agar user tahu persis harus buat layout, tunggu booking, atau samakan BB.
+            // Pakai potret PRA-filter agar terlihat walau semua kandidat gugur.
+            $daftarLine = implode(', ', array_slice(array_keys($labelAwalSet), 0, 8));
+            if (count($labelAwalSet) > 8) {
+                $daftarLine .= ', ...';
+            }
+            $ringkasLokasi = [];
+            foreach ($cekPerLokasi as $lok => $n) {
+                $ringkasLokasi[] = "{$lok}: {$n} deep";
+            }
+            $infoCek = $ringkasLokasi
+                ? ' Dicek '.array_sum($cekPerLokasi).' deep pada line: '.$daftarLine.' (per lokasi: '.implode(', ', $ringkasLokasi).').'
+                : ' Tidak ada kandidat deep sama sekali (produk belum terdaftar di line mana pun).';
+            $adaRawRtp = false;
+            foreach ($cekPerLokasi as $lok => $n) {
+                if (in_array($lok, ['RAW', 'RTP'], true)) {
+                    $adaRawRtp = true;
+                    break;
+                }
+            }
+            $hintRaw = $adaRawRtp ? '' : ' Tidak ada line RAW/RTP yang terdaftar untuk produk ini — daftarkan produk ke line RAW/RTP via prioritas-lokasi-produk.';
+            $sebab = [];
+            if ($nBuangCampur > 0) {
+                $sebab[] = "{$nBuangCampur} deep dibuang karena line-nya berisi produk lain";
+            }
+            if ($nBuangBb > 0) {
+                $sebab[] = "{$nBuangBb} deep dibuang karena line masih berisi BB lebih tua";
+            }
+            if ($nSkipBbDeep > 0) {
+                $sebab[] = "{$nSkipBbDeep} deep dilewati karena sudah berisi BB/batch berbeda";
+            }
+            if ($nDeepTanpaKapasitas > 0) {
+                $sebab[] = "{$nDeepTanpaKapasitas} deep tanpa kapasitas (kapasitas 0) — perbaiki layout";
+            }
+            $infoSebab = $sebab ? ' Penyebab: '.implode('; ', $sebab).'.' : '';
+
+            return ['error' => "Kapasitas line tidak cukup (butuh {$qty}, sisa {$totalLeftPrior} dari ".count($finalCandidates)." deep lolos filter; terbooking Pending: {$bookingPrior}).{$infoCek}{$infoSebab}{$hintRaw} Silahkan buat layout/line baru untuk menambah kapasitas", 'code' => 422];
         }
 
         $qtyTeralokasi = $qty - $need;
@@ -3766,7 +3837,7 @@ class BarangMasukController extends Controller
             ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
             ->where('d.id_deep', $idDeep)
             ->where('d.id_pengguna_lokasi', $idPenggunaLokasi)
-            ->selectRaw('UPPER(TRIM(b.kode_block)) AS kode_block, UPPER(TRIM(l.nama_lokasi)) AS nama_lokasi')
+            ->selectRaw('UPPER(TRIM(b.kode_block)) AS kode_block, UPPER(TRIM(COALESCE(NULLIF(l.kategori, \'\'), l.nama_lokasi))) AS nama_lokasi')
             ->first();
 
         return $row ? ['kode_block' => trim((string) $row->kode_block), 'nama_lokasi' => trim((string) $row->nama_lokasi)] : null;
@@ -4141,10 +4212,12 @@ class BarangMasukController extends Controller
     private function kategoriLokasi(string $tipePenerimaan): ?\Closure
     {
         if ($tipePenerimaan === 'Primary') {
-            return fn ($q) => $q->whereRaw("UPPER(TRIM(l.nama_lokasi)) IN ('GALLON','SPS')");
+            $daftar = implode(',', array_map(fn ($l) => "'{$l}'", self::LOKASI_PRIMARY));
+
+            return fn ($q) => $q->whereRaw("UPPER(TRIM(COALESCE(NULLIF(l.kategori, ''), l.nama_lokasi))) IN ({$daftar})");
         }
         if ($tipePenerimaan === 'Primary XWH') {
-            return fn ($q) => $q->whereRaw("UPPER(TRIM(l.nama_lokasi)) = 'XWH'");
+            return fn ($q) => $q->whereRaw("UPPER(TRIM(COALESCE(NULLIF(l.kategori, ''), l.nama_lokasi))) = 'XWH'");
         }
         return null;
     }

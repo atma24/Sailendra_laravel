@@ -343,7 +343,7 @@ export default function OutboundDetailPage() {
   const shownGins = new Set(items.map((it) => norm(it.gin_no).toLowerCase()));
   const hiddenGins = driverGins.filter((g) => !shownGins.has(g.toLowerCase()));
   const hiddenCount = Math.max(0, driverRowCount - items.length);
-  // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan keluar permanen).
+  // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan/XWH keluar permanen).
   const adaAutoInbound = items.some((it) => ["SECONDARY", "FOC"].includes(String(it.tipe_pengeluaran || "").trim().toUpperCase()));
   const backQs = new URLSearchParams();
   if (lok) backQs.set("lok", lok);

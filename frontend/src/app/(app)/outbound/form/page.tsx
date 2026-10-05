@@ -32,8 +32,9 @@ const norm = (v: unknown) => String(v ?? "").trim();
 // No Mobil: tanpa spasi, wajib ada huruf + angka, minimal 5 char, maks 30.
 const isValidNoMobil = (v: unknown) => /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{5,30}$/.test(norm(v).toUpperCase());
 const butuhMobilDriver = (tipe: string) => tipe !== "Pemusnahan" && tipe !== "FOC";
-// FOC: kolom sama seperti Secondary, tapi yang wajib hanya driver (+ tanggal).
-const butuhDriver = (tipe: string) => tipe === "Primary" || tipe === "Secondary" || tipe === "FOC";
+// XWH ikut aturan Primary: wajib driver (+ tanggal) dan tujuan/plant.
+const butuhDriver = (tipe: string) => tipe === "Primary" || tipe === "Secondary" || tipe === "FOC" || tipe === "XWH";
+const butuhTujuan = (tipe: string) => tipe === "Primary" || tipe === "XWH";
 
 const css = `
 .outbound-form-page { display: flex; flex-direction: column; gap: 16px; padding-bottom: 32px; max-width: 1100px; margin: 0 auto; }
@@ -207,7 +208,7 @@ export default function OutboundFormPage() {
     setErrMobil("");
     if (butuhDriver(tipe) && norm(namaDriver) === "") { notify("error", "Nama Driver wajib diisi."); return; }
     if (tipe === "Secondary" && norm(ginNo) === "") { notify("error", "No GIN wajib diisi untuk Secondary."); return; }
-    if (tipe === "Primary" && norm(tujuan) === "") { notify("error", "Tujuan wajib diisi untuk Primary."); return; }
+    if (butuhTujuan(tipe) && norm(tujuan) === "") { notify("error", `Tujuan wajib diisi untuk ${tipe}.`); return; }
     const partialManual = items.findIndex((it) => it.id_produk > 0 && ((it.id_line > 0 && it.batch === "") || (it.id_line <= 0 && it.batch !== "")));
     if (partialManual >= 0) { notify("error", `Item ${partialManual + 1}: lokasi manual belum lengkap. Lengkapi Line + Batch atau klik "Batalkan Lokasi" untuk pakai FEFO otomatis.`); return; }
     const payloadItems = items
@@ -232,7 +233,8 @@ export default function OutboundFormPage() {
         id_pengguna: session.user.id_pengguna,
         id_pengguna_lokasi: idPenggunaLokasi,
         tipe_pengeluaran: tipe,
-        tujuan: tipe === "Primary" ? tujuan : "",
+        kategori_lokasi: tipe === "XWH" ? "XWH" : undefined,
+        tujuan: butuhTujuan(tipe) ? tujuan : "",
         no_mobil: norm(noMobil) === "" ? "" : norm(noMobil).toUpperCase(),
         nama_driver: namaDriver,
         gin_no: ginNo,
@@ -315,18 +317,19 @@ export default function OutboundFormPage() {
           <div>
             <label className="outbound-label">Tipe Pengeluaran<span className="outbound-req">*</span></label>
             <div className="outbound-select-wrap">
-              <select className="outbound-select" value={tipe} onChange={(e) => { setTipe(e.target.value); setErrMobil(""); if (e.target.value !== "Primary") setTujuan(""); }}>
+              <select className="outbound-select" value={tipe} onChange={(e) => { setTipe(e.target.value); setErrMobil(""); if (!butuhTujuan(e.target.value)) setTujuan(""); }}>
                 <option value="Primary">Pengeluaran Primary</option>
                 <option value="Secondary">Pengeluaran Secondary</option>
                 <option value="Pemusnahan">Pemusnahan</option>
                 <option value="FOC">FOC (Free of Charge)</option>
+                <option value="XWH">Pengeluaran XWH</option>
               </select>
               <i className="bi bi-chevron-down outbound-select-icon"></i>
             </div>
           </div>
           <div>
-            <label className="outbound-label">Tujuan{tipe === "Primary" && <span className="outbound-req">*</span>}</label>
-            <PlantPicker plantList={plantList} value={tujuan} disabled={tipe !== "Primary"}
+            <label className="outbound-label">Tujuan{butuhTujuan(tipe) && <span className="outbound-req">*</span>}</label>
+            <PlantPicker plantList={plantList} value={tujuan} disabled={!butuhTujuan(tipe)}
               onChange={setTujuan} />
           </div>
           <div>
@@ -383,7 +386,7 @@ export default function OutboundFormPage() {
                   onChange={(e) => updateItem(idx, { jumlah: e.target.value })} />
               </div>
 
-              {submittedId <= 0 && <ManualPicker key={`${idx}-${it.id_produk}`} item={it} lokasiQuery={lokasiQuery} onError={(m) => notify("error", m)} onPick={(idLine, batch, bestBefore) =>
+              {submittedId <= 0 && <ManualPicker key={`${idx}-${it.id_produk}-${tipe}`} item={it} lokasiQuery={lokasiQuery} kunciXwh={tipe === "XWH"} onError={(m) => notify("error", m)} onPick={(idLine, batch, bestBefore) =>
                 updateItem(idx, { id_line: idLine, batch, best_before: bestBefore })} />}
 
               {previewItems.length > 0 && previewItems[idx]?.rencana_deep?.length > 0 && (
@@ -522,10 +525,10 @@ function PlantPicker({ plantList, value, onChange, disabled }: {
   );
 }
 
-function ManualPicker({ item, lokasiQuery, onPick, onError }: {
-  item: Item; lokasiQuery: string; onPick: (idLine: number, batch: string, bestBefore: string) => void; onError: (msg: string) => void;
+function ManualPicker({ item, lokasiQuery, kunciXwh, onPick, onError }: {
+  item: Item; lokasiQuery: string; kunciXwh?: boolean; onPick: (idLine: number, batch: string, bestBefore: string) => void; onError: (msg: string) => void;
 }) {
-  type LokRow = { id_lokasi: number; nama_lokasi: string; total_qty?: number };
+  type LokRow = { id_lokasi: number; nama_lokasi: string; kategori?: string; total_qty?: number };
   type BlockRow = { id_block: number; kode_block: string; total_qty?: number };
   type LineRow = { id_line: number; nomor_line: string; total_qty?: number };
   type BatchRow = { batch: string; best_before: string; qty_sisa?: number };
@@ -569,6 +572,9 @@ function ManualPicker({ item, lokasiQuery, onPick, onError }: {
     onError(m);
   };
 
+  const katOf = (l: { nama_lokasi?: string; kategori?: string }) =>
+    String(l.kategori || l.nama_lokasi || "").trim().toUpperCase();
+
   const loadLokasi = async () => {
     if (idProduk <= 0) { onError("Pilih produk terlebih dahulu."); return; }
     if (open) { setOpen(false); return; }
@@ -577,9 +583,10 @@ function ManualPicker({ item, lokasiQuery, onPick, onError }: {
     setLoading("lokasi"); setErr("");
     try {
       const r = await apiGet<LokRow[]>(stokUrl("manual_lokasi", {}));
-      const list = r.data || [];
+      const fetched = r.data || [];
+      const list = kunciXwh ? fetched.filter((l) => katOf(l) === "XWH") : fetched;
       setLoks(list);
-      if (!list.length) setErr("Tidak ada stok tersedia untuk produk ini di lokasi Anda.");
+      if (!list.length) setErr(kunciXwh ? "Tidak ada stok XWH tersedia untuk produk ini di lokasi Anda." : "Tidak ada stok tersedia untuk produk ini di lokasi Anda.");
     } catch (e) { failMsg(e, "Gagal memuat lokasi."); } finally { setLoading(null); }
   };
 
@@ -589,6 +596,14 @@ function ManualPicker({ item, lokasiQuery, onPick, onError }: {
     onPick(0, "", "");
     setErr("");
     if (!v) return;
+    if (kunciXwh) {
+      const sel = loks.find((l) => String(l.id_lokasi) === String(v));
+      if (sel && katOf(sel) !== "XWH") {
+        setErr("Tipe XWH hanya boleh mengambil dari lokasi XWH.");
+        setSelLokasi("");
+        return;
+      }
+    }
     setLoading("block");
     try {
       const r = await apiGet<BlockRow[]>(stokUrl("manual_block", { id_lokasi: angka(v) }));
@@ -718,7 +733,7 @@ function ManualPicker({ item, lokasiQuery, onPick, onError }: {
             </select>
           </div>
 
-          <div className="outbound-manual-info">Jika lokasi tidak dipilih / dibatalkan, sistem akan menggunakan FEFO otomatis.</div>
+          <div className="outbound-manual-info">{kunciXwh ? "Tipe XWH: hanya lokasi XWH. Jika lokasi tidak dipilih, sistem memakai FEFO otomatis dari stok XWH." : "Jika lokasi tidak dipilih / dibatalkan, sistem akan menggunakan FEFO otomatis."}</div>
         </div>
       )}
     </div>
