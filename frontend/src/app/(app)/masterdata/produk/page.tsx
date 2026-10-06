@@ -52,7 +52,7 @@ const config: MasterCrudConfig = {
   fields: [
     { key: "id_produk", label: "ID Produk", type: "number", min: 1, maxLength: 15 },
     { key: "nama_produk", label: "Nama Produk", type: "text", maxLength: 60 },
-    { key: "satuan", label: "Satuan", type: "select", options: ["BOX", "GALLON", "MP"] },
+    { key: "satuan", label: "Satuan", type: "select", options: ["BOX", "GALLON", "MP", "RAW", "RTP"] },
     { key: "isi_per_pcs", label: "Isi per pcs", type: "number", min: 1 },
     { key: "tanpa_batch", label: "Tanpa Batch (BB otomatis 9999)", type: "checkbox" },
   ],

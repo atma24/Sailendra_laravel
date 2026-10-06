@@ -12,7 +12,7 @@ class ProdukController extends Controller
 {
     use ApiResponse;
 
-    private const SATUAN = ['GALLON', 'BOX', 'MP'];
+    private const SATUAN = ['GALLON', 'BOX', 'MP', 'RAW', 'RTP'];
 
     public function index(Request $request)
     {
@@ -45,7 +45,7 @@ class ProdukController extends Controller
         }
 
         if (! in_array($satuan, self::SATUAN, true)) {
-            return $this->fail('Satuan tidak valid (GALLON/BOX/MP)');
+            return $this->fail('Satuan tidak valid (GALLON/BOX/MP/RAW/RTP)');
         }
 
         if ($isiPerPcs <= 0) {
@@ -110,7 +110,7 @@ class ProdukController extends Controller
         if ($request->has('satuan')) {
             $satuan = trim((string) $request->input('satuan'));
             if (! in_array($satuan, self::SATUAN, true)) {
-                return $this->fail('Satuan tidak valid (GALLON/BOX/MP)');
+                return $this->fail('Satuan tidak valid (GALLON/BOX/MP/RAW/RTP)');
             }
             $produk->satuan = $satuan;
         }
