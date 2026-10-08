@@ -2815,6 +2815,10 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         $skipped = 0;
         $failed = 0;
         $details = [];
+        $skippedDetails = [];
+
+        // Nomor urut per Danone ID + lokasi di dalam file (mulai 01).
+        $nomorUrutFoc = [];
 
         foreach ($rowsData as $idx => $data) {
             $rowNum = $idx + 2;
@@ -2862,11 +2866,142 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             $noMobil = '-';
             $catatan = $rawPengambil !== '' ? $rawPengambil : null;
 
+            // GIN unik FOC: DanoneID-NomorUrut-KodeLokasi (contoh: 93137-01-9021).
+            // Danone ID adalah ID pengaju yang bisa berulang antar pengambilan,
+            // sehingga tidak bisa dipakai mentah sebagai GIN.
+            $danoneBersih = trim((string) preg_replace('/[^a-zA-Z0-9_-]/', '', $rawDanone));
+            $ginFoc = '';
+            $lewatiBaris = false;
+            $hapusPlainIds = [];
+            if ($danoneBersih !== '' && $rawLokasi !== '') {
+                $kunciUrut = $danoneBersih . '|' . $rawLokasi;
+                $nomorUrut = ($nomorUrutFoc[$kunciUrut] ?? 0) + 1;
+
+                // Jamin unik lintas upload: geser nomor urut bila kandidat
+                // sudah berstatus final untuk event yang berbeda.
+                $percobaan = 0;
+                while (true) {
+                    $kandidat = $danoneBersih . '-' . str_pad((string) $nomorUrut, 2, '0', STR_PAD_LEFT) . '-' . $rawLokasi;
+                    $barisAda = DB::table('barang_keluar')
+                        ->where('gin_no', $kandidat)
+                        ->where('id_pengguna_lokasi', $rawLokasi)
+                        ->first(['status', 'jumlah', 'tanggal_keluar', 'no_dn']);
+
+                    if (! $barisAda) {
+                        // Baris format lama (pra-perbaikan: gin_no = Danone ID polos) untuk
+                        // Danone + tanggal + lokasi yang sama.
+                        $plainAda = DB::table('barang_keluar')
+                            ->where('gin_no', $danoneBersih)
+                            ->where('id_pengguna_lokasi', $rawLokasi)
+                            ->where('tipe_pengeluaran', 'FOC')
+                            ->where('tanggal_keluar', $tanggalKeluar)
+                            ->whereNotIn('status', ['Canceled', 'canceled'])
+                            ->first(['id_barang_keluar', 'status', 'jumlah', 'no_dn']);
+                        if ($plainAda) {
+                            $dnPlain = trim((string) ($plainAda->no_dn ?? ''));
+                            $finalPlain = in_array(strtolower(trim((string) ($plainAda->status ?? ''))), ['selesai', 'confirmed'], true);
+                            $samaEvent = ((int) ($plainAda->jumlah ?? 0) === $jumlah
+                                && ($rawDn === '' || $dnPlain === '' || $dnPlain === $rawDn));
+                            if ($finalPlain && $samaEvent) {
+                                // Sudah final sebagai format lama -> lewati, bukan gagal.
+                                $skipped++;
+                                $skippedDetails[] = "Baris {$rowNum} (Danone {$rawDanone}): sudah tercatat sebagai {$danoneBersih}";
+                                $lewatiBaris = true;
+                                break;
+                            }
+                            if (! $finalPlain) {
+                                // Migrasi: baris lama yang belum final diganti format komposit.
+                                // Dihapus bersama rencananya saat simpan (atomic), agar tidak ganda.
+                                $hapusPlainIds[] = (int) $plainAda->id_barang_keluar;
+                            }
+                            // Bila final tetapi data beda -> jatuh ke pengaman duplikat di bawah (ditolak).
+                        }
+                        $ginFoc = $kandidat;
+                        break;
+                    }
+
+                    if (! in_array(strtolower(trim((string) ($barisAda->status ?? ''))), ['selesai', 'confirmed'], true)) {
+                        // Masih Draft/Pending: hanya upsert bila event yang sama.
+                        // Event berbeda yang kebetulan memakai kandidat sama -> geser nomor urut.
+                        $dnAdaDraft = trim((string) ($barisAda->no_dn ?? ''));
+                        if (trim((string) ($barisAda->tanggal_keluar ?? '')) === $tanggalKeluar
+                            && (int) ($barisAda->jumlah ?? 0) === $jumlah
+                            && ($rawDn === '' || $dnAdaDraft === '' || $dnAdaDraft === $rawDn)) {
+                            $ginFoc = $kandidat;
+                            break;
+                        }
+                        $nomorUrut++;
+                        $percobaan++;
+                        if ($percobaan > 1000) {
+                            $failed++;
+                            $details[] = "Baris {$rowNum} (Danone {$rawDanone}): tidak dapat membuat GIN unik";
+                            $lewatiBaris = true;
+                            break;
+                        }
+                        continue;
+                    }
+
+                    // Kandidat sudah final. Event yang sama (tanggal + qty + DN cocok) -> lewati.
+                    $dnAda = trim((string) ($barisAda->no_dn ?? ''));
+                    if (trim((string) ($barisAda->tanggal_keluar ?? '')) === $tanggalKeluar
+                        && (int) ($barisAda->jumlah ?? 0) === $jumlah
+                        && ($rawDn === '' || $dnAda === '' || $dnAda === $rawDn)) {
+                        $skipped++;
+                        $skippedDetails[] = "Baris {$rowNum} (Danone {$rawDanone} -> {$kandidat}): sudah tercatat";
+                        $lewatiBaris = true;
+                        break;
+                    }
+
+                    // Event berbeda tetapi kandidat bertabrakan -> geser nomor urut.
+                    $nomorUrut++;
+                    $percobaan++;
+                    if ($percobaan > 1000) {
+                        $failed++;
+                        $details[] = "Baris {$rowNum} (Danone {$rawDanone}): tidak dapat membuat GIN unik";
+                        $lewatiBaris = true;
+                        break;
+                    }
+                }
+
+                $nomorUrutFoc[$kunciUrut] = $nomorUrut;
+            }
+            // Bila Danone ID / lokasi kosong: GIN dikosongkan agar simpanOutbound auto-generate (FOC-YYYYMMDD-XXXX).
+
+            if ($lewatiBaris) {
+                continue;
+            }
+
+            // Pengaman duplikat: Danone ID + tanggal + lokasi yang sama tidak boleh
+            // tercatat dua kali (di GIN berbeda). Baris yang dibatalkan (Canceled)
+            // dan baris lama yang akan dimigrasi dikecualikan.
+            if ($ginFoc !== '') {
+                $escLike = fn ($s) => str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $s);
+                $cekDuplikat = DB::table('barang_keluar')
+                    ->where('id_pengguna_lokasi', $rawLokasi)
+                    ->where('tipe_pengeluaran', 'FOC')
+                    ->where('tanggal_keluar', $tanggalKeluar)
+                    ->whereNotIn('status', ['Canceled', 'canceled'])
+                    ->where('gin_no', '!=', $ginFoc)
+                    ->where(function ($q) use ($danoneBersih, $rawLokasi, $escLike) {
+                        $q->where('gin_no', $danoneBersih)
+                            ->orWhere('gin_no', 'like', $escLike($danoneBersih) . '-%-' . $escLike($rawLokasi));
+                    });
+                if (! empty($hapusPlainIds)) {
+                    $cekDuplikat->whereNotIn('id_barang_keluar', $hapusPlainIds);
+                }
+                $duplikat = $cekDuplikat->first(['gin_no']);
+                if ($duplikat) {
+                    $failed++;
+                    $details[] = "Baris {$rowNum} (Danone {$rawDanone}): Danone {$rawDanone} sudah ada pengambilan pada {$tanggalKeluar} di lokasi {$rawLokasi} (GIN {$duplikat->gin_no}). Duplikat ditolak.";
+                    continue;
+                }
+            }
+
             $payload = [
                 'id_pengguna_lokasi' => $rawLokasi,
                 'id_pengguna' => $idPengguna,
                 'tipe_pengeluaran' => 'FOC',
-                'gin_no' => $rawDanone,
+                'gin_no' => $ginFoc,
                 'nama_driver' => $namaDriver,
                 'no_mobil' => $noMobil,
                 'jumlah' => $jumlah,
@@ -2885,23 +3020,33 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             ];
 
             try {
+                // Atomic: hapus baris lama yang dimigrasi + simpan baris komposit.
+                // Gagal simpan -> hapus dibatalkan (rollback), data lama aman.
+                DB::beginTransaction();
+                if (! empty($hapusPlainIds)) {
+                    DB::table('rencana_keluar_deep')->whereIn('id_barang_keluar', $hapusPlainIds)->delete();
+                    DB::table('barang_keluar')->whereIn('id_barang_keluar', $hapusPlainIds)->delete();
+                }
                 $this->simpanOutbound($payload);
+                DB::commit();
                 $inserted++;
             } catch (Throwable $e) {
+                DB::rollBack();
                 $failed++;
-                $details[] = "Baris {$rowNum} (Danone {$rawDanone}): {$e->getMessage()}";
+                $labelGin = $ginFoc !== '' ? "Danone {$rawDanone} -> {$ginFoc}" : "Danone {$rawDanone}";
+                $details[] = "Baris {$rowNum} ({$labelGin}): {$e->getMessage()}";
             }
         }
 
         $msg = "Upload FOC selesai! {$inserted} baris berhasil.";
         if ($skipped > 0) {
-            $msg .= " {$skipped} baris dilewati.";
+            $msg .= ' ' . $skipped . ' baris dilewati (sudah tercatat): ' . implode('; ', array_slice($skippedDetails, 0, 10));
         }
         if ($failed > 0) {
             $msg .= " {$failed} baris gagal: " . implode('; ', array_slice($details, 0, 10));
         }
 
-        return $this->ok(['inserted' => $inserted, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details], $msg);
+        return $this->ok(['inserted' => $inserted, 'skipped' => $skipped, 'failed' => $failed, 'details' => $details, 'skipped_details' => $skippedDetails], $msg);
     }
 
     /**

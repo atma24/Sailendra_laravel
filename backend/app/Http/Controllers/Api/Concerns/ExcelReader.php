@@ -67,6 +67,12 @@ trait ExcelReader
         foreach ($xml->sheetData->row as $row) {
             $cells = [];
             foreach ($row->c as $cell) {
+                // Hormati referensi kolom (atribut r, contoh: "M2") agar sel kosong
+                // di tengah baris tidak menggeser kolom-kolom sesudahnya.
+                $colIdx = $this->kolomKeIndeks((string) ($cell->attributes()['r'] ?? ''));
+                if ($colIdx < 0) {
+                    $colIdx = count($cells);
+                }
                 $t = (string) ($cell->attributes()['t'] ?? '');
                 $v = (string) ($cell->v ?? '');
                 if ($t === 's' && $v !== '') {
@@ -74,16 +80,44 @@ trait ExcelReader
                 } else {
                     $val = $v;
                 }
-                $cells[] = $val;
+                while (count($cells) < $colIdx) {
+                    $cells[] = '';
+                }
+                $cells[$colIdx] = $val;
             }
             if ($header === null) {
                 $header = $cells;
             } else {
+                // Normalisasi panjang baris: sel kosong di ujung (trailing) juga
+                // tidak ditulis di XML, samakan dengan lebar header.
+                while (count($cells) < count($header)) {
+                    $cells[] = '';
+                }
                 $rows[] = $cells;
             }
         }
 
         return ['header' => $header ?? [], 'rows' => $rows];
+    }
+
+    /**
+     * Ubah referensi sel (contoh: "M2", "AB10") menjadi indeks kolom 0-based.
+     * Return -1 bila referensi tidak valid (pemanggil fallback ke posisi sekuensial).
+     */
+    private function kolomKeIndeks(string $refSel): int
+    {
+        $refSel = strtoupper(trim($refSel));
+        if (! preg_match('/^([A-Z]+)(\d+)$/', $refSel, $m)) {
+            return -1;
+        }
+        $huruf = $m[1];
+        $indeks = 0;
+        $panjang = strlen($huruf);
+        for ($i = 0; $i < $panjang; $i++) {
+            $indeks = $indeks * 26 + (ord($huruf[$i]) - 64);
+        }
+
+        return $indeks - 1;
     }
 
     /**
@@ -125,6 +159,10 @@ trait ExcelReader
                 $cells = [];
                 $sub = $reader->expand();
                 foreach ($sub->getElementsByTagName('c') as $cell) {
+                    $colIdx = $this->kolomKeIndeks($cell->getAttribute('r'));
+                    if ($colIdx < 0) {
+                        $colIdx = count($cells);
+                    }
                     $t = $cell->getAttribute('t');
                     $v = '';
                     $children = $cell->getElementsByTagName('v');
@@ -136,11 +174,17 @@ trait ExcelReader
                     } else {
                         $val = $v;
                     }
-                    $cells[] = $val;
+                    while (count($cells) < $colIdx) {
+                        $cells[] = '';
+                    }
+                    $cells[$colIdx] = $val;
                 }
                 if ($rowIndex === 0) {
                     $header = $cells;
                 } else {
+                    while (count($cells) < count($header ?? [])) {
+                        $cells[] = '';
+                    }
                     $rowCallback($cells, $rowIndex, $header);
                 }
                 $rowIndex++;
