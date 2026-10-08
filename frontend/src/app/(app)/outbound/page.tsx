@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { apiGet } from "@/lib/api";
 import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 import UploadModal from "@/components/UploadModal";
@@ -16,16 +17,27 @@ type BkRow = {
   jumlah: number;
   tanggal_keluar: string;
   nama_driver: string;
+  no_mobil: string;
+  gin_no: string;
   status: string;
   catatan: string;
   tipe_pengeluaran: string;
+  nama_pengguna?: string;
+  ritase?: number | null;
 };
 
-type TanggalItem = {
+type TransaksiRow = {
+  key: string;
   tanggal: string;
-  total_item: number;
-  total_qty: number;
-  breakdown: Record<string, number>;
+  ginShipment: string;
+  ginRaw: string;
+  nama_driver: string;
+  no_mobil: string;
+  jumlah_item: number;
+  dibuat_oleh: string;
+  ritase: number | null;
+  status: string;
+  tipe_detail: string;
 };
 
 const PAGE_SIZE_LOCAL = 10;
@@ -39,29 +51,22 @@ const TIPE_OPTIONS = [
   { v: "xwh", label: "XWH", dot: "#0D9488" },
 ] as const;
 
-type SavedFilter = { q: string; tipe: string[]; dari: string; sampai: string };
+type SavedFilter = { tipe: string[] };
 
 const loadSaved = (): SavedFilter => {
   try {
     const raw = sessionStorage.getItem(FILTER_KEY);
-    if (!raw) return { q: "", tipe: [], dari: "", sampai: "" };
+    if (!raw) return { tipe: [] };
     const p = JSON.parse(raw) as Partial<SavedFilter>;
     const validTipe: string[] = TIPE_OPTIONS.map((o) => o.v);
     return {
-      q: typeof p.q === "string" ? p.q : "",
       tipe: Array.isArray(p.tipe) ? p.tipe.filter((t) => validTipe.includes(t)) : [],
-      dari: typeof p.dari === "string" ? p.dari.slice(0, 10) : "",
-      sampai: typeof p.sampai === "string" ? p.sampai.slice(0, 10) : "",
     };
   } catch {
-    return { q: "", tipe: [], dari: "", sampai: "" };
+    return { tipe: [] };
   }
 };
 
-const angka = (v: unknown) => {
-  const n = parseInt(String(v ?? ""), 10);
-  return isNaN(n) ? 0 : n;
-};
 const dateOnly = (v: unknown) => String(v ?? "").slice(0, 10);
 const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
 const kategoriOf = (r: BkRow): string => {
@@ -72,68 +77,65 @@ const kategoriOf = (r: BkRow): string => {
   if (t === "XWH") return "xwh";
   return "primary";
 };
-const kategoriLabel = (k: string) => TIPE_OPTIONS.find((o) => o.v === k)?.label || k;
-const kategoriDot = (k: string) => TIPE_OPTIONS.find((o) => o.v === k)?.dot || "#6b7280";
+
+const statusColor = (s: string): { bg: string; color: string } => {
+  const st = (s || "").toLowerCase();
+  if (st === "selesai" || st === "confirmed") return { bg: "#d1fae5", color: "#065f46" };
+  if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c" };
+  if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
+  return { bg: "#e5e7eb", color: "#4b5563" };
+};
+
+type SortKey = "tanggal" | "gin" | "driver" | "mobil" | "item" | "dibuat" | "ritase" | "status";
+type SortDir = "asc" | "desc";
 
 const css = `
 .outbound-page { display: flex; flex-direction: column; gap: 7px; }
 .outbound-card { background: #FFFFFF; border: 1px solid #e9edf5; border-radius: 11px; box-shadow: none; }
 .outbound-toolbar { padding: 8px; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
-.outbound-search-wrap { position: relative; flex: 1; min-width: 200px; }
-.outbound-search-input { width: 100%; height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 31px 0 12px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
-.outbound-search-input:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
-.outbound-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-soft); border: 0; background: transparent; cursor: pointer; }
-.outbound-reset-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: transparent; border: 1px dashed #cbd5e1; color: var(--text-soft); font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
-.outbound-reset-btn:hover { color: #DC2626; border-color: #DC2626; }
+.outbound-toolbar-right { display: flex; gap: 6px; flex-wrap: wrap; }
 .outbound-add-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
 .outbound-add-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
-.outbound-filter-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.outbound-upload-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border: none; white-space: nowrap; }
+.outbound-upload-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
 .outbound-filter-title { font-size: 11px; font-weight: 900; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.4px; }
 .outbound-tipe-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .outbound-tipe-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: var(--text-main); border: 1px solid #e2e7f0; background: #fbfcff; border-radius: 999px; padding: 5px 11px; cursor: pointer; user-select: none; }
 .outbound-tipe-check input { accent-color: var(--primary); }
 .outbound-tipe-check.is-on { background: var(--primary-soft); border-color: rgba(25,25,112,0.3); }
 .outbound-tipe-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
-.outbound-date-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
-.outbound-date-field { display: flex; flex-direction: column; gap: 4px; }
-.outbound-date-field label { font-size: 10px; font-weight: 850; color: var(--text-soft); }
-.outbound-date-field input { height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
-.outbound-date-field input:focus { background: #FFFFFF; border-color: var(--primary); }
-.outbound-active-hint { font-size: 10px; font-weight: 750; color: var(--text-soft); }
-.outbound-grid { display: flex; flex-direction: column; gap: 7px; }
-.outbound-date-card { padding: 8px 8px 8px 11px; text-decoration: none; color: inherit; display: block; border-left: 3px solid #3B82F6; }
-.outbound-date-card:hover { transform: translateY(-1px); border-color: rgba(25,25,112,.18); box-shadow: 0 8px 20px rgba(15,23,42,0.06); }
-.outbound-card-top { display: flex; align-items: center; gap: 8px; }
-.outbound-date-title { font-size: 12px; font-weight: 900; color: var(--text-main); letter-spacing: -0.2px; }
 .outbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; }
-.outbound-meta { font-size: 10px; font-weight: 750; color: var(--text-soft); margin-top: 3px; }
-.outbound-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.outbound-table-wrap { overflow-x: auto; }
+.outbound-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.outbound-table th { text-align: left; font-weight: 900; color: var(--text-main); background: #f7f9fd; border-bottom: 1px solid #e9edf5; padding: 8px 10px; white-space: nowrap; }
+.outbound-table th.sortable { cursor: pointer; user-select: none; }
+.outbound-table th.sortable:hover { background: #eef2fb; }
+.outbound-table th .sort-ico { margin-left: 5px; font-size: 9px; color: var(--text-soft); }
+.outbound-table th.is-sorted .sort-ico { color: var(--primary); }
+.outbound-table td { padding: 8px 10px; border-bottom: 1px solid #f1f4fa; color: var(--text-main); font-weight: 700; white-space: nowrap; }
+.outbound-table tbody tr:hover { background: #f9fbff; }
+.outbound-table tbody tr { cursor: pointer; }
 .outbound-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 850; border-radius: 999px; padding: 2px 8px; background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; white-space: nowrap; }
-.outbound-badge .outbound-tipe-dot { width: 6px; height: 6px; }
-.outbound-toolbar-right { display: flex; gap: 6px; flex-wrap: wrap; }
-.outbound-upload-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border: none; white-space: nowrap; }
-.outbound-upload-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
 `;
 
-export default function OutboundTanggalPage() {
+export default function OutboundPage() {
   const [progressText, setProgressText] = useState("");
   const { toast } = useToast();
   const session = useSession();
+  const router = useRouter();
   const multi = !!session && isMultiRole(session.user.role);
 
   // Filter tersimpan (tetap saat bolak-balik driver/detail).
   // Direset otomatis oleh AppLayout saat pindah ke halaman selain /outbound*.
   const [savedOnce] = useState<SavedFilter>(() =>
-    typeof window === "undefined" ? { q: "", tipe: [], dari: "", sampai: "" } : loadSaved()
+    typeof window === "undefined" ? { tipe: [] } : loadSaved()
   );
   const [rows, setRows] = useState<BkRow[]>([]);
-  const [search, setSearch] = useState(savedOnce.q);
-  const [keyword, setKeyword] = useState(savedOnce.q);
   const [tipe, setTipe] = useState<string[]>(savedOnce.tipe);
-  const [dari, setDari] = useState(savedOnce.dari);
-  const [sampai, setSampai] = useState(savedOnce.sampai);
   const [loaded, setLoaded] = useState(false);
   const [page, setPage] = useState(1);
+  const [sortKey, setSortKey] = useState<SortKey>("tanggal");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [modal, setModal] = useState<"" | "upload" | "primary" | "import" | "foc">("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -141,15 +143,9 @@ export default function OutboundTanggalPage() {
   // Simpan setiap perubahan filter.
   useEffect(() => {
     try {
-      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ q: keyword, tipe, dari, sampai }));
+      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ tipe }));
     } catch { /* abaikan */ }
-  }, [keyword, tipe, dari, sampai]);
-
-  // Debounce search → keyword (search server-side ke semua kolom).
-  useEffect(() => {
-    const t = setTimeout(() => setKeyword(search.trim()), 500);
-    return () => clearTimeout(t);
-  }, [search]);
+  }, [tipe]);
 
   const tipeKey = useMemo(() => [...tipe].sort().join(","), [tipe]);
 
@@ -157,10 +153,7 @@ export default function OutboundTanggalPage() {
     if (!session) return;
     try {
       const q = new URLSearchParams(lokasiParam(session));
-      if (keyword.trim()) q.append("cari", keyword.trim());
       if (tipeKey) q.append("tipe_detail", tipeKey);
-      if (dari) q.append("tanggal_dari", dari);
-      if (sampai) q.append("tanggal_sampai", sampai);
       const r = await apiGet<BkRow[]>(`/barang-keluar?${q.toString()}`);
       if (!signal?.aborted) setRows(r.data || []);
     } catch {
@@ -177,25 +170,15 @@ export default function OutboundTanggalPage() {
     fetchData(controller.signal);
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, keyword, tipeKey, dari, sampai]);
+  }, [session, tipeKey]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
     setPage(1);
-  }, [keyword, tipeKey, dari, sampai, rows]);
+  }, [tipeKey, rows]);
 
   const toggleTipe = (v: string) => {
     setTipe((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
-  };
-
-  const resetFilter = () => {
-    setSearch("");
-    setKeyword("");
-    setTipe([]);
-    setDari("");
-    setSampai("");
-    setPage(1);
-    try { sessionStorage.removeItem(FILTER_KEY); } catch { /* abaikan */ }
   };
 
   const openModal = (which: "upload" | "primary" | "import" | "foc") => {
@@ -268,67 +251,110 @@ export default function OutboundTanggalPage() {
 
   const canAdd = !!session && ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
   const isSuperAdmin = !!session && session.user.role === "SuperAdmin";
-  const filterActive = tipe.length > 0 || dari !== "" || sampai !== "" || keyword.trim() !== "";
+  const filterActive = tipe.length > 0;
 
-  // All data campur: satu kartu per tanggal berisi semua tipe pengeluaran.
-  // 1 transaksi = 1 driver pada tanggal itu, sama seperti halaman driver
-  // (bukan jumlah baris item). Badge per tipe = jumlah driver (klasifikasi
-  // kategori terbanyak milik driver) sehingga total badge = total transaksi.
-  const map: Record<string, TanggalItem> = {};
-  const groupCat: Record<string, Record<string, Record<string, number>>> = {};
+  // Satu baris = satu transaksi (grup driver + GIN), bukan per item produk.
+  const mapTrans: Record<string, TransaksiRow> = {};
+  const catCount: Record<string, Record<string, number>> = {};
   rows.forEach((row) => {
     const t = dateOnly(row.tanggal_keluar);
     if (!t || t.startsWith("0000")) return;
-    const g = (row.nama_driver || "").trim() || "Tanpa nama driver";
-    if (!map[t]) {
-      map[t] = { tanggal: t, total_item: 0, total_qty: 0, breakdown: {} };
-      groupCat[t] = {};
+    const nama = (row.nama_driver || "").trim() || "Tanpa nama driver";
+    const gin = (row.gin_no || "").trim() || "Tanpa GIN";
+    const key = `${nama}::${gin}`;
+    if (!mapTrans[key]) {
+      mapTrans[key] = {
+        key,
+        tanggal: t,
+        ginShipment: gin,
+        ginRaw: (row.gin_no || "").trim(),
+        nama_driver: nama,
+        no_mobil: row.no_mobil || "",
+        jumlah_item: 0,
+        dibuat_oleh: row.nama_pengguna || "",
+        ritase: row.ritase ?? null,
+        status: row.status || "",
+        tipe_detail: "",
+      };
+      catCount[key] = {};
     }
-    if (!groupCat[t][g]) {
-      groupCat[t][g] = {};
-      map[t].total_item++;
-    }
+    mapTrans[key].jumlah_item++;
+    if (!mapTrans[key].no_mobil && row.no_mobil) mapTrans[key].no_mobil = row.no_mobil;
+    if (!mapTrans[key].dibuat_oleh && row.nama_pengguna) mapTrans[key].dibuat_oleh = row.nama_pengguna;
+    if (mapTrans[key].ritase == null && row.ritase != null) mapTrans[key].ritase = row.ritase;
+    if (!mapTrans[key].status && row.status) mapTrans[key].status = row.status;
     const k = kategoriOf(row);
-    groupCat[t][g][k] = (groupCat[t][g][k] || 0) + 1;
-    map[t].total_qty += angka(row.jumlah);
+    catCount[key][k] = (catCount[key][k] || 0) + 1;
   });
-  Object.entries(groupCat).forEach(([t, groups]) => {
-    Object.values(groups).forEach((catCounts) => {
-      let best = "";
-      let bestN = -1;
-      Object.entries(catCounts).forEach(([c, n]) => {
-        if (n > bestN) { best = c; bestN = n; }
-      });
-      if (best) map[t].breakdown[best] = (map[t].breakdown[best] || 0) + 1;
+  Object.entries(catCount).forEach(([key, counts]) => {
+    let best = "";
+    let bestN = -1;
+    Object.entries(counts).forEach(([c, n]) => {
+      if (n > bestN) { best = c; bestN = n; }
     });
+    if (mapTrans[key]) mapTrans[key].tipe_detail = best;
   });
-  const list = Object.values(map).sort((a, b) => b.tanggal.localeCompare(a.tanggal));
-  const totalPages = totalPagesOf(list.length, PAGE_SIZE_LOCAL);
-  const paged = paginate(list, page, PAGE_SIZE_LOCAL);
+
+  const list = Object.values(mapTrans);
+  const sorted = [...list].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    switch (sortKey) {
+      case "tanggal": return dir * a.tanggal.localeCompare(b.tanggal);
+      case "gin": return dir * a.ginShipment.localeCompare(b.ginShipment, "id");
+      case "driver": return dir * a.nama_driver.localeCompare(b.nama_driver, "id");
+      case "mobil": return dir * a.no_mobil.localeCompare(b.no_mobil, "id");
+      case "item": return dir * (a.jumlah_item - b.jumlah_item);
+      case "dibuat": return dir * a.dibuat_oleh.localeCompare(b.dibuat_oleh, "id");
+      case "ritase": return dir * ((a.ritase ?? 0) - (b.ritase ?? 0));
+      case "status": return dir * a.status.localeCompare(b.status, "id");
+      default: return 0;
+    }
+  });
+
+  const totalPages = totalPagesOf(sorted.length, PAGE_SIZE_LOCAL);
+  const paged = paginate(sorted, page, PAGE_SIZE_LOCAL);
+
+  const onSort = (k: SortKey) => {
+    if (sortKey === k) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      setSortDir("asc");
+    }
+    setPage(1);
+  };
+
+  const columns: { key: SortKey; label: string }[] = [
+    { key: "tanggal", label: "Tanggal" },
+    { key: "gin", label: "GIN/Shipment" },
+    { key: "driver", label: "Nama Driver" },
+    { key: "mobil", label: "Nomor Mobil" },
+    { key: "item", label: "Jumlah Item" },
+    { key: "dibuat", label: "Dibuat Oleh" },
+    { key: "ritase", label: "Trip/Ritase" },
+    { key: "status", label: "Status" },
+  ];
 
   return (
     <div className="outbound-page">
       <style>{css}</style>
       <div className="outbound-card">
         <div className="outbound-toolbar">
-          <div className="outbound-search-wrap">
-            <input type="text" className="outbound-search-input" value={search}
-              placeholder="Cari produk, driver, GIN, SO, tujuan, catatan..." autoComplete="off"
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") setKeyword(search.trim()); }} />
-            {search.trim() !== "" && (
-              <button type="button" className="outbound-search-clear" aria-label="Bersihkan pencarian"
-                onClick={() => { setSearch(""); setKeyword(""); }}>
-                <i className="bi bi-x-lg"></i>
-              </button>
-            )}
+          <div style={{ flex: 1, minWidth: 180 }}>
+            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Tipe Pengeluaran</div>
+            <div className="outbound-tipe-grid">
+              {TIPE_OPTIONS.map((o) => {
+                const on = tipe.includes(o.v);
+                return (
+                  <label key={o.v} className={`outbound-tipe-check ${on ? "is-on" : ""}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggleTipe(o.v)} />
+                    <span className="outbound-tipe-dot" style={{ background: o.dot }}></span>
+                    {o.label}
+                  </label>
+                );
+              })}
+            </div>
           </div>
-          {filterActive && (
-            <button type="button" className="outbound-reset-btn" onClick={resetFilter}>
-              <i className="bi bi-arrow-counterclockwise"></i>
-              Reset
-            </button>
-          )}
           {canAdd && (
             <div className="outbound-toolbar-right">
               <button type="button" className="outbound-upload-btn" onClick={() => openModal("upload")}>
@@ -356,81 +382,63 @@ export default function OutboundTanggalPage() {
             </div>
           )}
         </div>
-
-        <div className="outbound-filter-panel">
-          <div>
-            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Tipe Pengeluaran</div>
-            <div className="outbound-tipe-grid">
-              {TIPE_OPTIONS.map((o) => {
-                const on = tipe.includes(o.v);
-                return (
-                  <label key={o.v} className={`outbound-tipe-check ${on ? "is-on" : ""}`}>
-                    <input type="checkbox" checked={on} onChange={() => toggleTipe(o.v)} />
-                    <span className="outbound-tipe-dot" style={{ background: o.dot }}></span>
-                    {o.label}
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-          <div>
-            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Range Tanggal</div>
-            <div className="outbound-date-row">
-              <div className="outbound-date-field">
-                <label>Dari</label>
-                <input type="date" value={dari} max={sampai || undefined} onChange={(e) => setDari(e.target.value)} />
-              </div>
-              <div className="outbound-date-field">
-                <label>Sampai</label>
-                <input type="date" value={sampai} min={dari || undefined} onChange={(e) => setSampai(e.target.value)} />
-              </div>
-            </div>
-          </div>
-          <div className="outbound-active-hint">
-            Filter tersimpan otomatis — tetap aktif saat membuka driver/detail, ter-reset saat pindah halaman lain atau tekan Reset.
-          </div>
-        </div>
       </div>
 
-      {paged.length === 0 ? (
-        <div className="outbound-card outbound-empty">
-          {filterActive ? "Tidak ada data yang cocok dengan filter/pencarian." : "Tidak ada data tanggal outbound."}
-        </div>
-      ) : (
-        <div className="outbound-grid">
-          {paged.map((item) => {
-            const qp = new URLSearchParams();
-            if (tipeKey) qp.set("tipe_detail", tipeKey);
-            if (multi) {
-              const l = lokasiParam(session);
-              if (l) { const [k, v] = l.split("="); if (v) qp.set(k, v); }
-            }
-            const qs = qp.toString();
-            return (
-              <Link key={item.tanggal} className="outbound-card outbound-date-card"
-                href={`/outbound/driver/${encodeURIComponent(item.tanggal)}${qs ? `?${qs}` : ""}`}>
-                <div className="outbound-card-top">
-                  <i className="bi bi-calendar3" style={{ color: "var(--primary)", fontSize: 16 }}></i>
-                  <div>
-                    <div className="outbound-date-title">{item.tanggal}</div>
-                    <div className="outbound-meta">{item.total_item} transaksi</div>
-                  </div>
-                  <i className="bi bi-chevron-right ms-auto" style={{ color: "var(--text-soft)", fontSize: 14 }}></i>
-                </div>
-                <div className="outbound-badges">
-                  {Object.entries(item.breakdown).sort().map(([k, c]) => (
-                    <span key={k} className="outbound-badge">
-                      <span className="outbound-tipe-dot" style={{ background: kategoriDot(k) }}></span>
-                      {kategoriLabel(k)} · {c}
-                    </span>
-                  ))}
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      )}
-      <Pagination page={page} totalPages={totalPages} totalItems={list.length} pageSize={PAGE_SIZE_LOCAL} onChange={setPage} />
+      <div className="outbound-card">
+        {paged.length === 0 ? (
+          <div className="outbound-empty">
+            {filterActive ? "Tidak ada data yang cocok dengan filter." : "Tidak ada data outbound."}
+          </div>
+        ) : (
+          <div className="outbound-table-wrap">
+            <table className="outbound-table">
+              <thead>
+                <tr>
+                  {columns.map((c) => {
+                    const active = sortKey === c.key;
+                    return (
+                      <th key={c.key} className={`sortable ${active ? "is-sorted" : ""}`}
+                        onClick={() => onSort(c.key)}
+                        title={`Urutkan ${c.label}`}>
+                        {c.label}
+                        <i className={`bi ${active ? (sortDir === "asc" ? "bi-caret-up-fill" : "bi-caret-down-fill") : "bi-arrow-down-up"} sort-ico`}></i>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {paged.map((item) => {
+                  const ss = statusColor(item.status);
+                  const qp = new URLSearchParams();
+                  qp.set("driver", item.nama_driver);
+                  if (item.ginRaw) qp.set("gin", item.ginRaw);
+                  if (item.tipe_detail) qp.set("tipe_detail", item.tipe_detail);
+                  if (multi) {
+                    const l = lokasiParam(session);
+                    if (l) { const [k, v] = l.split("="); if (v) qp.set(k, v); }
+                  }
+                  return (
+                    <tr key={item.key}
+                      onClick={() => { router.push(`/outbound/detail/${encodeURIComponent(item.tanggal)}?${qp.toString()}`); }}>
+                      <td>{item.tanggal}</td>
+                      <td><span className="outbound-badge">{item.ginShipment}</span></td>
+                      <td>{item.nama_driver}</td>
+                      <td>{item.no_mobil || "-"}</td>
+                      <td>{item.jumlah_item}</td>
+                      <td>{item.dibuat_oleh || "-"}</td>
+                      <td>{item.ritase ?? "-"}</td>
+                      <td><span className="outbound-badge" style={ss}>{item.status || "Draft"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <Pagination page={page} totalPages={totalPages} totalItems={sorted.length} pageSize={PAGE_SIZE_LOCAL} onChange={setPage} />
 
       {/* === MODALS === */}
       {modal && modal !== "foc" && (

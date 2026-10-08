@@ -33,6 +33,16 @@ type Props = {
   /** Semua item produk per kategori lokasi (card dinamis SPS/XWH/...). */
   produkPerKategori?: Summary["produk_per_kategori"];
   loading?: boolean;
+  /** Daftar tanggal snapshot (YYYY-MM-DD) untuk dropdown. */
+  daftarTanggal?: string[];
+  /** Tanggal snapshot terpilih ("" = realtime). */
+  tanggalSnapshot?: string;
+  /** Dipanggil saat user ganti tanggal snapshot ("" = kembali realtime). */
+  onTanggalChange?: (tanggal: string) => void;
+  /** True bila data yang tampil berasal dari snapshot (bukan realtime). */
+  modeSnapshot?: boolean;
+  /** Loading khusus fetch snapshot/daftar tanggal. */
+  snapshotLoading?: boolean;
 };
 
 /** Bulatkan ke 1 desimal (konsisten dengan backend). */
@@ -294,7 +304,15 @@ export default function StockSummaryCard({
   perKategori,
   produkPerKategori,
   loading,
+  daftarTanggal = [],
+  tanggalSnapshot = "",
+  onTanggalChange,
+  modeSnapshot = false,
+  snapshotLoading = false,
 }: Props) {
+  // Detail (tab lokasi + Gallon/Jug + Semua Item + dinamis) disembunyikan
+  // secara default; hanya ringkasan atas yang tampil.
+  const [detailTerbuka, setDetailTerbuka] = useState(false);
   // Tab lokasi dinamis: "Semua" + tiap kategori dari backend.
   // Lokasi baru yang ditambah manual otomatis muncul sebagai tombol.
   const kategoriTabs = Object.keys(perKategori ?? {});
@@ -390,8 +408,43 @@ export default function StockSummaryCard({
         <h2 className="text-[14px] font-extrabold tracking-tight text-blue-800">
           Warehouse Utilization
         </h2>
-        {/* Tombol lokasi: Semua + tiap kategori (dinamis dari backend) */}
+        {modeSnapshot && tanggalSnapshot !== "" && (
+          <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+            Snapshot: {tanggalSnapshot}
+          </span>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          {onTanggalChange && (
+            <select
+              value={tanggalSnapshot}
+              disabled={snapshotLoading || daftarTanggal.length === 0}
+              onChange={(e) => onTanggalChange(e.target.value)}
+              title="Tampilkan data snapshot tanggal tertentu (kosong = realtime)"
+              className="h-7 rounded-full border border-blue-200 bg-white px-2 text-[11px] font-bold text-blue-700 outline-none transition hover:bg-blue-50 disabled:opacity-50"
+            >
+              <option value="">Realtime</option>
+              {daftarTanggal.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={() => setDetailTerbuka((v) => !v)}
+            className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-blue-700 ring-1 ring-inset ring-blue-200 transition hover:bg-blue-50"
+          >
+            {detailTerbuka ? "Sembunyikan detail" : "Tampilkan detail"}
+          </button>
+        </div>
+      </div>
+
+      {detailTerbuka && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-semibold text-slate-400">
+            Lokasi:
+          </span>
           {[TAB_SEMUA, ...kategoriTabs].map((tab) => {
             const aktif = tabValid === tab;
             return (
@@ -410,7 +463,7 @@ export default function StockSummaryCard({
             );
           })}
         </div>
-      </div>
+      )}
 
       {/* Ringkasan atas: Total Produk + Storage */}
       <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -446,8 +499,11 @@ export default function StockSummaryCard({
         </div>
       </div>
 
-      {/* Detail gallon & jug, semua item, atau 1 card dinamis berisi item lokasi terpilih */}
-      {isSemua ? (
+      {/* Detail (Gallon/Jug, Semua Item, tab dinamis) disembunyikan default */}
+      {detailTerbuka && (
+        <>
+          {/* Detail gallon & jug, semua item, atau 1 card dinamis berisi item lokasi terpilih */}
+          {isSemua ? (
         <Group title="Semua Item" icon="bi-boxes">
           <div className="col-span-2 space-y-2 sm:col-span-3">
             {loading ? (
@@ -538,6 +594,8 @@ export default function StockSummaryCard({
             <Item label="Jug Vit" value={jugAktif.vit} loading={loading} />
           </Group>
         </div>
+      )}
+        </>
       )}
     </section>
   );

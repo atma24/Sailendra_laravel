@@ -49,6 +49,7 @@ class UtilisasiSnapshotService
             'storage_luar' => $luar,
             'gallon_breakdown' => $this->stock->gallonBreakdown($lokasiFilter),
             'gallon_zona' => $this->stock->gallonJugByZona($lokasiFilter),
+            'gallon_per_kategori' => $this->stock->gallonPerKategori($lokasiFilter),
             'produk_per_kategori' => $this->stock->produkPerKategori($lokasiFilter),
         ];
     }
@@ -85,6 +86,7 @@ class UtilisasiSnapshotService
                 'produk_realtime' => $payload['produk_realtime'] ?? null,
                 'gallon_breakdown' => $payload['gallon_breakdown'] ?? null,
                 'gallon_zona' => $payload['gallon_zona'] ?? null,
+                'gallon_per_kategori' => $payload['gallon_per_kategori'] ?? null,
                 'produk_per_kategori' => $payload['produk_per_kategori'] ?? null,
             ], JSON_UNESCAPED_UNICODE),
             'updated_at' => now(),

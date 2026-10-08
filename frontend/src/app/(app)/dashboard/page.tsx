@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSession } from "@/lib/auth";
 import FilterBar from "./components/FilterBar";
 import StockSummaryCard from "./components/StockSummaryCard";
@@ -16,6 +16,10 @@ import {
   useRackCapacity,
   type DashboardFilters,
 } from "./hooks/useDashboardSummary";
+import {
+  useDaftarTanggalUtilisasi,
+  useSnapshotUtilisasi,
+} from "./hooks/useUtilisasiSnapshot";
 
 export default function DashboardPage() {
   const session = useSession();
@@ -23,6 +27,30 @@ export default function DashboardPage() {
 
   const { summary, loading, error } = useDashboardSummary(session, filters);
   const kapasitasRak = useRackCapacity(session, filters.depo);
+
+  // Mode snapshot Warehouse Utilization: "" = realtime (default).
+  // Reset ke realtime setiap depo / bulan berubah.
+  const [tglSnapshot, setTglSnapshot] = useState("");
+  const depoSnapshot =
+    filters.depo || String(session?.user?.id_pengguna_lokasi ?? "");
+  const bulanSnapshot = `${filters.tahun}-${filters.bulan.padStart(2, "0")}`;
+  const daftarTanggal = useDaftarTanggalUtilisasi(
+    session,
+    depoSnapshot,
+    bulanSnapshot
+  );
+  const {
+    snapshot,
+    loading: snapshotLoading,
+    kosong: snapshotKosong,
+  } = useSnapshotUtilisasi(session, depoSnapshot, tglSnapshot);
+  const modeSnapshot = tglSnapshot !== "";
+
+  // Kembali ke realtime setiap depo / bulan berubah.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset mode snapshot saat filter berubah
+    setTglSnapshot("");
+  }, [filters.depo, filters.tahun, filters.bulan]);
 
   const storage = useMemo(() => {
     const reg = summary?.storage_regular;
@@ -54,25 +82,67 @@ export default function DashboardPage() {
 
       <PendingAlert pending={summary?.outbound?.pending ?? 0} />
 
-      {/* Ringkasan stok realtime: total produk, storage, detail gallon/jug */}
+      {/* Ringkasan stok: realtime default, atau snapshot tanggal terpilih */}
+      {modeSnapshot && snapshotKosong && !snapshotLoading && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-700">
+          Tidak ada snapshot untuk depo ini pada tanggal {tglSnapshot}.
+        </div>
+      )}
       <StockSummaryCard
-        totalProduk={summary?.produk_realtime?.total_produk ?? 0}
-        totalQty={summary?.produk_realtime?.total_qty ?? 0}
-        terpakai={storage.terpakai}
-        kapasitas={storage.kapasitas}
-        persen={storage.persen}
+        totalProduk={
+          modeSnapshot && snapshot
+            ? snapshot.produk_total
+            : (summary?.produk_realtime?.total_produk ?? 0)
+        }
+        totalQty={
+          modeSnapshot && snapshot
+            ? snapshot.produk_qty
+            : (summary?.produk_realtime?.total_qty ?? 0)
+        }
+        terpakai={modeSnapshot && snapshot ? snapshot.storage_dalam.terpakai : storage.terpakai}
+        kapasitas={modeSnapshot && snapshot ? snapshot.storage_dalam.kapasitas : storage.kapasitas}
+        persen={modeSnapshot && snapshot ? snapshot.storage_dalam.persen : storage.persen}
         luar={
-          summary?.storage_luar ?? { terpakai: 0, kapasitas: 0, persen: 0 }
+          modeSnapshot && snapshot
+            ? snapshot.storage_luar
+            : (summary?.storage_luar ?? { terpakai: 0, kapasitas: 0, persen: 0 })
         }
         gallon={
-          summary?.gallon_breakdown?.gallon ?? { vip: 0, aqua: 0, vit: 0 }
+          modeSnapshot && snapshot
+            ? snapshot.gallon_breakdown.gallon
+            : (summary?.gallon_breakdown?.gallon ?? { vip: 0, aqua: 0, vit: 0 })
         }
-        jug={summary?.gallon_breakdown?.jug ?? { aqua: 0, vit: 0 }}
-        gallonZona={summary?.gallon_zona?.gallon}
-        jugZona={summary?.gallon_zona?.jug}
-        perKategori={summary?.gallon_per_kategori}
-        produkPerKategori={summary?.produk_per_kategori}
-        loading={loading}
+        jug={
+          modeSnapshot && snapshot
+            ? snapshot.gallon_breakdown.jug
+            : (summary?.gallon_breakdown?.jug ?? { aqua: 0, vit: 0 })
+        }
+        gallonZona={
+          modeSnapshot && snapshot
+            ? (snapshot.detail?.gallon_zona?.gallon ?? undefined)
+            : summary?.gallon_zona?.gallon
+        }
+        jugZona={
+          modeSnapshot && snapshot
+            ? (snapshot.detail?.gallon_zona?.jug ?? undefined)
+            : summary?.gallon_zona?.jug
+        }
+        perKategori={
+          modeSnapshot && snapshot
+            ? (snapshot.detail?.gallon_per_kategori ?? undefined)
+            : summary?.gallon_per_kategori
+        }
+        produkPerKategori={
+          modeSnapshot && snapshot
+            ? (snapshot.detail?.produk_per_kategori ?? undefined)
+            : summary?.produk_per_kategori
+        }
+        loading={loading || snapshotLoading}
+        daftarTanggal={daftarTanggal}
+        tanggalSnapshot={tglSnapshot}
+        onTanggalChange={setTglSnapshot}
+        modeSnapshot={modeSnapshot}
+        snapshotLoading={snapshotLoading}
       />
 
       {/* Volume transaksi */}

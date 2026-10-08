@@ -397,13 +397,7 @@ export default function InboundDetailPage() {
     ? String(first.ritase).trim()
     : "-";
   const canCrud = ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
-  const backQs = new URLSearchParams();
-  if (lok) backQs.set("lok", lok);
-  if (tipeDetailList.length > 0) backQs.set("tipe_detail", tipeDetailList.join(","));
-  if (sumberFilter) backQs.set("sumber", sumberFilter);
-  if (tipeFilter) backQs.set("tipe", tipeFilter);
-  const backQsStr = backQs.toString();
-  const backHref = `/inbound/driver/${encodeURIComponent(tanggal)}${backQsStr ? `?${backQsStr}` : ""}`;
+  const backHref = "/inbound";
 
   const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
   // Legacy: shipment lama masih bisa berstatus Pending sebelum migrasi ke alur langsung Selesai.
@@ -692,7 +686,7 @@ export default function InboundDetailPage() {
       <div className="id-card id-head">
         <Link className="id-back-btn" href={backHref}>
           <i className="bi bi-arrow-left"></i>
-          <span>Kembali ke driver</span>
+          <span>Kembali</span>
         </Link>
 
         <div className="id-detail-top">

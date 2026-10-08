@@ -44,7 +44,7 @@ class BarangKeluarController extends Controller
                 'pl.nama_pengguna_lokasi', 'bk.id_pengguna', 'bk.id_produk', 'bk.nama_produk',
                 'bk.tipe_pengeluaran', 'bk.tujuan', 'bk.nama_driver', 'bk.no_mobil', 'bk.jumlah',
                 'bk.best_before', 'bk.satuan', 'bk.lokasi_block', 'bk.catatan', 'bk.tanggal_keluar',
-                'bk.status', 'p.username AS nama_pengguna'
+                'bk.status', 'bk.ritase', 'p.username AS nama_pengguna'
             );
 
         if ($idBarangKeluar > 0) {

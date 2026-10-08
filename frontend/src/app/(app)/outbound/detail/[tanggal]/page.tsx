@@ -345,12 +345,7 @@ export default function OutboundDetailPage() {
   const hiddenCount = Math.max(0, driverRowCount - items.length);
   // Auto-inbound hanya dibuat untuk Secondary & FOC (Primary/Pemusnahan/XWH keluar permanen).
   const adaAutoInbound = items.some((it) => ["SECONDARY", "FOC"].includes(String(it.tipe_pengeluaran || "").trim().toUpperCase()));
-  const backQs = new URLSearchParams();
-  if (lok) backQs.set("lok", lok);
-  if (tipeDetailParam) backQs.set("tipe_detail", tipeDetailParam);
-  if (tipeFilter) backQs.set("tipe", tipeFilter);
-  const backQsStr = backQs.toString();
-  const backHref = `/outbound/driver/${encodeURIComponent(tanggal)}${backQsStr ? `?${backQsStr}` : ""}`;
+  const backHref = "/outbound";
 
   const openHeader = () => {
     setHMobil(norm(header?.no_mobil));
@@ -628,7 +623,7 @@ export default function OutboundDetailPage() {
       <div className="od-card od-head">
         <Link className="od-back-btn" href={backHref}>
           <i className="bi bi-arrow-left"></i>
-          <span>Kembali ke driver</span>
+          <span>Kembali</span>
         </Link>
 
         <div className="od-detail-top">
@@ -736,7 +731,7 @@ export default function OutboundDetailPage() {
               <div style={{ fontSize: 11, fontWeight: 800, color: "#166534", marginBottom: 2 }}>Inbound otomatis dibuat</div>
               <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280" }}>Data produk dari outbound ini sudah masuk ke Inbound (Secondary). Buka halaman Inbound untuk konfirmasi.</div>
             </div>
-            <Link href={`/inbound/driver/${encodeURIComponent(tanggal)}${header?.id_pengguna_lokasi ? `?lok=${encodeURIComponent(header.id_pengguna_lokasi)}` : ""}`}
+            <Link href="/inbound"
               style={{ padding: "6px 12px", borderRadius: 8, background: "#16a34a", color: "#fff", fontSize: 11, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5 }}>
               <i className="bi bi-box-arrow-in-right" style={{ fontSize: 11 }}></i> Lihat Inbound
             </Link>
