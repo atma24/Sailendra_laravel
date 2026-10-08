@@ -1382,10 +1382,10 @@ class BarangMasukController extends Controller
                     $batchBaru = '-';
                 }
 
-                // Qty 0: skip alokasi, langsung Selesai tanpa lokasi/stok
+                // Qty 0: skip alokasi, langsung Pending tanpa lokasi (booking tempat tidak perlu)
                 if ((int) $draft->jumlah <= 0) {
                     $updateData = [
-                        'status' => 'Selesai',
+                        'status' => 'Pending',
                         'best_before' => $bbReq,
                         'batch' => $batchBaru,
                         'batch_sekarang' => $batchBaru,
@@ -1406,11 +1406,11 @@ class BarangMasukController extends Controller
                 }
 
                 $auto = $this->rekomendasiAuto(
-                    $idPenggunaLokasi, 
-                    (int) $draft->id_produk, 
-                    (float) $draft->jumlah, 
-                    $bbReq, 
-                    $draft->tipe_penerimaan, 
+                    $idPenggunaLokasi,
+                    (int) $draft->id_produk,
+                    (float) $draft->jumlah,
+                    $bbReq,
+                    $draft->tipe_penerimaan,
                     false
                 );
 
@@ -1423,17 +1423,27 @@ class BarangMasukController extends Controller
                     throw new Exception("Tidak ada alokasi lokasi kosong untuk {$draft->nama_produk}");
                 }
 
-                // Langsung Selesai: tulis stok fisik sekarang (tanpa tahap Pending/rencana).
-                $grouped = [];
+                // Booking tempat: tulis rencana ke rencana_masuk_deep, status Pending.
+                // Stok fisik baru ditulis saat konfirmasiInbound (Pending -> Selesai).
                 foreach ($alokasi as $al) {
-                    $labelLine = strtoupper(trim($al['kode_block'])) . '-' . $al['nomor_line'];
-                    $grouped[$labelLine][] = $al;
+                    DB::table('rencana_masuk_deep')->insert([
+                        'id_barang_masuk' => $draft->id_barang_masuk,
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_deep' => $al['id_deep'],
+                        'jumlah_rencana' => $al['alokasi'],
+                        'best_before' => $bbReq,
+                        'batch' => $batchBaru
+                    ]);
                 }
-                $kumpulanLokasi = array_keys($grouped);
+
+                $kumpulanLokasi = [];
+                foreach ($alokasi as $al) {
+                    $kumpulanLokasi[] = strtoupper(trim($al['kode_block'])) . '-' . $al['nomor_line'];
+                }
                 $lokasiAkhirStr = implode(', ', array_unique($kumpulanLokasi));
 
                 $updateData = [
-                    'status' => 'Selesai',
+                    'status' => 'Pending',
                     'best_before' => $bbReq,
                     'batch' => $batchBaru,
                     'batch_sekarang' => $batchBaru,
@@ -1453,38 +1463,6 @@ class BarangMasukController extends Controller
                     ->where('id_barang_masuk', $draft->id_barang_masuk)
                     ->update($updateData);
 
-                foreach ($grouped as $labelLine => $details) {
-                    $totalQtyLine = 0;
-                    foreach ($details as $d) {
-                        $totalQtyLine += $d['alokasi'];
-                    }
-
-                    $idStok = DB::table('stok_gudang')->insertGetId([
-                        'id_pengguna_lokasi' => $idPenggunaLokasi,
-                        'id_produk' => $draft->id_produk,
-                        'nama_produk' => $draft->nama_produk,
-                        'id_barang_masuk' => $draft->id_barang_masuk,
-                        'jumlah_sisa' => $totalQtyLine,
-                        'batch' => $batchBaru,
-                        'satuan' => $draft->satuan,
-                        'best_before' => $bbReq,
-                        'lokasi_block' => $labelLine,
-                        'created_at' => now(),
-                    ]);
-
-                    foreach ($details as $d) {
-                        DB::table('stok_gudang_deep')->insert([
-                            'id_pengguna_lokasi' => $idPenggunaLokasi,
-                            'id_stok_header' => $idStok,
-                            'id_deep' => $d['id_deep'],
-                            'jumlah' => $d['alokasi'],
-                            'best_before' => $bbReq,
-                            'batch' => $batchBaru,
-                            'lokasi_block' => $labelLine,
-                            'created_at' => now(),
-                        ]);
-                    }
-                }
                 $processedItems++;
             }
 
@@ -1493,7 +1471,7 @@ class BarangMasukController extends Controller
             }
 
             DB::commit();
-            return $this->okMessage("Berhasil Submit! Status berubah menjadi Selesai, stok telah ditambahkan.");
+            return $this->okMessage("Berhasil Submit! Status berubah menjadi Pending.");
 
         } catch (Throwable $e) {
             DB::rollBack();

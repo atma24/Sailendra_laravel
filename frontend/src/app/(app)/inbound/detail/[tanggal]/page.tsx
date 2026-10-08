@@ -155,7 +155,7 @@ const statusStyle = (s: string): { bg: string; color: string; border: string } =
   const st = (s || "").toLowerCase();
   if (st === "selesai" || st === "confirmed") return { bg: "#dcfce7", color: "#16a34a", border: "1px solid #bbf7d0" };
   if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca" };
-  // Legacy Pending (data lama): biru agar mudah dikenali.
+  // Pending (booking tempat): biru agar mudah dikenali.
   if (st === "pending") return { bg: "#e0f2fe", color: "#0284c7", border: "1px solid #bae6fd" };
   return { bg: "#fef3c7", color: "#ca8a04", border: "1px solid #fde047" };
 };
@@ -400,14 +400,13 @@ export default function InboundDetailPage() {
   const backHref = "/inbound";
 
   const hasDraft = items.some(i => (i.status || "").toLowerCase() === "draft");
-  // Legacy: shipment lama masih bisa berstatus Pending sebelum migrasi ke alur langsung Selesai.
-  const hasPendingLegacy = items.some(i => (i.status || "").toLowerCase() === "pending");
+  const hasPending = items.some(i => (i.status || "").toLowerCase() === "pending");
   const isSelesaiAll = items.length > 0 && items.every(i => (i.status || "selesai").toLowerCase() === "selesai");
   const isCanceledAll = items.length > 0 && items.every((i) => isCanceledStatus(i.status));
-  const canBatalkan = canCrud && items.length > 0 && !isSelesaiAll && !isCanceledAll && (hasDraft || hasPendingLegacy);
+  const canBatalkan = canCrud && items.length > 0 && !isSelesaiAll && !isCanceledAll && (hasDraft || hasPending);
   const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
 
-  const globalStatus = isCanceledAll ? 'Canceled' : hasDraft ? 'Draft' : hasPendingLegacy ? 'Pending' : 'Selesai';
+  const globalStatus = isCanceledAll ? 'Canceled' : hasDraft ? 'Draft' : hasPending ? 'Pending' : 'Selesai';
   const ss = statusStyle(globalStatus);
 
   // Tanggal produksi otomatis = best before − masa simpan produk (per item).
@@ -433,7 +432,7 @@ export default function InboundDetailPage() {
   };
   const tpHint = showItem ? produksiDariBb(showItem.best_before, (showItem as BmRow).id_produk) : "-";
 
-  const getTimerPayload = () => {
+  const getTimerPayload = (aksi: "submit" | "konfirmasi") => {
     let waktuMulaiStr: string | undefined = undefined;
     let durasiDetik: number | undefined = undefined;
 
@@ -442,8 +441,12 @@ export default function InboundDetailPage() {
       const d = waktuMulaiRef.current;
       waktuMulaiStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
-      const waktuSelesai = new Date();
-      durasiDetik = Math.floor((waktuSelesai.getTime() - d.getTime()) / 1000);
+      if (aksi === "konfirmasi") {
+        const waktuSelesai = new Date();
+        durasiDetik = Math.floor((waktuSelesai.getTime() - d.getTime()) / 1000);
+      } else {
+        durasiDetik = 0;
+      }
     }
     return { waktu_mulai_input: waktuMulaiStr, durasi_detik: durasiDetik };
   };
@@ -481,7 +484,7 @@ export default function InboundDetailPage() {
          return { id_barang_masuk: i.id_barang_masuk, best_before: bb };
       });
       
-      const timerData = getTimerPayload();
+      const timerData = getTimerPayload("submit");
 
       await apiPost('/barang-masuk/submit', {
          shipment_id: first.shipment_id || "",
@@ -491,7 +494,7 @@ export default function InboundDetailPage() {
          durasi_detik: timerData.durasi_detik
       });
 
-      notify("success", "Konfirmasi berhasil! Status berubah menjadi Selesai, stok telah ditambahkan.");
+      notify("success", "Booking lokasi berhasil! Status berubah menjadi Pending.");
       setTimeout(() => window.location.reload(), 1500);
     } catch (e: any) {
       notify("error", e.message || "Gagal melakukan submit booking.");
@@ -500,10 +503,27 @@ export default function InboundDetailPage() {
     }
   };
 
+  const revertToDraft = async () => {
+    setBusy(true);
+    try {
+      await apiPost('/barang-masuk/update', {
+        aksi: 'revert_to_draft',
+        shipment_id: first.shipment_id || "",
+        id_pengguna_lokasi: aktifLokasiId(session),
+      });
+      sessionStorage.setItem("sailendra_flash_toast", JSON.stringify({ message: "Berhasil dikembalikan ke Draft.", type: "success" }));
+      window.location.reload();
+    } catch (e) {
+      notify("error", (e as Error).message || "Gagal revert ke Draft.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const konfirmasiPending = async () => {
     setBusy(true);
     try {
-      const timerData = getTimerPayload();
+      const timerData = getTimerPayload("konfirmasi");
 
       await apiPost('/barang-masuk/konfirmasi', {
          shipment_id: first.shipment_id || "",
@@ -767,18 +787,25 @@ export default function InboundDetailPage() {
                     <span>Batalkan ({items.length})</span>
                   </button>
                 )}
-                {canCrud && hasDraft && (
-                  <button type="button" className="id-step-btn id-step-next"
-                    disabled={!hasDraft} onClick={() => hasDraft && submitDraftBooking()}>
-                    <i className="bi bi-check-circle-fill"></i>
-                    <span>Konfirmasi Inbound</span>
+                {canCrud && (
+                  <button type="button" className={`id-step-btn ${hasPending && !hasDraft ? "id-step-next" : ""}`}
+                    disabled={!(hasPending && !hasDraft)} onClick={() => (hasPending && !hasDraft) && revertToDraft()}>
+                    <i className="bi bi-file-earmark-text-fill"></i>
+                    <span>Draft</span>
                   </button>
                 )}
-                {(canCrud || session.user.role === "Forklift") && !hasDraft && hasPendingLegacy && (
-                  <button type="button" className="id-step-btn id-step-next"
-                    onClick={() => konfirmasiPending()}>
+                {canCrud && (
+                  <button type="button" className={`id-step-btn ${hasDraft ? "id-step-next" : ""}`}
+                    disabled={!hasDraft} onClick={() => hasDraft && submitDraftBooking()}>
+                    <i className="bi bi-hourglass-split"></i>
+                    <span>Submit Booking</span>
+                  </button>
+                )}
+                {(canCrud || session.user.role === "Forklift") && (
+                  <button type="button" className={`id-step-btn ${hasPending && !hasDraft ? "id-step-next" : ""}`}
+                    disabled={!(hasPending && !hasDraft)} onClick={() => (hasPending && !hasDraft) && konfirmasiPending()}>
                     <i className="bi bi-check-circle-fill"></i>
-                    <span>Konfirmasi Inbound (Pending lama)</span>
+                    <span>Konfirmasi Inbound</span>
                   </button>
                 )}
               </div>
@@ -917,7 +944,7 @@ export default function InboundDetailPage() {
           <div className="dialog-box">
             <h3 className="dialog-title">Tambah Item Baru</h3>
             <div className="id-modal-note">
-              Item baru akan ditambahkan dengan status <strong>Draft</strong>. Lakukan "Konfirmasi Inbound" setelah selesai menambahkan item ini.
+              Item baru akan ditambahkan dengan status <strong>Draft</strong>. Lakukan "Submit Booking" setelah selesai menambahkan item ini.
             </div>
             <div className="dialog-grid">
               <div className="dialog-field dialog-field-full">

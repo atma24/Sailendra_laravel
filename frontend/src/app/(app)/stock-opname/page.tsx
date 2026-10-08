@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { aktifLokasiId, isMultiRole, lokasiParam, useSession, type Session } from "@/lib/auth";
 import Pagination, { PAGE_SIZE, paginate, totalPagesOf } from "@/components/Pagination";
@@ -86,6 +86,32 @@ const blockOf = (loc: string) => {
   return l.replace(/\s*-\s*\d+\s*$/, "");
 };
 const clsSelisih = (n: number) => (n < 0 ? "so-min" : n > 0 ? "so-pls" : "so-nol");
+const normLok = (v: unknown) => String(v ?? "").replace(/\s+/g, "").toUpperCase();
+
+// Opsi dropdown berbasis katalog stok sistem: lokasi tersedia untuk produk,
+// dan best-before tersedia untuk produk + lokasi. Tetap membolehkan ketik manual.
+const lokasiOptionsFor = (catalog: CatalogRow[], idProduk: number | ""): string[] => {
+  const seen = new Map<string, string>();
+  catalog.forEach((x) => {
+    if (idProduk !== "" && Number(x.id_produk) !== Number(idProduk)) return;
+    const key = normLok(x.lokasi_block);
+    if (!key) return;
+    if (!seen.has(key)) seen.set(key, norm(x.lokasi_block));
+  });
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+};
+const bbOptionsFor = (catalog: CatalogRow[], idProduk: number | "", lokasi: string): string[] => {
+  const lok = normLok(lokasi);
+  const seen = new Set<string>();
+  catalog.forEach((x) => {
+    if (idProduk !== "" && Number(x.id_produk) !== Number(idProduk)) return;
+    if (lok !== "" && normLok(x.lokasi_block) !== lok) return;
+    const bb = norm(x.best_before);
+    if (!bb) return;
+    seen.add(bb);
+  });
+  return [...seen].sort((a, b) => a.localeCompare(b));
+};
 
 type Group = { name: string; rows: DetailRow[] };
 const groupRows = (rows: DetailRow[]) => {
@@ -152,6 +178,14 @@ const css = `
 .so-option { border: 0; outline: 0; width: 100%; text-align: left; background: #FFFFFF; color: #172033; border-radius: 6px; padding: 8px 10px; font-size: 11px; font-weight: 700; display: flex; align-items: flex-start; cursor: pointer; font-family: inherit; }
 .so-option:hover, .so-option.selected { background: #eef2ff; color: #191970; }
 .so-empty-result { padding: 8px; color: #8a93a3; font-size: 11px; font-weight: 700; text-align: center; }
+.so-combo-wrap { position: relative; min-width: 120px; }
+.so-combo-box { display: flex; align-items: center; gap: 0; width: 100%; border: 1px solid #e2e7f0; border-radius: 4px; background: #fbfcff; overflow: hidden; }
+.so-combo-box:focus-within { border-color: #191970; background: #fff; }
+.so-combo-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; padding: 4px 6px; font-size: 11px; color: #172033; font-family: inherit; }
+.so-combo-toggle { border: 0; background: transparent; color: #8a93a3; padding: 4px 8px; cursor: pointer; font-size: 10px; flex-shrink: 0; }
+.so-combo-toggle:hover { color: #191970; }
+.so-combo-panel { position: absolute; left: 0; right: 0; min-width: 180px; top: calc(100% + 5px); z-index: 200; background: #FFFFFF; border: 1px solid #e2e7f0; border-radius: 8px; box-shadow: 0 10px 24px rgba(15,23,42,0.12); padding: 8px; }
+.so-combo-count { font-size: 10px; font-weight: 800; color: #8a93a3; padding: 0 2px 6px; }
 `;
 
 export default function StockOpnamePage() {
@@ -172,6 +206,7 @@ export default function StockOpnamePage() {
   const [produkList, setProdukList] = useState<ProdukRow[]>([]);
   const [akurasiFisik, setAkurasiFisik] = useState<Record<string, string>>({});
   const [manualRows, setManualRows] = useState<ManualRow[]>([]);
+  const [akurasiRows, setAkurasiRows] = useState<ManualRow[]>([]);
   const [detail, setDetail] = useState<DetailRow[]>([]);
   const [detailMeta, setDetailMeta] = useState({ tanggal: "", waktu: "" });
   const [editVals, setEditVals] = useState<Record<string, { fisik: string; alasan: string }>>({});
@@ -188,7 +223,7 @@ export default function StockOpnamePage() {
   useEffect(() => { setPageCompare(1); }, [compare.length]);
   useEffect(() => { setPageManual(1); }, [qManual, hist.length]);
   useEffect(() => { setPageAkurasi(1); }, [qAkurasi, hist.length]);
-  useEffect(() => { setPageCatalog(1); }, [catalog.length]);
+  useEffect(() => { setPageCatalog(1); }, [catalog.length, akurasiRows.length]);
 
   const paramsOf = useCallback(() => {
     const sp = new URLSearchParams();
@@ -238,7 +273,7 @@ export default function StockOpnamePage() {
   );
 
   const openForm = (jenis: "Manual" | "Akurasi") => {
-    setErr(""); setMsg(""); setJenis(jenis); setView("form"); setCatalog([]); setManualRows([]); setAkurasiFisik({});
+    setErr(""); setMsg(""); setJenis(jenis); setView("form"); setCatalog([]); setManualRows([]); setAkurasiFisik({}); setAkurasiRows([]);
     if (jenis === "Manual") {
       setLoading(true);
       apiGet<ProdukRow[]>(`/produk?limit=2000`)
@@ -248,6 +283,7 @@ export default function StockOpnamePage() {
       apiGet<CatalogRow[]>(`/stok-opname?mode=stok_catalog&${paramsOf().toString()}`)
         .then((r) => {
           const rows = r.data || [];
+          setCatalog(rows);
           if (rows.length) {
             const seen = new Set<number>();
             const uniq: ManualRow[] = [];
@@ -271,6 +307,9 @@ export default function StockOpnamePage() {
         .catch(() => setManualRows([{ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]));
     } else {
       setLoading(true);
+      apiGet<ProdukRow[]>(`/produk?limit=2000`)
+        .then((r) => setProdukList(r.data || []))
+        .catch(() => {});
       apiGet<CatalogRow[]>(`/stok-opname?mode=stok_catalog&${paramsOf().toString()}`)
         .then((r) => {
           const rows = r.data || [];
@@ -278,6 +317,14 @@ export default function StockOpnamePage() {
           const f: Record<string, string> = {};
           rows.forEach((x) => { f[opKey(x)] = String(angka(x.stok_sistem)); });
           setAkurasiFisik(f);
+          setAkurasiRows(rows.map((x) => ({
+            _uid: uid(),
+            id_produk: x.id_produk,
+            nama_produk: x.nama_produk,
+            lokasi_block: x.lokasi_block,
+            best_before: x.best_before,
+            stok_fisik: String(angka(x.stok_sistem)),
+          })));
         })
         .catch((e) => setErr(e.message || "Gagal memuat stok sistem."))
         .finally(() => setLoading(false));
@@ -308,6 +355,24 @@ export default function StockOpnamePage() {
     if (next.length === 0) next.push({ _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" });
     setManualRows(next);
   };
+  const updAkurasi = (i: number, patch: Partial<ManualRow>) => {
+    const next = akurasiRows.slice();
+    next[i] = { ...next[i], ...patch };
+    setAkurasiRows(next);
+  };
+  const dupAkurasi = (i: number) => {
+    const next = akurasiRows.slice();
+    next.splice(i + 1, 0, { ...akurasiRows[i], _uid: uid() });
+    setAkurasiRows(next);
+  };
+  const rmAkurasi = (i: number) => {
+    const next = akurasiRows.slice();
+    next.splice(i, 1);
+    setAkurasiRows(next);
+  };
+  const addAkurasiRow = () => {
+    setAkurasiRows([...akurasiRows, { _uid: uid(), id_produk: "", nama_produk: "", lokasi_block: "", best_before: "", stok_fisik: "" }]);
+  };
 
   const preview = () => {
     if (!session) return;
@@ -319,11 +384,12 @@ export default function StockOpnamePage() {
       }));
       if (!items.length) { setErr("Tidak ada baris produk valid."); return; }
     } else {
-      items = catalog.map((x) => ({
-        id_produk: x.id_produk, nama_produk: x.nama_produk,
-        lokasi_block: x.lokasi_block, best_before: x.best_before,
-        stok_fisik: angka(akurasiFisik[opx(x)] ?? ""), alasan: "",
+      items = akurasiRows.filter((r) => angka(r.id_produk) > 0).map((r) => ({
+        id_produk: r.id_produk, nama_produk: r.nama_produk,
+        lokasi_block: r.lokasi_block, best_before: r.best_before,
+        stok_fisik: angka(r.stok_fisik), alasan: "",
       }));
+      if (!items.length) { setErr("Tidak ada baris produk valid."); return; }
     }
     setLoading(true); setErr(""); setMsg("");
     const body: Record<string, unknown> = Object.fromEntries(lokasiWrite());
@@ -648,8 +714,16 @@ export default function StockOpnamePage() {
                               onChange={(id) => updManual(i, { id_produk: id === 0 ? "" : id })}
                             />
                           </td>
-                          <td><input type="text" className="so-input so-printblank" placeholder="Misal: A-1" value={r.lokasi_block} onChange={(e) => updManual(i, { lokasi_block: e.target.value })} /></td>
-                          <td><input type="text" className="so-input so-printblank" placeholder="Misal: 2026-12-31" value={r.best_before} onChange={(e) => updManual(i, { best_before: e.target.value })} /></td>
+                          <td>
+                            <ComboField value={r.lokasi_block} placeholder="Ketik / pilih lokasi"
+                              options={lokasiOptionsFor(catalog, r.id_produk)}
+                              onChange={(v) => updManual(i, { lokasi_block: v })} />
+                          </td>
+                          <td>
+                            <ComboField value={r.best_before} placeholder="Ketik / pilih BB"
+                              options={bbOptionsFor(catalog, r.id_produk, r.lokasi_block)}
+                              onChange={(v) => updManual(i, { best_before: v })} />
+                          </td>
                           <td><input type="text" inputMode="numeric" pattern="[0-9]*" className="so-input so-printblank" placeholder="0" value={r.stok_fisik} onChange={(e) => updManual(i, { stok_fisik: e.target.value.replace(/[^0-9]/g, "") })} /></td>
                           <td style={{whiteSpace:"nowrap"}}>
                             <button type="button" className="btn-duplicate" title="Duplikat Baris" onClick={() => dupManual(i)}><i className="bi bi-files"></i></button>
@@ -676,26 +750,50 @@ export default function StockOpnamePage() {
             </>
           ) : (
             <>
-              {catalog.length === 0 ? (
+              {akurasiRows.length === 0 ? (
                 <div className="so-info">Tidak ada data stok untuk lokasi ini. Pastikan sudah ada stok yang masuk.</div>
               ) : (
                 <>
                 <div className="so-table-wrap" style={{ marginBottom: 12 }}>
                   <table className="so-table">
-                    <thead><tr><th style={{minWidth:160}}>Produk</th><th style={{minWidth:90}}>Lokasi</th><th style={{minWidth:90}}>Best Before</th><th style={{width:100}}>Stok Fisik</th></tr></thead>
+                    <thead><tr><th style={{minWidth:180}}>Produk</th><th style={{minWidth:120}}>Lokasi</th><th style={{minWidth:120}}>Best Before</th><th style={{width:100}}>Stok Fisik</th><th style={{width:90}}></th></tr></thead>
                     <tbody>
-                      {paginate(catalog, pageCatalog, PAGE_SIZE).map((x, i) => {
-                        const k = opx(x);
+                      {paginate(akurasiRows, pageCatalog, PAGE_SIZE).map((r, idx) => {
+                        const i = (pageCatalog - 1) * PAGE_SIZE + idx;
                         return (
-                          <tr key={`${x.id_produk}|${x.lokasi_block}|${x.best_before}|${i}`}>
-                            <td>{x.nama_produk}</td>
-                            <td>{x.lokasi_block}</td>
-                            <td>{x.best_before}</td>
+                          <tr key={r._uid}>
                             <td>
-                              <input type="hidden" />
+                              {r.id_produk === "" ? (
+                                <ProdukPicker
+                                  produkList={produkList}
+                                  value={r.id_produk}
+                                  onChange={(id) => {
+                                    const p = produkList.find((x) => x.id_produk === id);
+                                    updAkurasi(i, { id_produk: id === 0 ? "" : id, nama_produk: p?.nama_produk || "" });
+                                  }}
+                                />
+                              ) : (
+                                <span style={{ fontWeight: 700 }}>{r.nama_produk}</span>
+                              )}
+                            </td>
+                            <td>
+                              <ComboField value={r.lokasi_block} placeholder="Ketik / pilih lokasi"
+                                options={lokasiOptionsFor(catalog, r.id_produk)}
+                                onChange={(v) => updAkurasi(i, { lokasi_block: v })} />
+                            </td>
+                            <td>
+                              <ComboField value={r.best_before} placeholder="Ketik / pilih BB"
+                                options={bbOptionsFor(catalog, r.id_produk, r.lokasi_block)}
+                                onChange={(v) => updAkurasi(i, { best_before: v })} />
+                            </td>
+                            <td>
                               <input type="text" inputMode="numeric" pattern="[0-9]*" className="so-input" style={{width:100}} placeholder="0"
-                                value={akurasiFisik[k] ?? ""}
-                                onChange={(e) => setAkurasiFisik({ ...akurasiFisik, [k]: e.target.value.replace(/[^0-9]/g, "") })} />
+                                value={r.stok_fisik}
+                                onChange={(e) => updAkurasi(i, { stok_fisik: e.target.value.replace(/[^0-9]/g, "") })} />
+                            </td>
+                            <td style={{whiteSpace:"nowrap"}}>
+                              <button type="button" className="btn-duplicate" title="Duplikat Baris" onClick={() => dupAkurasi(i)}><i className="bi bi-files"></i></button>
+                              <button type="button" className="btn-remove" title="Hapus Baris" onClick={() => rmAkurasi(i)}><i className="bi bi-trash"></i></button>
                             </td>
                           </tr>
                         );
@@ -703,11 +801,16 @@ export default function StockOpnamePage() {
                     </tbody>
                   </table>
                 </div>
-                <Pagination page={pageCatalog} totalPages={totalPagesOf(catalog.length, PAGE_SIZE)} totalItems={catalog.length} pageSize={PAGE_SIZE} onChange={setPageCatalog} />
+                <Pagination page={pageCatalog} totalPages={totalPagesOf(akurasiRows.length, PAGE_SIZE)} totalItems={akurasiRows.length} pageSize={PAGE_SIZE} onChange={setPageCatalog} />
                 </>
               )}
-              {catalog.length > 0 && (
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+              {akurasiRows.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <button type="button" className="so-btn so-btn-secondary" onClick={addAkurasiRow}><i className="bi bi-plus-lg"></i> Tambah Baris</button>
+                </div>
+              )}
+              {akurasiRows.length > 0 && (
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 12 }}>
                   <button type="button" className="so-btn so-btn-secondary" onClick={() => setView("history")}>Batal</button>
                   <button type="button" className="so-btn so-btn-primary" disabled={loading} onClick={preview}><i className="bi bi-eye"></i> Preview</button>
                 </div>
@@ -823,6 +926,54 @@ function ProdukPicker({ produkList, value, onChange }: {
               </button>
             ))}
             {!filtered.length && <div className="so-empty-result">Produk tidak ditemukan</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComboField({ value, onChange, options, placeholder }: {
+  value: string; onChange: (v: string) => void; options: string[]; placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  const q = norm(value);
+  const filtered = options.filter((o) =>
+    q === "" || o.toUpperCase().includes(q.toUpperCase()) || norm(o).toUpperCase().includes(q.toUpperCase())
+  );
+  const shown = filtered.slice(0, 100);
+  return (
+    <div className="so-combo-wrap" ref={wrapRef}>
+      <div className="so-combo-box">
+        <input type="text" className="so-combo-input" placeholder={placeholder || "Ketik / pilih"}
+          value={value}
+          onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }} />
+        <button type="button" className="so-combo-toggle" title="Tampilkan pilihan"
+          onClick={() => setOpen((o) => !o)} tabIndex={-1}>
+          <i className={`bi ${open ? "bi-chevron-up" : "bi-chevron-down"}`}></i>
+        </button>
+      </div>
+      {open && (
+        <div className="so-combo-panel">
+          <div className="so-combo-count">{shown.length} pilihan{options.length > shown.length ? ` dari ${options.length}` : ""} — boleh tetap ketik manual</div>
+          <div className="so-option-list">
+            {shown.map((o) => (
+              <button key={o} type="button" className={`so-option ${norm(o) === q ? "selected" : ""}`}
+                onClick={() => { onChange(o); setOpen(false); }}>
+                <span>{o}</span>
+              </button>
+            ))}
+            {!shown.length && <div className="so-empty-result">Tidak ada pilihan — tetap bisa ketik manual</div>}
           </div>
         </div>
       )}
