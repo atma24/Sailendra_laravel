@@ -53,19 +53,22 @@ const TIPE_OPTIONS = [
   { v: "reject", label: "REJECT", dot: "#DC2626" },
 ] as const;
 
-type SavedFilter = { tipe: string[] };
+type SavedFilter = { q: string; tipe: string[]; dari: string; sampai: string };
 
 const loadSaved = (): SavedFilter => {
   try {
     const raw = sessionStorage.getItem(FILTER_KEY);
-    if (!raw) return { tipe: [] };
+    if (!raw) return { q: "", tipe: [], dari: "", sampai: "" };
     const p = JSON.parse(raw) as Partial<SavedFilter>;
     const validTipe: string[] = TIPE_OPTIONS.map((o) => o.v);
     return {
+      q: typeof p.q === "string" ? p.q : "",
       tipe: Array.isArray(p.tipe) ? p.tipe.filter((t) => validTipe.includes(t)) : [],
+      dari: typeof p.dari === "string" ? p.dari.slice(0, 10) : "",
+      sampai: typeof p.sampai === "string" ? p.sampai.slice(0, 10) : "",
     };
   } catch {
-    return { tipe: [] };
+    return { q: "", tipe: [], dari: "", sampai: "" };
   }
 };
 
@@ -97,6 +100,19 @@ const css = `
 .inbound-page { display: flex; flex-direction: column; gap: 7px; }
 .inbound-card { background: #FFFFFF; border: 1px solid #e9edf5; border-radius: 11px; box-shadow: none; }
 .inbound-toolbar { padding: 8px; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.inbound-search-wrap { position: relative; flex: 1; min-width: 200px; }
+.inbound-search-input { width: 100%; height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 31px 0 12px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; box-sizing: border-box; }
+.inbound-search-input:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
+.inbound-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-soft); text-decoration: none; border: 0; background: transparent; cursor: pointer; }
+.inbound-reset-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: transparent; border: 1px dashed #cbd5e1; color: var(--text-soft); font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.inbound-reset-btn:hover { color: #DC2626; border-color: #DC2626; }
+.inbound-filter-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.inbound-date-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.inbound-date-field { display: flex; flex-direction: column; gap: 4px; }
+.inbound-date-field label { font-size: 10px; font-weight: 850; color: var(--text-soft); }
+.inbound-date-field input { height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
+.inbound-date-field input:focus { background: #FFFFFF; border-color: var(--primary); }
+.inbound-active-hint { font-size: 10px; font-weight: 750; color: var(--text-soft); }
 .inbound-add-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
 .inbound-add-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
 .inbound-upload-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; border: none; transition: all 0.2s; white-space: nowrap; }
@@ -131,10 +147,14 @@ export default function InboundPage() {
   // Filter tersimpan (tetap saat bolak-balik driver/detail).
   // Direset otomatis oleh AppLayout saat pindah ke halaman selain /inbound*.
   const [savedOnce] = useState<SavedFilter>(() =>
-    typeof window === "undefined" ? { tipe: [] } : loadSaved()
+    typeof window === "undefined" ? { q: "", tipe: [], dari: "", sampai: "" } : loadSaved()
   );
   const [rows, setRows] = useState<BmRow[]>([]);
+  const [search, setSearch] = useState(savedOnce.q);
+  const [keyword, setKeyword] = useState(savedOnce.q);
   const [tipe, setTipe] = useState<string[]>(savedOnce.tipe);
+  const [dari, setDari] = useState(savedOnce.dari);
+  const [sampai, setSampai] = useState(savedOnce.sampai);
   const [loaded, setLoaded] = useState(false);
   const [page, setPage] = useState(1);
   const [sortKey, setSortKey] = useState<SortKey>("tanggal");
@@ -147,9 +167,15 @@ export default function InboundPage() {
   // Simpan setiap perubahan filter.
   useEffect(() => {
     try {
-      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ tipe }));
+      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ q: keyword, tipe, dari, sampai }));
     } catch { /* abaikan */ }
-  }, [tipe]);
+  }, [keyword, tipe, dari, sampai]);
+
+  // Debounce search → keyword (search server-side ke semua kolom).
+  useEffect(() => {
+    const t = setTimeout(() => setKeyword(search.trim()), 500);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const tipeKey = useMemo(() => [...tipe].sort().join(","), [tipe]);
 
@@ -157,7 +183,10 @@ export default function InboundPage() {
     if (!session) return;
     try {
       const q = new URLSearchParams(lokasiParam(session));
+      if (keyword.trim()) q.append("cari", keyword.trim());
       if (tipeKey) q.append("tipe_detail", tipeKey);
+      if (dari) q.append("tanggal_dari", dari);
+      if (sampai) q.append("tanggal_sampai", sampai);
       const r = await apiGet<BmRow[]>(`/barang-masuk?${q.toString()}`);
       if (!signal?.aborted) setRows(r.data || []);
     } catch {
@@ -174,15 +203,25 @@ export default function InboundPage() {
     fetchData(controller.signal);
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, tipeKey]);
+  }, [session, keyword, tipeKey, dari, sampai]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
     setPage(1);
-  }, [tipeKey, rows]);
+  }, [keyword, tipeKey, dari, sampai, rows]);
 
   const toggleTipe = (v: string) => {
     setTipe((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
+  };
+
+  const resetFilter = () => {
+    setSearch("");
+    setKeyword("");
+    setTipe([]);
+    setDari("");
+    setSampai("");
+    setPage(1);
+    try { sessionStorage.removeItem(FILTER_KEY); } catch { /* abaikan */ }
   };
 
   const handleFileUploadSubmit = async (file: File) => {
@@ -222,7 +261,7 @@ export default function InboundPage() {
   if (!session || !loaded) return null;
 
   const canAdd = session && !["Support", "Forklift"].includes(session.user.role);
-  const filterActive = tipe.length > 0;
+  const filterActive = tipe.length > 0 || dari !== "" || sampai !== "" || keyword.trim() !== "";
 
   // Satu baris = satu transaksi (grup driver + shipment), bukan per item produk.
   const mapTrans: Record<string, TransaksiRow> = {};
@@ -312,7 +351,42 @@ export default function InboundPage() {
 
       <div className="inbound-card">
         <div className="inbound-toolbar">
-          <div style={{ flex: 1, minWidth: 180 }}>
+          <div className="inbound-search-wrap">
+            <input type="text" className="inbound-search-input" value={search}
+              placeholder="Cari produk, driver, DN, shipment, batch, blok, catatan..." autoComplete="off"
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") setKeyword(search.trim()); }} />
+            {search.trim() !== "" && (
+              <button type="button" className="inbound-search-clear" aria-label="Bersihkan pencarian"
+                onClick={() => { setSearch(""); setKeyword(""); }}>
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
+          </div>
+
+          {filterActive && (
+            <button type="button" className="inbound-reset-btn" onClick={resetFilter}>
+              <i className="bi bi-arrow-counterclockwise"></i>
+              Reset
+            </button>
+          )}
+
+          {canAdd && (
+            <>
+              <button type="button" className="inbound-upload-btn" onClick={() => setShowUpload(true)} disabled={uploading}>
+                <i className="bi bi-upload"></i>
+                Upload OTM
+              </button>
+              <Link className="inbound-add-btn" href="/inbound/form">
+                <i className="bi bi-plus-lg"></i>
+                Tambah Inbound
+              </Link>
+            </>
+          )}
+        </div>
+
+        <div className="inbound-filter-panel">
+          <div>
             <div className="inbound-filter-title" style={{ marginBottom: 6 }}>Tipe Penerimaan</div>
             <div className="inbound-tipe-grid">
               {TIPE_OPTIONS.map((o) => {
@@ -327,19 +401,22 @@ export default function InboundPage() {
               })}
             </div>
           </div>
-
-          {canAdd && (
-            <>
-              <button type="button" className="inbound-upload-btn" onClick={() => setShowUpload(true)} disabled={uploading}>
-                <i className="bi bi-upload"></i>
-                Upload OTM
-              </button>
-              <Link className="inbound-add-btn" href="/inbound/form">
-                <i className="bi bi-plus-lg"></i>
-                Tambah Inbound
-              </Link>
-            </>
-          )}
+          <div>
+            <div className="inbound-filter-title" style={{ marginBottom: 6 }}>Range Tanggal</div>
+            <div className="inbound-date-row">
+              <div className="inbound-date-field">
+                <label>Dari</label>
+                <input type="date" value={dari} max={sampai || undefined} onChange={(e) => setDari(e.target.value)} />
+              </div>
+              <div className="inbound-date-field">
+                <label>Sampai</label>
+                <input type="date" value={sampai} min={dari || undefined} onChange={(e) => setSampai(e.target.value)} />
+              </div>
+            </div>
+          </div>
+          <div className="inbound-active-hint">
+            Filter tersimpan otomatis — tetap aktif saat membuka detail, ter-reset saat pindah halaman lain atau tekan Reset.
+          </div>
         </div>
       </div>
 
@@ -355,7 +432,7 @@ export default function InboundPage() {
       <div className="inbound-card">
         {paged.length === 0 ? (
           <div className="inbound-empty">
-            {filterActive ? "Tidak ada data yang cocok dengan filter." : "Tidak ada data inbound."}
+            {filterActive ? "Tidak ada data yang cocok dengan filter/pencarian." : "Tidak ada data inbound."}
           </div>
         ) : (
           <>

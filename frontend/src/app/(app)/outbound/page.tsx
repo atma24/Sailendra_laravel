@@ -51,19 +51,22 @@ const TIPE_OPTIONS = [
   { v: "xwh", label: "XWH", dot: "#0D9488" },
 ] as const;
 
-type SavedFilter = { tipe: string[] };
+type SavedFilter = { q: string; tipe: string[]; dari: string; sampai: string };
 
 const loadSaved = (): SavedFilter => {
   try {
     const raw = sessionStorage.getItem(FILTER_KEY);
-    if (!raw) return { tipe: [] };
+    if (!raw) return { q: "", tipe: [], dari: "", sampai: "" };
     const p = JSON.parse(raw) as Partial<SavedFilter>;
     const validTipe: string[] = TIPE_OPTIONS.map((o) => o.v);
     return {
+      q: typeof p.q === "string" ? p.q : "",
       tipe: Array.isArray(p.tipe) ? p.tipe.filter((t) => validTipe.includes(t)) : [],
+      dari: typeof p.dari === "string" ? p.dari.slice(0, 10) : "",
+      sampai: typeof p.sampai === "string" ? p.sampai.slice(0, 10) : "",
     };
   } catch {
-    return { tipe: [] };
+    return { q: "", tipe: [], dari: "", sampai: "" };
   }
 };
 
@@ -93,6 +96,19 @@ const css = `
 .outbound-page { display: flex; flex-direction: column; gap: 7px; }
 .outbound-card { background: #FFFFFF; border: 1px solid #e9edf5; border-radius: 11px; box-shadow: none; }
 .outbound-toolbar { padding: 8px; display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.outbound-search-wrap { position: relative; flex: 1; min-width: 200px; }
+.outbound-search-input { width: 100%; height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 31px 0 12px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; box-sizing: border-box; }
+.outbound-search-input:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
+.outbound-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-soft); border: 0; background: transparent; cursor: pointer; }
+.outbound-reset-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: transparent; border: 1px dashed #cbd5e1; color: var(--text-soft); font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.outbound-reset-btn:hover { color: #DC2626; border-color: #DC2626; }
+.outbound-filter-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.outbound-date-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.outbound-date-field { display: flex; flex-direction: column; gap: 4px; }
+.outbound-date-field label { font-size: 10px; font-weight: 850; color: var(--text-soft); }
+.outbound-date-field input { height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 10px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; }
+.outbound-date-field input:focus { background: #FFFFFF; border-color: var(--primary); }
+.outbound-active-hint { font-size: 10px; font-weight: 750; color: var(--text-soft); }
 .outbound-toolbar-right { display: flex; gap: 6px; flex-wrap: wrap; }
 .outbound-add-btn { height: 31px; border-radius: 8px; padding: 0 11px; background: var(--primary); color: #FFFFFF; font-size: 11px; font-weight: 850; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
 .outbound-add-btn:hover { color: #FFFFFF; transform: translateY(-1px); box-shadow: 0 7px 16px rgba(25,25,112,0.15); }
@@ -128,10 +144,14 @@ export default function OutboundPage() {
   // Filter tersimpan (tetap saat bolak-balik driver/detail).
   // Direset otomatis oleh AppLayout saat pindah ke halaman selain /outbound*.
   const [savedOnce] = useState<SavedFilter>(() =>
-    typeof window === "undefined" ? { tipe: [] } : loadSaved()
+    typeof window === "undefined" ? { q: "", tipe: [], dari: "", sampai: "" } : loadSaved()
   );
   const [rows, setRows] = useState<BkRow[]>([]);
+  const [search, setSearch] = useState(savedOnce.q);
+  const [keyword, setKeyword] = useState(savedOnce.q);
   const [tipe, setTipe] = useState<string[]>(savedOnce.tipe);
+  const [dari, setDari] = useState(savedOnce.dari);
+  const [sampai, setSampai] = useState(savedOnce.sampai);
   const [loaded, setLoaded] = useState(false);
   const [page, setPage] = useState(1);
   const [sortKey, setSortKey] = useState<SortKey>("tanggal");
@@ -143,9 +163,15 @@ export default function OutboundPage() {
   // Simpan setiap perubahan filter.
   useEffect(() => {
     try {
-      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ tipe }));
+      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ q: keyword, tipe, dari, sampai }));
     } catch { /* abaikan */ }
-  }, [tipe]);
+  }, [keyword, tipe, dari, sampai]);
+
+  // Debounce search → keyword (search server-side ke semua kolom).
+  useEffect(() => {
+    const t = setTimeout(() => setKeyword(search.trim()), 500);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const tipeKey = useMemo(() => [...tipe].sort().join(","), [tipe]);
 
@@ -153,7 +179,10 @@ export default function OutboundPage() {
     if (!session) return;
     try {
       const q = new URLSearchParams(lokasiParam(session));
+      if (keyword.trim()) q.append("cari", keyword.trim());
       if (tipeKey) q.append("tipe_detail", tipeKey);
+      if (dari) q.append("tanggal_dari", dari);
+      if (sampai) q.append("tanggal_sampai", sampai);
       const r = await apiGet<BkRow[]>(`/barang-keluar?${q.toString()}`);
       if (!signal?.aborted) setRows(r.data || []);
     } catch {
@@ -170,15 +199,25 @@ export default function OutboundPage() {
     fetchData(controller.signal);
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, tipeKey]);
+  }, [session, keyword, tipeKey, dari, sampai]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
     setPage(1);
-  }, [tipeKey, rows]);
+  }, [keyword, tipeKey, dari, sampai, rows]);
 
   const toggleTipe = (v: string) => {
     setTipe((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
+  };
+
+  const resetFilter = () => {
+    setSearch("");
+    setKeyword("");
+    setTipe([]);
+    setDari("");
+    setSampai("");
+    setPage(1);
+    try { sessionStorage.removeItem(FILTER_KEY); } catch { /* abaikan */ }
   };
 
   const openModal = (which: "upload" | "primary" | "import" | "foc") => {
@@ -251,7 +290,7 @@ export default function OutboundPage() {
 
   const canAdd = !!session && ["SuperAdmin", "Supervisor", "Checker"].includes(session.user.role);
   const isSuperAdmin = !!session && session.user.role === "SuperAdmin";
-  const filterActive = tipe.length > 0;
+  const filterActive = tipe.length > 0 || dari !== "" || sampai !== "" || keyword.trim() !== "";
 
   // Satu baris = satu transaksi (grup driver + GIN), bukan per item produk.
   const mapTrans: Record<string, TransaksiRow> = {};
@@ -340,21 +379,24 @@ export default function OutboundPage() {
       <style>{css}</style>
       <div className="outbound-card">
         <div className="outbound-toolbar">
-          <div style={{ flex: 1, minWidth: 180 }}>
-            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Tipe Pengeluaran</div>
-            <div className="outbound-tipe-grid">
-              {TIPE_OPTIONS.map((o) => {
-                const on = tipe.includes(o.v);
-                return (
-                  <label key={o.v} className={`outbound-tipe-check ${on ? "is-on" : ""}`}>
-                    <input type="checkbox" checked={on} onChange={() => toggleTipe(o.v)} />
-                    <span className="outbound-tipe-dot" style={{ background: o.dot }}></span>
-                    {o.label}
-                  </label>
-                );
-              })}
-            </div>
+          <div className="outbound-search-wrap">
+            <input type="text" className="outbound-search-input" value={search}
+              placeholder="Cari produk, driver, GIN, SO, tujuan, catatan..." autoComplete="off"
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") setKeyword(search.trim()); }} />
+            {search.trim() !== "" && (
+              <button type="button" className="outbound-search-clear" aria-label="Bersihkan pencarian"
+                onClick={() => { setSearch(""); setKeyword(""); }}>
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
           </div>
+          {filterActive && (
+            <button type="button" className="outbound-reset-btn" onClick={resetFilter}>
+              <i className="bi bi-arrow-counterclockwise"></i>
+              Reset
+            </button>
+          )}
           {canAdd && (
             <div className="outbound-toolbar-right">
               <button type="button" className="outbound-upload-btn" onClick={() => openModal("upload")}>
@@ -382,12 +424,46 @@ export default function OutboundPage() {
             </div>
           )}
         </div>
+
+        <div className="outbound-filter-panel">
+          <div>
+            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Tipe Pengeluaran</div>
+            <div className="outbound-tipe-grid">
+              {TIPE_OPTIONS.map((o) => {
+                const on = tipe.includes(o.v);
+                return (
+                  <label key={o.v} className={`outbound-tipe-check ${on ? "is-on" : ""}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggleTipe(o.v)} />
+                    <span className="outbound-tipe-dot" style={{ background: o.dot }}></span>
+                    {o.label}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="outbound-filter-title" style={{ marginBottom: 6 }}>Range Tanggal</div>
+            <div className="outbound-date-row">
+              <div className="outbound-date-field">
+                <label>Dari</label>
+                <input type="date" value={dari} max={sampai || undefined} onChange={(e) => setDari(e.target.value)} />
+              </div>
+              <div className="outbound-date-field">
+                <label>Sampai</label>
+                <input type="date" value={sampai} min={dari || undefined} onChange={(e) => setSampai(e.target.value)} />
+              </div>
+            </div>
+          </div>
+          <div className="outbound-active-hint">
+            Filter tersimpan otomatis — tetap aktif saat membuka detail, ter-reset saat pindah halaman lain atau tekan Reset.
+          </div>
+        </div>
       </div>
 
       <div className="outbound-card">
         {paged.length === 0 ? (
           <div className="outbound-empty">
-            {filterActive ? "Tidak ada data yang cocok dengan filter." : "Tidak ada data outbound."}
+            {filterActive ? "Tidak ada data yang cocok dengan filter/pencarian." : "Tidak ada data outbound."}
           </div>
         ) : (
           <div className="outbound-table-wrap">
