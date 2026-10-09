@@ -52,6 +52,14 @@ const css = `
   text-decoration: none; white-space: nowrap; transition: all .2s ease; cursor: pointer; box-shadow: 0 2px 6px rgba(25, 25, 112, 0.2);
 }
 .master-add-btn:hover { background: #121254; transform: translateY(-1px); box-shadow: 0 6px 14px rgba(25, 25, 112, 0.3); }
+.master-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.master-secondary-btn {
+  height: 38px; border-radius: 10px; padding: 0 16px; background: #FFFFFF;
+  border: 1px solid var(--primary-navy, #191970); color: var(--primary-navy, #191970);
+  font-size: 13px; font-weight: 800; display: inline-flex; align-items: center; gap: 8px;
+  text-decoration: none; white-space: nowrap; transition: all .2s ease; cursor: pointer;
+}
+.master-secondary-btn:hover { background: #EEF2FF; transform: translateY(-1px); box-shadow: 0 6px 14px rgba(25, 25, 112, 0.15); }
 .master-table-card { overflow: hidden; border-radius: 16px; border: 1px solid #E2E8F0; background: #FFFFFF; }
 .master-table { width: 100%; border-collapse: collapse; margin: 0; }
 .master-table thead th { background: #F8FAFC; color: #475569; font-size: 12px; font-weight: 800; padding: 12px 16px; border-bottom: 1px solid #E2E8F0; text-align: left; white-space: nowrap; }
@@ -133,7 +141,8 @@ const css = `
 @media (max-width: 640px) {
   .master-list-toolbar { flex-direction: column; align-items: stretch; }
   .master-search-wrap { max-width: 100%; }
-  .master-add-btn { justify-content: center; width: 100%; }
+  .master-toolbar-actions { flex-direction: column; align-items: stretch; }
+  .master-add-btn, .master-secondary-btn { justify-content: center; width: 100%; }
 }
 `;
 
@@ -142,7 +151,7 @@ type Confirm = { title: string; msg: string; id: string };
 
 const s = (v: unknown) => String(v ?? "").trim();
 
-export default function MasterCrud({ config }: { config: MasterCrudConfig }) {
+export default function MasterCrud({ config, actions }: { config: MasterCrudConfig; actions?: React.ReactNode }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [search, setSearch] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -258,10 +267,13 @@ export default function MasterCrud({ config }: { config: MasterCrudConfig }) {
               )}
             </div>
 
-            <button type="button" className="master-add-btn" onClick={openCreate}>
-              <i className="bi bi-plus-lg"></i>
-              <span>{config.addLabel}</span>
-            </button>
+            <div className="master-toolbar-actions">
+              {actions}
+              <button type="button" className="master-add-btn" onClick={openCreate}>
+                <i className="bi bi-plus-lg"></i>
+                <span>{config.addLabel}</span>
+              </button>
+            </div>
           </div>
         </div>
 

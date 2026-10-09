@@ -94,16 +94,16 @@ export default function PlantPage() {
 
   return (
     <>
-      {bolehUpload && (
-        <div style={{ marginBottom: 12, display: "flex", justifyContent: "flex-end" }}>
-          <button type="button" className="master-add-btn" onClick={() => { setUploadError(""); setShowUpload(true); }}>
+      <MasterCrud
+        key={refreshKey}
+        config={config}
+        actions={bolehUpload ? (
+          <button type="button" className="master-secondary-btn" onClick={() => { setUploadError(""); setShowUpload(true); }}>
             <i className="bi bi-upload"></i>
             <span>Upload List Plant</span>
           </button>
-        </div>
-      )}
-
-      <MasterCrud key={refreshKey} config={config} />
+        ) : undefined}
+      />
 
       <UploadModal
         open={showUpload}
