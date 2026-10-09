@@ -53,22 +53,30 @@ const TIPE_OPTIONS = [
   { v: "reject", label: "REJECT", dot: "#DC2626" },
 ] as const;
 
-type SavedFilter = { q: string; tipe: string[]; dari: string; sampai: string };
+const STATUS_OPTIONS = [
+  { v: "draft", label: "Draft" },
+  { v: "pending", label: "Pending" },
+  { v: "selesai", label: "Selesai" },
+  { v: "canceled", label: "Canceled" },
+] as const;
+
+type SavedFilter = { q: string; tipe: string[]; status: string[]; dari: string; sampai: string };
 
 const loadSaved = (): SavedFilter => {
   try {
     const raw = sessionStorage.getItem(FILTER_KEY);
-    if (!raw) return { q: "", tipe: [], dari: "", sampai: "" };
+    if (!raw) return { q: "", tipe: [], status: [], dari: "", sampai: "" };
     const p = JSON.parse(raw) as Partial<SavedFilter>;
     const validTipe: string[] = TIPE_OPTIONS.map((o) => o.v);
     return {
       q: typeof p.q === "string" ? p.q : "",
       tipe: Array.isArray(p.tipe) ? p.tipe.filter((t) => validTipe.includes(t)) : [],
+      status: Array.isArray(p.status) ? p.status.filter((s) => STATUS_OPTIONS.some((o) => o.v === s)) : [],
       dari: typeof p.dari === "string" ? p.dari.slice(0, 10) : "",
       sampai: typeof p.sampai === "string" ? p.sampai.slice(0, 10) : "",
     };
   } catch {
-    return { q: "", tipe: [], dari: "", sampai: "" };
+    return { q: "", tipe: [], status: [], dari: "", sampai: "" };
   }
 };
 
@@ -91,6 +99,14 @@ const statusColor = (s: string): { bg: string; color: string } => {
   if (st === "canceled" || st === "cancelled" || st === "batal") return { bg: "#fee2e2", color: "#b91c1c" };
   if (st === "pending") return { bg: "#fef3c7", color: "#92400e" };
   return { bg: "#e5e7eb", color: "#4b5563" };
+};
+
+const statusKey = (s: string): string => {
+  const value = (s || "").trim().toLowerCase();
+  if (!value) return "draft";
+  if (value === "confirmed") return "selesai";
+  if (["cancelled", "batal"].includes(value)) return "canceled";
+  return value;
 };
 
 type SortKey = "tanggal" | "gin" | "driver" | "mobil" | "item" | "dibuat" | "ritase" | "status";
@@ -123,6 +139,10 @@ const css = `
 .inbound-tipe-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: var(--text-main); border: 1px solid #e2e7f0; background: #fbfcff; border-radius: 999px; padding: 5px 11px; cursor: pointer; user-select: none; }
 .inbound-tipe-check input { accent-color: var(--primary); }
 .inbound-tipe-check.is-on { background: var(--primary-soft); border-color: rgba(25,25,112,0.3); }
+.inbound-status-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.inbound-status-check { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: var(--text-main); border: 1px solid #e2e7f0; background: #fbfcff; border-radius: 999px; padding: 5px 11px; cursor: pointer; user-select: none; }
+.inbound-status-check input { accent-color: var(--primary); }
+.inbound-status-check.is-on { background: var(--primary-soft); border-color: rgba(25,25,112,0.3); }
 .inbound-tipe-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
 .inbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; }
 .inbound-table-wrap { overflow-x: auto; }
@@ -147,12 +167,13 @@ export default function InboundPage() {
   // Filter tersimpan (tetap saat bolak-balik driver/detail).
   // Direset otomatis oleh AppLayout saat pindah ke halaman selain /inbound*.
   const [savedOnce] = useState<SavedFilter>(() =>
-    typeof window === "undefined" ? { q: "", tipe: [], dari: "", sampai: "" } : loadSaved()
+    typeof window === "undefined" ? { q: "", tipe: [], status: [], dari: "", sampai: "" } : loadSaved()
   );
   const [rows, setRows] = useState<BmRow[]>([]);
   const [search, setSearch] = useState(savedOnce.q);
   const [keyword, setKeyword] = useState(savedOnce.q);
   const [tipe, setTipe] = useState<string[]>(savedOnce.tipe);
+  const [status, setStatus] = useState<string[]>(savedOnce.status);
   const [dari, setDari] = useState(savedOnce.dari);
   const [sampai, setSampai] = useState(savedOnce.sampai);
   const [loaded, setLoaded] = useState(false);
@@ -167,9 +188,9 @@ export default function InboundPage() {
   // Simpan setiap perubahan filter.
   useEffect(() => {
     try {
-      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ q: keyword, tipe, dari, sampai }));
+      sessionStorage.setItem(FILTER_KEY, JSON.stringify({ q: keyword, tipe, status, dari, sampai }));
     } catch { /* abaikan */ }
-  }, [keyword, tipe, dari, sampai]);
+  }, [keyword, tipe, status, dari, sampai]);
 
   // Debounce search → keyword (search server-side ke semua kolom).
   useEffect(() => {
@@ -178,6 +199,7 @@ export default function InboundPage() {
   }, [search]);
 
   const tipeKey = useMemo(() => [...tipe].sort().join(","), [tipe]);
+  const statusKeyFilter = useMemo(() => [...status].sort().join(","), [status]);
 
   const fetchData = async (signal?: AbortSignal) => {
     if (!session) return;
@@ -208,16 +230,21 @@ export default function InboundPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/data change
     setPage(1);
-  }, [keyword, tipeKey, dari, sampai, rows]);
+  }, [keyword, tipeKey, statusKeyFilter, dari, sampai, rows]);
 
   const toggleTipe = (v: string) => {
     setTipe((prev) => (prev.includes(v) ? prev.filter((t) => t !== v) : [...prev, v]));
+  };
+
+  const toggleStatus = (v: string) => {
+    setStatus((prev) => (prev.includes(v) ? prev.filter((s) => s !== v) : [...prev, v]));
   };
 
   const resetFilter = () => {
     setSearch("");
     setKeyword("");
     setTipe([]);
+    setStatus([]);
     setDari("");
     setSampai("");
     setPage(1);
@@ -261,7 +288,7 @@ export default function InboundPage() {
   if (!session || !loaded) return null;
 
   const canAdd = session && !["Support", "Forklift"].includes(session.user.role);
-  const filterActive = tipe.length > 0 || dari !== "" || sampai !== "" || keyword.trim() !== "";
+  const filterActive = tipe.length > 0 || status.length > 0 || dari !== "" || sampai !== "" || keyword.trim() !== "";
 
   // Satu baris = satu transaksi (grup driver + shipment), bukan per item produk.
   const mapTrans: Record<string, TransaksiRow> = {};
@@ -306,7 +333,8 @@ export default function InboundPage() {
   });
 
   const list = Object.values(mapTrans);
-  const sorted = [...list].sort((a, b) => {
+  const statusFiltered = status.length ? list.filter((item) => status.includes(statusKey(item.status))) : list;
+  const sorted = [...statusFiltered].sort((a, b) => {
     const dir = sortDir === "asc" ? 1 : -1;
     switch (sortKey) {
       case "tanggal": return dir * a.tanggal.localeCompare(b.tanggal);
@@ -395,6 +423,20 @@ export default function InboundPage() {
                   <label key={o.v} className={`inbound-tipe-check ${on ? "is-on" : ""}`}>
                     <input type="checkbox" checked={on} onChange={() => toggleTipe(o.v)} />
                     <span className="inbound-tipe-dot" style={{ background: o.dot }}></span>
+                    {o.label}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="inbound-filter-title" style={{ marginBottom: 6 }}>Status</div>
+            <div className="inbound-status-grid">
+              {STATUS_OPTIONS.map((o) => {
+                const on = status.includes(o.v);
+                return (
+                  <label key={o.v} className={`inbound-status-check ${on ? "is-on" : ""}`}>
+                    <input type="checkbox" checked={on} onChange={() => toggleStatus(o.v)} />
                     {o.label}
                   </label>
                 );

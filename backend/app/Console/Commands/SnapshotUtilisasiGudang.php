@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Services\Dashboard\UtilisasiSnapshotService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Simpan snapshot harian card "Warehouse Utilization" (1 baris/depo/hari).
@@ -34,7 +35,23 @@ class SnapshotUtilisasiGudang extends Command
         $depo = $this->option('depo');
         $depoFilter = $depo ? [trim((string) $depo)] : null;
 
-        $hasil = $service->jalankan($tanggal, $depoFilter);
+        try {
+            $hasil = $service->jalankan($tanggal, $depoFilter);
+        } catch (\Throwable $e) {
+            Log::error('Snapshot Warehouse Utilization gagal.', [
+                'tanggal' => $tanggal,
+                'depo' => $depoFilter,
+                'error' => $e->getMessage(),
+            ]);
+            $this->error('Snapshot gagal: '.$e->getMessage());
+
+            return self::FAILURE;
+        }
+
+        Log::info('Snapshot Warehouse Utilization tersimpan.', [
+            'tanggal' => $hasil['tanggal'],
+            'jumlah' => $hasil['jumlah'],
+        ]);
 
         $this->info(sprintf(
             'Snapshot Warehouse Utilization tersimpan: %d depo untuk %s.',
