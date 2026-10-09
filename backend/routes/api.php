@@ -123,6 +123,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/plant', [PlantController::class, 'store']);
         Route::match(['put', 'patch'], '/plant/{id}', [PlantController::class, 'update']);
         Route::delete('/plant/{id}', [PlantController::class, 'destroy']);
+
+        // Plant (Upload list + Download template)
+        Route::get('/plant/download-template', [PlantController::class, 'downloadTemplate']);
+        Route::post('/plant/import', [PlantController::class, 'import']);
     });
 
 

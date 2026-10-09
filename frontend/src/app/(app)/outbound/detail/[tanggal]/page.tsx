@@ -10,7 +10,7 @@ import { useToast } from "@/components/ToastProvider";
 type Produk = { id_produk: number; nama_produk: string; satuan: string };
 type Rencana = {
   block: string; line: string; level: string; deep: string;
-  jumlah_rencana: number; batch: string; best_before: string; label_lokasi?: string;
+  jumlah_rencana: number; batch: string; best_before: string; label_lokasi?: string; kategori_lokasi?: string;
 };
 type BkDetail = {
   id_barang_keluar: number;
@@ -807,18 +807,24 @@ export default function OutboundDetailPage() {
                   <div className="od-rencana-box">
                     <div className="od-rencana-title">Lokasi yang akan diambil:</div>
                     {rencana.length > 0 ? (
-                      rencana.map((r, ri) => (
-                        <div key={ri}>
-                          <div className="od-rencana-line">
-                            Block {r.block || "-"} - Line {r.line || "-"} - L{r.level || "-"} - Deep {r.deep || "-"} = {angka(r.jumlah_rencana)}
+                      <>
+                        {(() => {
+                          const kategori = [...new Set(rencana.map((r) => norm(r.kategori_lokasi)).filter(Boolean))];
+                          return <div className="od-rencana-line">{kategori.length === 0 ? "Lokasi tidak tersedia" : kategori.length === 1 ? kategori[0] : "Beberapa lokasi"}</div>;
+                        })()}
+                        {rencana.map((r, ri) => (
+                          <div key={ri}>
+                            <div className="od-rencana-line">
+                              Block {r.block || "-"} - Line {r.line || "-"} - L{r.level || "-"} - Deep {r.deep || "-"} = {angka(r.jumlah_rencana)}
+                            </div>
+                            <div className="od-rencana-meta">
+                              Batch: {norm(r.batch) || "-"} | BB: {norm(r.best_before) || "-"}
+                            </div>
                           </div>
-                          <div className="od-rencana-meta">
-                            Batch: {norm(r.batch) || "-"} | BB: {norm(r.best_before) || "-"}
-                          </div>
-                        </div>
-                      ))
+                        ))}
+                      </>
                     ) : (
-                      <div className="od-rencana-line">Lokasi pengambilan belum tersedia.</div>
+                      <div className="od-rencana-line">Lokasi tidak tersedia</div>
                     )}
                   </div>
                 )}

@@ -3167,7 +3167,7 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
     {
         $rows = DB::select("
             SELECT r.id_rencana, r.id_detail_stok, r.id_deep, r.jumlah_rencana, r.best_before, COALESCE(r.batch, sgd.batch, sg.batch) AS batch, dp.deep, 
-            (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = dp.id_pengguna_lokasi) AS max_deep_line, lv.level AS level, ln.nomor_line AS line, bl.kode_block AS block, lk.nama_lokasi
+            (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = dp.id_pengguna_lokasi) AS max_deep_line, lv.level AS level, ln.nomor_line AS line, bl.kode_block AS block, lk.nama_lokasi, UPPER(TRIM(COALESCE(NULLIF(lk.kategori, ''), lk.nama_lokasi))) AS kategori_lokasi
             FROM rencana_keluar_deep r LEFT JOIN stok_gudang_deep sgd ON sgd.id_detail_stok = r.id_detail_stok LEFT JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header
             INNER JOIN deep dp ON dp.id_deep = r.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
             WHERE r.id_barang_keluar = ?

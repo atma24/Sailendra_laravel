@@ -29,6 +29,7 @@ type BmRow = {
   no_mobil: string;
   catatan: string;
   lokasi_block: string;
+  kategori_lokasi?: string[];
   stok_sisa: number;
   status: string;
   shipment_id: string;
@@ -872,6 +873,11 @@ export default function InboundDetailPage() {
                 {itemStatus !== 'draft' && !isCanceledStatus(item.status) && (
                   <div className="id-rencana-box">
                     <div className="id-rencana-title">Lokasi Penyimpanan:</div>
+                    <div className="id-rencana-line">
+                      {item.kategori_lokasi?.length
+                        ? (item.kategori_lokasi.length === 1 ? item.kategori_lokasi[0] : "Beberapa lokasi")
+                        : "Lokasi tidak tersedia"}
+                    </div>
                     <div className="id-rencana-line">
                       {norm(item.lokasi_block) || "Menunggu lokasi"}
                     </div>

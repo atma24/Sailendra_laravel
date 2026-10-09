@@ -238,6 +238,27 @@ class BarangMasukController extends Controller
 
         $rows = $query->orderBy('bm.id_barang_masuk', 'DESC')->get();
 
+        // Kategori lokasi aktual dari deep yang direncanakan untuk setiap item.
+        if ($rows->isNotEmpty()) {
+            $kategoriByInbound = DB::table('rencana_masuk_deep as r')
+                ->join('deep as d', 'd.id_deep', '=', 'r.id_deep')
+                ->join('level as lv', 'lv.id_level', '=', 'd.id_level')
+                ->join('line as ln', 'ln.id_line', '=', 'lv.id_line')
+                ->join('block as b', 'b.id_block', '=', 'ln.id_block')
+                ->join('lokasi as l', 'l.id_lokasi', '=', 'b.id_lokasi')
+                ->whereIn('r.id_barang_masuk', $rows->pluck('id_barang_masuk'))
+                ->select('r.id_barang_masuk')
+                ->selectRaw("UPPER(TRIM(COALESCE(NULLIF(l.kategori, ''), l.nama_lokasi))) AS kategori_lokasi")
+                ->distinct()
+                ->get()
+                ->groupBy('id_barang_masuk');
+
+            foreach ($rows as $r) {
+                $r->kategori_lokasi = ($kategoriByInbound->get($r->id_barang_masuk) ?? collect())
+                    ->pluck('kategori_lokasi')->filter()->values()->all();
+            }
+        }
+
         // Enrich ritase untuk Secondary auto dari outbound (pure lookup, tanpa tulis catatan).
         // Sumber: barang_keluar.ritase via GIN (catatan "Auto dari Outbound GIN {gin_no}")
         // atau via shipment "AUTO-INBOUND {id_barang_keluar}" untuk GIN kosong.
