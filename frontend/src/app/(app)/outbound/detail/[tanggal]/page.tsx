@@ -245,6 +245,7 @@ export default function OutboundDetailPage() {
           if (t === "SECONDARY") return "secondary";
           if (t === "FOC") return "foc";
           if (t === "PEMUSNAHAN") return "pemusnahan";
+          if (t === "XWH") return "xwh";
           return "primary";
         };
         const matchTipe = (x: BkDetail) => {
@@ -254,6 +255,7 @@ export default function OutboundDetailPage() {
           if (tipeFilter === "primary") return t === "PRIMARY" || t === "PEMUSNAHAN" || t === "";
           if (tipeFilter === "secondary") return t === "SECONDARY";
           if (tipeFilter === "foc") return t === "FOC";
+          if (tipeFilter === "xwh") return t === "XWH";
           // Kompatibilitas URL lama: ?tipe=normal = semua non-FOC.
           if (tipeFilter === "normal") return t !== "FOC";
           return true;
@@ -322,7 +324,7 @@ export default function OutboundDetailPage() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, tanggal, driver, lok, multi]);
+  }, [session, tanggal, driver, lok, multi, tipeFilter, tipeDetailParam, searchParams]);
 
   if (!session || !loaded) return null;
 
