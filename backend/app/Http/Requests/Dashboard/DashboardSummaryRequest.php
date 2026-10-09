@@ -67,11 +67,11 @@ class DashboardSummaryRequest extends FormRequest
     }
 
     /**
-     * Mode filter card aging produk: 'all' (semua) atau 'h30' (default).
+     * Mode filter card aging produk: 'all' (default, semua) atau 'h30'.
      */
     public function expiredMode(): string
     {
-        return strtolower(trim((string) $this->query('expired_mode', 'h30'))) === 'all'
+        return strtolower(trim((string) $this->query('expired_mode', 'all'))) === 'all'
             ? 'all'
             : 'h30';
     }

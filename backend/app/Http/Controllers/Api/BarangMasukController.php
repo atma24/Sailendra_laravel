@@ -810,6 +810,48 @@ class BarangMasukController extends Controller
         ]);
     }
 
+    /**
+     * Simpan auto-inbound yang langsung terkonfirmasi.
+     * Dipakai untuk JUG dari outbound FOC karena produknya tanpa batch.
+     */
+    public function storeAutoInbound(array $data): int
+    {
+        $idLokasi = trim((string) ($data['id_pengguna_lokasi'] ?? ''));
+        $idProduk = (int) ($data['id_produk'] ?? 0);
+        $jumlah = (int) ($data['jumlah'] ?? 0);
+        $auto = $this->rekomendasiAuto($idLokasi, $idProduk, $jumlah, null, 'FOC', false);
+
+        if (isset($auto['error']) || empty($auto['rekomendasi'])) {
+            throw new Exception($auto['error'] ?? 'Lokasi JUG tidak tersedia.');
+        }
+
+        $data['alokasi'] = array_map(
+            fn ($row) => ['id_deep' => (int) $row['id_deep'], 'jumlah' => (int) $row['alokasi']],
+            $auto['rekomendasi']
+        );
+
+        $response = $this->store(Request::create('/barang-masuk', 'POST', $data));
+        $body = $response->getData(true);
+        if (! is_array($body) || empty($body['success'])) {
+            throw new Exception($body['message'] ?? 'Gagal menyimpan auto-inbound JUG.');
+        }
+
+        $ids = array_values(array_filter(array_map('intval', [
+            $body['data']['id_barang_masuk'] ?? null,
+            ...($body['data']['id_barang_masuk_list'] ?? []),
+        ])));
+        if (empty($ids)) {
+            throw new Exception('ID auto-inbound JUG tidak ditemukan.');
+        }
+
+        DB::table('barang_masuk')->whereIn('id_barang_masuk', $ids)->update([
+            'status' => 'Selesai',
+            'diperbarui_pada' => now(),
+        ]);
+
+        return $ids[0];
+    }
+
     // =========================================================================
     // 3b. SIMPAN BATCH ATOMIK (satu transaksi untuk banyak item)
     //     Dipakai form inbound manual: gagal di 1 item = semua dibatalkan,

@@ -2018,6 +2018,7 @@ $in = $request->all();
                 $ginNo = $grup['gin_no'];
 
                 foreach ($grup['items'] as $bk) {
+                    $isFoc = strtoupper(trim((string) ($bk->tipe_pengeluaran ?? ''))) === 'FOC';
                     $bestBeforeBk = $bk->best_before ?? null;
                     $batchBk = $bk->batch ?? null;
                     if (empty($bestBeforeBk) || $bestBeforeBk === '0000-00-00') {
@@ -2051,10 +2052,10 @@ $in = $request->all();
                         }
                     }
 
-                    // Baris 1 (selalu): produk original apa adanya dari outbound.
-                    // FOC resmi: auto-inbound dari outbound FOC bertipe FOC, sisanya Secondary.
+                    // FOC hanya mengembalikan JUG kosong. Secondary tetap mengembalikan
+                    // produk outbound asli seperti alur sebelumnya.
                     $tipeAutoInbound = (strtoupper(trim((string) ($bk->tipe_pengeluaran ?? ''))) === 'FOC') ? 'FOC' : 'Secondary';
-                    $rowsToInsert = [[
+                    $rowsToInsert = $isFoc ? [] : [[
                         'id_pengguna_lokasi' => $idPenggunaLokasi,
                         'id_pengguna'         => $bk->id_pengguna,
                         'id_produk'           => $bk->id_produk,
@@ -2078,13 +2079,13 @@ $in = $request->all();
                         'created_at'          => now(),
                     ]];
 
-                    // Baris 2 (hanya GALLON AQUA/VIT): tambah JUG dengan qty sama, BB/batch null.
+                    // JUG AQUA/VIT adalah satu-satunya item auto-inbound untuk FOC.
                     $namaBk = (string) ($bk->nama_produk ?? '');
                     $isGalonAquaVit = preg_match('/GALLON/i', $namaBk)
                         && (preg_match('/\bAQUA\b/i', $namaBk) || preg_match('/\bVIT\b/i', $namaBk));
                     if ($isGalonAquaVit && $useJugMapping) {
                         $jugRow = preg_match('/\bVIT\b/i', $namaBk) ? $jugVit : $jugAqua;
-                        $rowsToInsert[] = [
+                        $jugData = [
                             'id_pengguna_lokasi' => $idPenggunaLokasi,
                             'id_pengguna'         => $bk->id_pengguna,
                             'id_produk'           => (int) $jugRow->id_produk,
@@ -2107,10 +2108,20 @@ $in = $request->all();
                             'status'              => 'Draft',
                             'created_at'          => now(),
                         ];
+                        if ($isFoc) {
+                            app(BarangMasukController::class)->storeAutoInbound($jugData);
+                        } else {
+                            $rowsToInsert[] = $jugData;
+                        }
                     }
 
-                    DB::table('barang_masuk')->insert($rowsToInsert);
+                    if (! empty($rowsToInsert)) {
+                        DB::table('barang_masuk')->insert($rowsToInsert);
+                    }
                     $autoInboundCount += count($rowsToInsert);
+                    if ($isFoc && $isGalonAquaVit && $useJugMapping) {
+                        $autoInboundCount++;
+                    }
                 } // end items dalam 1 GIN (1 shipment)
             } // end grup per GIN
             // === END AUTO-INBOUND ===

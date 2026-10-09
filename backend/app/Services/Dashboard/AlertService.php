@@ -12,8 +12,8 @@ use Illuminate\Support\Facades\DB;
 class AlertService
 {
     /**
-     * Daftar detail stok dengan best_before <= threshold (mode 'h30',
-     * default 30 hari) atau semua stok ber-best-before (mode 'all'),
+     * Daftar detail stok semua stok ber-best-before (mode 'all', default)
+     * atau dengan best_before <= threshold (mode 'h30', 30 hari),
      * satu baris per baris stok deep (batch + lokasi).
      *
      * Kolom: nama_produk, batch, production_date (tanggal_produksi,
@@ -24,10 +24,10 @@ class AlertService
      * expired (sisa <= 0).
      *
      * @param  array<int,string>  $produkFilter
-     * @param  string  $mode  'h30' (default) atau 'all'
+     * @param  string  $mode  'all' (default) atau 'h30'
      * @return array<int,array{nama_produk:string,batch:?string,production_date:?string,production_fallback:bool,tanggal_masuk:?string,best_before:string,lokasi:?string,qty:int,aging_hari:?int,sisa_hari:?int,status:string,expired:bool}>
      */
-    public function expired(?array $lokasiFilter, array $produkFilter = [], string $mode = 'h30'): array
+    public function expired(?array $lokasiFilter, array $produkFilter = [], string $mode = 'all'): array
     {
         $thresholdDays = DashboardConstants::EXPIRED_ALERT_DAYS;
         $threshold = now()->addDays($thresholdDays)->format('Y-m-d');

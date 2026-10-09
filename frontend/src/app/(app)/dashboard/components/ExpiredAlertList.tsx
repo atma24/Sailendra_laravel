@@ -27,7 +27,7 @@ const statusClass = (status: unknown, expired: boolean) => {
 
 export default function ExpiredAlertList({
   rows,
-  mode = "h30",
+  mode = "all",
   onModeChange,
   loading,
 }: Props) {

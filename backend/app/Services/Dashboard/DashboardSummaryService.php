@@ -34,7 +34,7 @@ class DashboardSummaryService
         string $granularity,
         int $top,
         int $mutasiTotal,
-        string $expiredMode = 'h30'
+        string $expiredMode = 'all'
     ): array {
         $rangeStart = $periode['mulai'];
         $rangeEnd = $periode['sampai'];

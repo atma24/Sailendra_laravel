@@ -24,7 +24,7 @@ export function defaultFilters(): DashboardFilters {
     minggu: "",
     depo: "",
     produk: [],
-    expiredMode: "h30",
+    expiredMode: "all",
   };
 }
 
@@ -43,7 +43,7 @@ function buildParams(session: Session, f: DashboardFilters): URLSearchParams {
   params.set("bulan", `${f.tahun}-${f.bulan.padStart(2, "0")}`);
   if (f.minggu) params.set("minggu", f.minggu);
   if (f.produk.length > 0) params.set("produk", f.produk.join(","));
-  if (f.expiredMode === "all") params.set("expired_mode", "all");
+  params.set("expired_mode", f.expiredMode);
   return params;
 }
 
