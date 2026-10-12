@@ -63,8 +63,10 @@ const COL_LABEL: Record<string, string> = {
   no: "No", id_pengguna_lokasi: "ID Lokasi", nama_pengguna_lokasi: "Nama Lokasi", dibuat_oleh: "Dibuat Oleh",
   tanggal_masuk: "Tanggal Masuk", tanggal_keluar: "Tanggal Keluar", created_at: "Tanggal Mutasi",
   nama_driver: "Driver", no_mobil: "No Mobil", no_dn: "No DN", tipe_penerimaan: "Tipe", asal_pabrik: "Asal Pabrik",
-  tipe_pengeluaran: "Tipe", tujuan: "Tujuan", nama_produk: "Produk", jumlah: "Jumlah", satuan: "Satuan",
-  best_before: "Best Before", batch: "Batch", status: "Status", durasi_input: "Durasi Input", catatan: "Catatan",
+  tipe_pengeluaran: "Tipe", tujuan: "Tujuan",   nama_produk: "Produk", jumlah: "Jumlah", jumlah_lama: "Jumlah Lama", satuan: "Satuan",
+  best_before: "Best Before", best_before_lama: "Best Before Lama",
+  plant_lama: "Plant Lama", plant_baru: "Plant Baru", batch_lama: "Batch Lama", batch_baru: "Batch Baru",
+  batch: "Batch", status: "Status", durasi_input: "Durasi Input", catatan: "Catatan",
   jenis_mutasi: "Jenis Mutasi", lokasi_sumber: "Lokasi Sumber", lokasi_tujuan: "Lokasi Tujuan",
   diperbarui_oleh: "Diubah Oleh", diperbarui_pada: "Waktu Diubah", catatan_perubahan: "Alasan Diubah",
   periode: "Tanggal", total_produk: "Total Produk (SKU)", total_qty: "Total Qty",
@@ -76,7 +78,7 @@ const aud = ["diperbarui_oleh", "diperbarui_pada", "catatan_perubahan"];
 
 function columnsFor(type: TypeKey): string[] {
   if (type === "utilisasi") return ["periode", "id_pengguna_lokasi", "total_produk", "total_qty", "storage_dalam", "storage_luar"];
-  if (type === "mutasi") return ["no", ...base, "created_at", "nama_produk", "jumlah", "satuan", "best_before", "jenis_mutasi", "lokasi_sumber", "lokasi_tujuan", "catatan"];
+  if (type === "mutasi") return ["no", ...base, "created_at", "nama_produk", "jumlah", "jumlah_lama", "satuan", "best_before", "best_before_lama", "plant_lama", "plant_baru", "batch_lama", "batch_baru", "jenis_mutasi", "lokasi_sumber", "lokasi_tujuan", "catatan"];
   if (type === "inbound") return ["no", ...base, "tanggal_masuk", "nama_driver", "no_mobil", "no_dn", "tipe_penerimaan", "asal_pabrik", "nama_produk", "jumlah", "satuan", "best_before", "batch", "status", "durasi_input", "catatan", ...aud];
   return ["no", ...base, "tanggal_keluar", "nama_driver", "no_mobil", "tipe_pengeluaran", "tujuan", "nama_produk", "jumlah", "satuan", "best_before", "batch", "status", "durasi_input", "catatan", ...aud];
 }

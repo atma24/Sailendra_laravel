@@ -345,7 +345,8 @@ class LaporanController extends Controller
             ->leftJoin('produk as p', 'p.id_produk', '=', 'm.id_produk')
             ->select(
                 'm.id_pengguna_lokasi', 'pl.nama_pengguna_lokasi', 'u.username AS dibuat_oleh',
-                'm.created_at', 'p.nama_produk', 'm.jumlah', 'm.satuan', 'm.best_before',
+                'm.created_at', 'p.nama_produk', 'm.jumlah', 'm.jumlah_lama', 'm.satuan', 'm.best_before',
+                'm.best_before_lama', 'm.plant_lama', 'm.plant_baru', 'm.batch_lama', 'm.batch_baru',
                 'm.jenis_mutasi', 'm.lokasi_sumber', 'm.lokasi_tujuan', 'm.catatan'
             );
 
@@ -398,7 +399,8 @@ class LaporanController extends Controller
         return $this->renderExcelResponse("Laporan Mutasi {$labelPeriode}.xls", function () use ($rows, $status_options) {
             echo "<table border='1'><tr>
                 <th>No</th><th>Tanggal</th><th>ID Lokasi</th><th>Nama Lokasi</th><th>Dibuat Oleh</th>
-                <th>Produk</th><th>Jumlah</th><th>Satuan</th><th>Best Before</th><th>Jenis Mutasi</th>
+                <th>Produk</th><th>Jumlah</th><th>Jumlah Lama</th><th>Satuan</th><th>Best Before</th><th>Best Before Lama</th>
+                <th>Plant Lama</th><th>Plant Baru</th><th>Batch Lama</th><th>Batch Baru</th><th>Jenis Mutasi</th>
                 <th>Lokasi Sumber</th><th>Lokasi Tujuan</th><th>Catatan</th>
             </tr>";
             $no = 1;
@@ -413,8 +415,14 @@ class LaporanController extends Controller
                     <td>'.htmlspecialchars($row->dibuat_oleh ?? '').'</td>
                     <td>'.htmlspecialchars($row->nama_produk ?? '').'</td>
                     <td>'.htmlspecialchars($row->jumlah ?? '').'</td>
+                    <td>'.htmlspecialchars($row->jumlah_lama ?? '').'</td>
                     <td>'.htmlspecialchars($row->satuan ?? '').'</td>
                     <td>'.htmlspecialchars($row->best_before ?? '').'</td>
+                    <td>'.htmlspecialchars($row->best_before_lama ?? '').'</td>
+                    <td>'.htmlspecialchars($row->plant_lama ?? '').'</td>
+                    <td>'.htmlspecialchars($row->plant_baru ?? '').'</td>
+                    <td>'.htmlspecialchars($row->batch_lama ?? '').'</td>
+                    <td>'.htmlspecialchars($row->batch_baru ?? '').'</td>
                     <td>'.htmlspecialchars($label_jenis).'</td>
                     <td>'.htmlspecialchars($row->lokasi_sumber ?? '').'</td>
                     <td>'.htmlspecialchars($row->lokasi_tujuan ?? '').'</td>

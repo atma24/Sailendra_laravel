@@ -325,7 +325,6 @@ export default function LineEditModal({
     }
 
     const requests: Record<string, string | number>[] = [];
-    const plantRequests: Record<string, string | number>[] = [];
     let adaUbahBb = false;
     let adaUbahQty = false;
     let adaUbahAlasan = false;
@@ -347,6 +346,9 @@ export default function LineEditModal({
       const bbBerubah = bbBaru !== "" && bbBaru !== bbAwal;
       const qtyBerubah = qtyBaruText !== "" && qtyBaru !== qtyAwal;
       const alasanBerubah = catatanAlasan !== "";
+      const plantAwal = norm(plantMap[String(idStok)]);
+      const plantBaru = norm(row.plant);
+      const plantBerubah = plantBaru !== "" && plantBaru !== plantAwal;
 
       if (idStok <= 0) {
         notify("error", "Data stok tidak valid", `ID stok pada BB ${index + 1} tidak valid.`);
@@ -359,15 +361,16 @@ export default function LineEditModal({
       }
 
       if (!bbBerubah && !qtyBerubah && !alasanBerubah) {
-        const plantAwal = norm(plantMap[String(idStok)]);
-        const plantBaru = norm(row.plant);
-        if (plantBaru !== "" && plantBaru !== plantAwal) {
-          plantRequests.push({
+        // 1 baris = 1 request gabungan: plant-only tetap lewat endpoint yang sama
+        // agar tercatat sebagai 1 baris mutasi GS_GS.
+        if (plantBerubah) {
+          requests.push({
+            id_line: edit.idLine,
             id_stok: idStok,
-            id_produk: edit.idProduk,
-            best_before: bbBaru !== "" ? bbBaru : bbAwal,
-            id_plant: plantBaru,
-            catatan_perubahan: catatanAlasan || `Plant ${plantAwal} -> ${plantBaru}`,
+            qty_baru: "",
+            best_before_baru: "",
+            id_plant_baru: plantBaru,
+            catatan_perubahan: catatanAlasan,
           });
           adaUbahPlant = true;
         }
@@ -402,24 +405,13 @@ export default function LineEditModal({
         id_stok: idStok,
         qty_baru: qtyBerubah ? qtyKirim : "",
         best_before_baru: bbBerubah ? bbBaru : "",
+        id_plant_baru: plantBerubah ? plantBaru : "",
         catatan_perubahan: catatanAlasan,
       });
-
-      const plantAwal = norm(plantMap[String(idStok)]);
-      const plantBaru = norm(row.plant);
-      if (plantBaru !== "" && plantBaru !== plantAwal) {
-        plantRequests.push({
-          id_stok: idStok,
-          id_produk: edit.idProduk,
-          best_before: bbBaru !== "" ? bbBaru : bbAwal,
-          id_plant: plantBaru,
-          catatan_perubahan: catatanAlasan || `Plant ${plantAwal} -> ${plantBaru}`,
-        });
-        adaUbahPlant = true;
-      }
+      if (plantBerubah) adaUbahPlant = true;
     }
 
-    if (requests.length === 0 && plantRequests.length === 0) {
+    if (requests.length === 0) {
       notify("warning", "Tidak ada perubahan", "Tidak ada perubahan yang disimpan.");
       return;
     }
@@ -427,15 +419,13 @@ export default function LineEditModal({
     const base = {
       id_pengguna_lokasi: lokAktif,
       nama_pengguna: norm(session.user.username),
+      id_pengguna: angka(session.user.id_pengguna),
     };
 
     setBusy(true);
     try {
       for (const d of requests) {
         await apiPost("/layout-gudang/ubah-bb-jumlah-line", { ...base, ...d });
-      }
-      for (const d of plantRequests) {
-        await apiPost("/layout-gudang/ubah-plant-line", { ...base, ...d });
       }
 
       let pesan = "Perubahan stok berhasil disimpan.";

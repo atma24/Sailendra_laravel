@@ -12,11 +12,17 @@ type MutasiRow = {
   nama_pengguna: string;
   nama_produk: string;
   jumlah: number;
+  jumlah_lama?: number | null;
   satuan: string;
   jenis_mutasi: string;
   lokasi_sumber: string;
   lokasi_tujuan: string;
   best_before: string;
+  best_before_lama?: string | null;
+  plant_lama?: string | null;
+  plant_baru?: string | null;
+  batch_lama?: string | null;
+  batch_baru?: string | null;
   catatan: string;
   created_at: string;
 };
@@ -59,6 +65,9 @@ const css = `
 .detail-info-label { color: #6b7280; font-weight: 750; }
 .detail-info-val { color: #111827; font-weight: 850; text-align: right; }
 .badge-status { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; color: #4b5563; }
+.ba-lama { color: #9ca3af; font-weight: 750; margin-right: 4px; }
+.ba-arrow { color: #9ca3af; font-weight: 750; margin-right: 4px; }
+.ba-baru { color: #191970; font-weight: 900; }
 .inbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; text-align: center; }
 @media (max-width: 768px) { .detail-item-list { grid-template-columns: 1fr; } }
 `;
@@ -141,12 +150,30 @@ export default function MutasiDetailPage() {
           <div className="inbound-empty">Riwayat tidak ditemukan.</div>
         ) : (
           <div className="detail-item-list">
-            {items.map((item) => (
+            {items.map((item) => {
+              const jumlahLama = item.jumlah_lama ?? null;
+              const bbLama = norm(item.best_before_lama);
+              const bbBaru = norm(item.best_before);
+              const plantLama = norm(item.plant_lama);
+              const plantBaru = norm(item.plant_baru);
+              const batchLama = norm(item.batch_lama);
+              const batchBaru = norm(item.batch_baru);
+              const jumlahBerubah = jumlahLama !== null && angka(jumlahLama) !== angka(item.jumlah);
+              const bbBerubah = bbLama !== "" && bbBaru !== "" && bbLama !== bbBaru;
+              const plantBerubah = plantLama !== "" && plantBaru !== "" && plantLama !== plantBaru;
+              const batchBerubah = batchLama !== "" && batchBaru !== "" && batchLama !== batchBaru;
+              const adaPlant = plantLama !== "" || plantBaru !== "";
+              const adaBatch = batchLama !== "" || batchBaru !== "";
+              return (
               <div key={item.id_mutasi} className="detail-item-card">
                 <div className="detail-product">{norm(item.nama_produk) || "Produk Tidak Diketahui"}</div>
                 <div className="detail-info-row">
                   <span className="detail-info-label">Jumlah</span>
-                  <span className="detail-info-val">{angka(item.jumlah)} {norm(item.satuan) || "BOX"}</span>
+                  <span className="detail-info-val">
+                    {jumlahBerubah && <span className="ba-lama">{angka(jumlahLama)}</span>}
+                    {jumlahBerubah && <span className="ba-arrow">→</span>}
+                    {angka(item.jumlah)} {norm(item.satuan) || "BOX"}
+                  </span>
                 </div>
                 <div className="detail-info-row">
                   <span className="detail-info-label">Status</span>
@@ -162,8 +189,50 @@ export default function MutasiDetailPage() {
                 </div>
                 <div className="detail-info-row">
                   <span className="detail-info-label">Best Before</span>
-                  <span className="detail-info-val">{norm(item.best_before) || "-"}</span>
+                  <span className="detail-info-val">
+                    {bbBerubah ? (
+                      <>
+                        <span className="ba-lama">{bbLama}</span>
+                        <span className="ba-arrow">→</span>
+                        <span className="ba-baru">{bbBaru}</span>
+                      </>
+                    ) : (
+                      bbBaru || "-"
+                    )}
+                  </span>
                 </div>
+                {adaPlant && (
+                  <div className="detail-info-row">
+                    <span className="detail-info-label">Plant</span>
+                    <span className="detail-info-val">
+                      {plantBerubah ? (
+                        <>
+                          <span className="ba-lama">{plantLama}</span>
+                          <span className="ba-arrow">→</span>
+                          <span className="ba-baru">{plantBaru}</span>
+                        </>
+                      ) : (
+                        plantBaru || plantLama
+                      )}
+                    </span>
+                  </div>
+                )}
+                {adaBatch && (
+                  <div className="detail-info-row">
+                    <span className="detail-info-label">Batch</span>
+                    <span className="detail-info-val">
+                      {batchBerubah ? (
+                        <>
+                          <span className="ba-lama">{batchLama}</span>
+                          <span className="ba-arrow">→</span>
+                          <span className="ba-baru">{batchBaru}</span>
+                        </>
+                      ) : (
+                        batchBaru || batchLama
+                      )}
+                    </span>
+                  </div>
+                )}
                 <div className="detail-info-row">
                   <span className="detail-info-label">Waktu Mutasi</span>
                   <span className="detail-info-val">{String(item.created_at || "").slice(11, 16)}</span>
@@ -175,7 +244,8 @@ export default function MutasiDetailPage() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

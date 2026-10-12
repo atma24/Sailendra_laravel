@@ -15,6 +15,8 @@ class Mutasi extends Model
     protected $fillable = [
         'id_pengguna_lokasi', 'id_pengguna', 'id_produk', 'lokasi_sumber',
         'lokasi_tujuan', 'jumlah', 'best_before', 'jenis_mutasi', 'satuan',
-        'catatan', 'created_at'
+        'catatan', 'created_at',
+        'best_before_lama', 'jumlah_lama', 'plant_lama', 'plant_baru',
+        'batch_lama', 'batch_baru',
     ];
 }

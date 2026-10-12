@@ -676,12 +676,17 @@ class LayoutGudangController extends Controller
         $idPenggunaLokasi = trim((string) $request->input('id_pengguna_lokasi'));
         $idStok = (int) $request->input('id_stok', 0);
         $namaPengguna = trim((string) $request->input('nama_pengguna'));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
         $idProduk = (int) $request->input('id_produk', 0);
         $bestBefore = trim((string) $request->input('best_before'));
         $idPlantBaru = trim((string) $request->input('id_plant'));
         $catatanPerubahan = trim((string) $request->input('catatan_perubahan'));
 
-        if ($idPenggunaLokasi === '' || $idStok <= 0 || $namaPengguna === ''
+        if ($idPengguna <= 0 && $namaPengguna !== '') {
+            $idPengguna = (int) DB::table('pengguna')->where('username', $namaPengguna)->value('id_pengguna');
+        }
+
+        if ($idPenggunaLokasi === '' || $idStok <= 0 || $idPengguna <= 0
             || $idProduk <= 0 || $bestBefore === '' || $idPlantBaru === '') {
             return $this->fail('Parameter tidak lengkap');
         }
@@ -696,30 +701,26 @@ class LayoutGudangController extends Controller
         }
 
         try {
-            return DB::transaction(function () use ($idPenggunaLokasi, $idStok, $idPlantBaru, $bestBefore, $batchBaru, $catatanPerubahan, $namaPengguna) {
-                $rowBm = DB::table('stok_gudang')
+            return DB::transaction(function () use ($idPenggunaLokasi, $idStok, $idPengguna, $idProduk, $idPlantBaru, $bestBefore, $batchBaru, $catatanPerubahan) {
+                $header = DB::table('stok_gudang')
                     ->where('id_stok', $idStok)
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                     ->lockForUpdate()
-                    ->value('id_barang_masuk');
+                    ->first();
 
-                if (! $rowBm) {
+                if (! $header) {
                     throw new \Exception('Data stok tidak ditemukan');
                 }
 
-                $idBm = (int) $rowBm;
-
-                $rowBatch = DB::table('barang_masuk')
-                    ->where('id_barang_masuk', $idBm)
-                    ->lockForUpdate()
-                    ->first();
-
-                $batchLama = $rowBatch->batch_sekarang ?? $rowBatch->batch ?? '-';
-
-                $catatan = $catatanPerubahan;
-                if ($catatan === '') {
-                    $catatan = "Batch $batchLama -> $batchBaru (Plant $idPlantBaru)";
+                $batchLama = trim((string) ($header->batch ?? ''));
+                $plantLama = $batchLama !== '' ? substr($batchLama, -4) : null;
+                if ($batchLama === '') {
+                    $batchLama = null;
                 }
+                $bestBeforeLamaPlant = trim((string) ($header->best_before ?? ''));
+                $lokasiBlock = $this->normalisasiLabelMutasi(trim((string) ($header->lokasi_block ?? '')));
+                $satuanMutasi = $this->normalisasiSatuanMutasi($header->satuan ?? '');
+                $jumlahMutasi = max(0, (int) ($header->jumlah_sisa ?? 0));
 
                 DB::table('stok_gudang')
                     ->where('id_stok', $idStok)
@@ -731,21 +732,28 @@ class LayoutGudangController extends Controller
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                     ->update(['batch' => $batchBaru, 'best_before' => $bestBefore]);
 
-                DB::table('barang_masuk')
-                    ->where('id_barang_masuk', $idBm)
-                    ->update(['batch_sekarang' => $batchBaru]);
-
-                $auditCatatan = $catatan !== ''
-                    ? $catatan
-                    : "Plant berubah -> $idPlantBaru (batch $batchBaru)";
-
-                DB::table('barang_masuk')
-                    ->where('id_barang_masuk', $idBm)
-                    ->update([
-                        'diperbarui_pada' => now(),
-                        'diperbarui_oleh' => $namaPengguna,
-                        'catatan_perubahan' => $auditCatatan,
-                    ]);
+                // Audit pindah ke tabel mutasi (GS_GS) agar masuk laporan mutasi.
+                DB::table('mutasi')->insert([
+                    'id_pengguna_lokasi' => $idPenggunaLokasi,
+                    'id_pengguna' => $idPengguna,
+                    'id_produk' => $idProduk,
+                    'lokasi_sumber' => $lokasiBlock,
+                    'lokasi_tujuan' => $lokasiBlock,
+                    'jumlah' => $jumlahMutasi,
+                    'jumlah_lama' => $jumlahMutasi,
+                    'best_before' => $bestBefore !== '' ? $bestBefore : null,
+                    'best_before_lama' => $bestBeforeLamaPlant !== '' ? $bestBeforeLamaPlant : null,
+                    'plant_lama' => $plantLama,
+                    'plant_baru' => strtoupper($idPlantBaru),
+                    'batch_lama' => $batchLama,
+                    'batch_baru' => $batchBaru,
+                    'jenis_mutasi' => 'GS_GS',
+                    'satuan' => $satuanMutasi,
+                    'catatan' => $catatanPerubahan !== ''
+                        ? $catatanPerubahan
+                        : "Plant {$plantLama} -> ".strtoupper($idPlantBaru),
+                    'created_at' => now(),
+                ]);
 
                 return $this->okMessage("Plant berhasil diubah. Batch baru: $batchBaru");
             });
@@ -1287,23 +1295,37 @@ class LayoutGudangController extends Controller
         $idStok = (int) $request->input('id_stok', 0);
         $idLine = (int) $request->input('id_line', 0);
         $namaPengguna = trim((string) $request->input('nama_pengguna'));
+        $idPengguna = (int) $request->input('id_pengguna', 0);
         $qtyBaru = -1;
         if (($request->input('qty_baru') ?? '') !== '') {
             $qtyBaru = (int) $request->input('qty_baru');
         }
         $bestBeforeBaru = trim((string) $request->input('best_before_baru'));
+        $idPlantBaru = strtoupper(trim((string) $request->input('id_plant_baru')));
         $catatanPerubahan = trim((string) $request->input('catatan_perubahan'));
 
-        if ($idPenggunaLokasi === '' || $idStok <= 0 || $idLine <= 0) {
+        if ($idPengguna <= 0 && $namaPengguna !== '') {
+            $idPengguna = (int) DB::table('pengguna')->where('username', $namaPengguna)->value('id_pengguna');
+        }
+
+        if ($idPenggunaLokasi === '' || $idStok <= 0 || $idLine <= 0 || $idPengguna <= 0) {
             return $this->fail('Parameter tidak lengkap');
         }
 
-        if ($qtyBaru < 0 && $bestBeforeBaru === '' && $catatanPerubahan === '') {
+        if ($qtyBaru < 0 && $bestBeforeBaru === '' && $idPlantBaru === '' && $catatanPerubahan === '') {
             return $this->fail('Tidak ada perubahan yang dikirim');
         }
 
+        if (($qtyBaru >= 0 || $bestBeforeBaru !== '') && $catatanPerubahan === '') {
+            return $this->fail('Alasan perubahan wajib diisi');
+        }
+
+        if ($idPlantBaru !== '' && ! Plant::whereKey($idPlantBaru)->exists()) {
+            return $this->fail('Plant tidak ditemukan');
+        }
+
         try {
-            return DB::transaction(function () use ($idPenggunaLokasi, $idStok, $idLine, $namaPengguna, $qtyBaru, $bestBeforeBaru, $catatanPerubahan) {
+            return DB::transaction(function () use ($idPenggunaLokasi, $idStok, $idLine, $idPengguna, $qtyBaru, $bestBeforeBaru, $idPlantBaru, $catatanPerubahan) {
                 $header = DB::table('stok_gudang')
                     ->where('id_stok', $idStok)
                     ->where('id_pengguna_lokasi', $idPenggunaLokasi)
@@ -1469,7 +1491,12 @@ class LayoutGudangController extends Controller
                     }
                 }
 
-                if ($bestBeforeBaru !== '' && $bestBeforeBaru !== $bestBeforeLama) {
+                $bbBerubah = $bestBeforeBaru !== '' && $bestBeforeBaru !== $bestBeforeLama;
+                $batchLamaSnap = trim((string) ($header->batch ?? ''));
+                $plantSuffixLama = $batchLamaSnap !== '' ? strtoupper(substr($batchLamaSnap, -4)) : '';
+                $plantBerubah = $idPlantBaru !== '' && $idPlantBaru !== $plantSuffixLama;
+
+                if ($bbBerubah) {
                     $dt = \DateTime::createFromFormat('Y-m-d', $bestBeforeBaru);
                     if (! $dt || $dt->format('Y-m-d') !== $bestBeforeBaru) {
                         throw new \Exception('Format tanggal best before tidak valid (gunakan YYYY-MM-DD)');
@@ -1486,35 +1513,29 @@ class LayoutGudangController extends Controller
                             ->where('id_pengguna_lokasi', $idPenggunaLokasi)
                             ->update(['best_before' => $bestBeforeBaru]);
                     }
+                }
 
-                    $idStokPertama = array_keys($idStokHeadersTerlibat)[0];
-                    $rowGet = DB::table('stok_gudang_deep as sgd')
-                        ->join('stok_gudang as sg', 'sg.id_stok', '=', 'sgd.id_stok_header')
-                        ->where('sgd.id_stok_header', $idStokPertama)
-                        ->where('sgd.jumlah', '>', 0)
-                        ->selectRaw('COALESCE(sgd.batch, sg.batch) AS batch')
-                        ->first();
+                // Batch diregenerasi bila BB dan/atau plant berubah, dalam transaksi
+                // yang sama agar tercatat sebagai 1 baris mutasi GS_GS.
+                $bbAkhirBatch = $bbBerubah ? $bestBeforeBaru : trim((string) ($bestBeforeLama ?? ''));
+                $plantAkhir = $plantBerubah ? $idPlantBaru : $plantSuffixLama;
+                if (($bbBerubah || $plantBerubah) && $bbAkhirBatch !== '' && $plantAkhir !== '') {
+                    $dtBatch = \DateTime::createFromFormat('Y-m-d', $bbAkhirBatch);
+                    if (! $dtBatch || $dtBatch->format('Y-m-d') !== $bbAkhirBatch) {
+                        throw new \Exception('Format tanggal best before tidak valid (gunakan YYYY-MM-DD)');
+                    }
+                    $batchBaruHitung = $dtBatch->format('ymd').$plantAkhir;
 
-                    if ($rowGet && ! empty($rowGet->batch)) {
-                        $plantSuffix = substr((string) $rowGet->batch, -4);
-                        $batchBaru = $dt->format('ymd').$plantSuffix;
+                    foreach (array_keys($idStokHeadersTerlibat) as $idStokH) {
+                        DB::table('stok_gudang')
+                            ->where('id_stok', $idStokH)
+                            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                            ->update(['batch' => $batchBaruHitung]);
 
-                        foreach (array_keys($idStokHeadersTerlibat) as $idStokH) {
-                            DB::table('stok_gudang')
-                                ->where('id_stok', $idStokH)
-                                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                                ->update(['batch' => $batchBaru]);
-
-                            DB::table('stok_gudang_deep')
-                                ->where('id_stok_header', $idStokH)
-                                ->where('id_pengguna_lokasi', $idPenggunaLokasi)
-                                ->update(['batch' => $batchBaru]);
-                        }
-
-                        $idBmBatch = (int) $header->id_barang_masuk;
-                        DB::table('barang_masuk')
-                            ->where('id_barang_masuk', $idBmBatch)
-                            ->update(['batch_sekarang' => $batchBaru]);
+                        DB::table('stok_gudang_deep')
+                            ->where('id_stok_header', $idStokH)
+                            ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                            ->update(['batch' => $batchBaruHitung]);
                     }
                 }
 
@@ -1530,16 +1551,47 @@ class LayoutGudangController extends Controller
                         ->update(['jumlah_sisa' => $totalBaru]);
                 }
 
-                if ($catatanPerubahan !== '' || $bestBeforeBaru !== '' || $qtyBaru >= 0) {
-                    $auditCatatan = $catatanPerubahan !== '' ? $catatanPerubahan : 'BB/jumlah diubah';
-                    $idBm = (int) $header->id_barang_masuk;
-                    DB::table('barang_masuk')
-                        ->where('id_barang_masuk', $idBm)
-                        ->update([
-                            'diperbarui_pada' => now(),
-                            'diperbarui_oleh' => $namaPengguna !== '' ? $namaPengguna : null,
-                            'catatan_perubahan' => $auditCatatan,
-                        ]);
+                $qtySama = $qtyBaru < 0 || $qtyBaru === $totalLamaLine;
+                if ($qtySama && ! $bbBerubah && ! $plantBerubah && $catatanPerubahan === '') {
+                    throw new \Exception('Tidak ada perubahan yang dikirim');
+                }
+
+                if ($catatanPerubahan !== '' || $bestBeforeBaru !== '' || $qtyBaru >= 0 || $plantBerubah) {
+                    $bbAkhir = $bestBeforeBaru !== '' ? $bestBeforeBaru : $bestBeforeLama;
+                    $qtyAkhir = $qtyBaru >= 0 ? $qtyBaru : $totalLamaLine;
+                    $batchLamaSnap = trim((string) ($header->batch ?? ''));
+                    $plantLamaSnap = $plantSuffixLama !== '' ? $plantSuffixLama : null;
+                    $batchBaruSnap = DB::table('stok_gudang')
+                        ->where('id_stok', $idStok)
+                        ->where('id_pengguna_lokasi', $idPenggunaLokasi)
+                        ->value('batch');
+                    $batchBaruSnap = trim((string) ($batchBaruSnap ?? ''));
+                    $plantBaruSnap = $batchBaruSnap !== '' ? strtoupper(substr($batchBaruSnap, -4)) : null;
+                    $catatanMutasi = $catatanPerubahan !== ''
+                        ? $catatanPerubahan
+                        : "Plant {$plantLamaSnap} -> {$plantAkhir}";
+
+                    // Audit ke tabel mutasi (GS_GS) agar masuk laporan mutasi.
+                    // Kolom jumlah/best_before = nilai SESUDAH, kolom *_lama = SEBELUM.
+                    DB::table('mutasi')->insert([
+                        'id_pengguna_lokasi' => $idPenggunaLokasi,
+                        'id_pengguna' => $idPengguna,
+                        'id_produk' => $idProdukHeader,
+                        'lokasi_sumber' => $this->normalisasiLabelMutasi($lokasiBlockLine),
+                        'lokasi_tujuan' => $this->normalisasiLabelMutasi($lokasiBlockLine),
+                        'jumlah' => max(0, $qtyAkhir),
+                        'jumlah_lama' => max(0, $totalLamaLine),
+                        'best_before' => $bbAkhir !== '' ? $bbAkhir : null,
+                        'best_before_lama' => $bestBeforeLama !== '' ? $bestBeforeLama : null,
+                        'plant_lama' => $plantLamaSnap,
+                        'plant_baru' => $plantBaruSnap,
+                        'batch_lama' => $batchLamaSnap !== '' ? $batchLamaSnap : null,
+                        'batch_baru' => $batchBaruSnap !== '' ? $batchBaruSnap : null,
+                        'jenis_mutasi' => 'GS_GS',
+                        'satuan' => $this->normalisasiSatuanMutasi($header->satuan ?? ''),
+                        'catatan' => $catatanMutasi,
+                        'created_at' => now(),
+                    ]);
                 }
 
                 return $this->okMessage('Berhasil mengubah best before / jumlah di line');
@@ -1605,6 +1657,30 @@ class LayoutGudangController extends Controller
         }
 
         return $dt->format('ymd').strtoupper($plant);
+    }
+
+    private function normalisasiLabelMutasi(string $label): string
+    {
+        $label = trim(preg_replace('/\s+/', ' ', $label) ?? '');
+        $label = preg_replace('/\s*-\s*/', '-', $label) ?? $label;
+        if ($label === '') {
+            return '-';
+        }
+        if (preg_match('/^(.+)-(\d+)$/', $label, $m)) {
+            return trim($m[1]).'-'.(int) $m[2];
+        }
+
+        return substr($label, 0, 50);
+    }
+
+    private function normalisasiSatuanMutasi($satuan): string
+    {
+        $s = strtoupper(trim((string) $satuan));
+        if (in_array($s, ['GALLON', 'BOX', 'MP', 'PCS', 'RAW', 'RTP'], true)) {
+            return $s;
+        }
+
+        return 'BOX';
     }
 
     public function transferStokLine(Request $request)
