@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use App\Models\PengaturanProduk;
+use App\Services\PendingKedaluarsaService;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
@@ -1141,6 +1143,24 @@ class BarangMasukController extends Controller
         return $prefix.str_pad((string) $urut, 3, '0', STR_PAD_LEFT);
     }
 
+    /**
+     * Sweep Pending basi di lokasi ini (best-effort, tidak pernah
+     * menggagalkan request utama).
+     */
+    private function sapuPendingKedaluarsa(string $idPenggunaLokasi, int $limit = 50): void
+    {
+        if (trim($idPenggunaLokasi) === '') {
+            return;
+        }
+        try {
+            app(PendingKedaluarsaService::class)->sweep($idPenggunaLokasi, PendingKedaluarsaService::BATAS_MENIT_DEFAULT, $limit);
+        } catch (Throwable $e) {
+            Log::warning('Sweep pending kedaluwarsa gagal (diabaikan).', [
+                'lok' => $idPenggunaLokasi, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     // =========================================================================
     // 4. UPLOAD OTM EXCEL, SUBMIT DRAFT, & KONFIRMASI INBOUND
     // =========================================================================
@@ -1423,6 +1443,9 @@ class BarangMasukController extends Controller
         if ($shipmentId === '' || $idPenggunaLokasi === '' || empty($itemsReq)) {
             return $this->fail('shipment_id, id_pengguna_lokasi, dan items wajib diisi.');
         }
+
+        // Momen tekan submit: sapu Pending basi dulu (best-effort).
+        $this->sapuPendingKedaluarsa($idPenggunaLokasi);
 
         DB::beginTransaction();
         try {

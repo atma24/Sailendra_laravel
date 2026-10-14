@@ -6,10 +6,12 @@ use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use App\Models\PengaturanProduk;
+use App\Services\PendingKedaluarsaService;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class BarangKeluarController extends Controller
@@ -1406,6 +1408,10 @@ public function store(Request $request)
             throw new Exception('items wajib diisi');
         }
 
+        // Lepas booking Pending basi di lokasi ini dulu (best-effort) agar
+        // alokasi FEFO melihat stok tersedia yang benar.
+        $this->sapuPendingKedaluarsa($idPenggunaLokasi);
+
         DB::beginTransaction();
         try {
             // Bersihkan data lama jika GIN sama dan status masih Pending / Draft
@@ -1504,6 +1510,7 @@ public function store(Request $request)
                     'catatan' => $catatan, 'tanggal_keluar' => $tanggalKeluar, 'tanggal_pengiriman' => $tanggalPengiriman,
                     'no_dn' => $noDn, 'so_number' => $it['so_number'] ?? null, 'ritase' => $ritase, 'status' => $statusInput,
                     'waktu_mulai_input' => $waktuMulaiInput, 'durasi_detik' => $durasiDetik,
+                    'diperbarui_pada' => DB::raw('NOW()'),
                 ]);
 
                 if (! empty($rencana)) {
@@ -1708,6 +1715,9 @@ $in = $request->all();
 
         // 6b. SUBMIT TO PENDING (RE-GENERATE FEFO)
         if ($aksi === 'submit_draft' || $status === 'pending') {
+            // Momen tekan submit: sapu basi dulu agar regenerasi FEFO pakai
+            // stok tersedia terbaru.
+            $this->sapuPendingKedaluarsa($idPenggunaLokasi);
             DB::beginTransaction();
             try {
                 $ref = DB::table('barang_keluar')->where('id_barang_keluar', $idBarangKeluar)->where('id_pengguna_lokasi', $idPenggunaLokasi)->first();
@@ -1735,7 +1745,7 @@ $in = $request->all();
                 $submitQuery = $this->terapkanFilterGrupOutbound($submitQuery, $ref, '');
                 $affected = $submitQuery
                     ->where('status', 'Draft')
-                    ->update(['status' => 'Pending', 'waktu_mulai_input' => $waktuMulai]);
+                    ->update(['status' => 'Pending', 'waktu_mulai_input' => $waktuMulai, 'diperbarui_pada' => DB::raw('NOW()')]);
 
                 $itemsQuery = DB::table('barang_keluar');
                 $itemsQuery = $this->terapkanFilterGrupOutbound($itemsQuery, $ref, '');
@@ -1906,6 +1916,25 @@ $in = $request->all();
         }
 
         return $q;
+    }
+
+    /**
+     * Sweep Pending basi di lokasi ini (best-effort, tidak pernah
+     * menggagalkan request utama). Dipanggil saat submit agar FEFO pakai
+     * stok tersedia terbaru; scheduler tiap menit menangani sisanya.
+     */
+    private function sapuPendingKedaluarsa(string $idPenggunaLokasi, int $limit = 50): void
+    {
+        if (trim($idPenggunaLokasi) === '') {
+            return;
+        }
+        try {
+            app(PendingKedaluarsaService::class)->sweep($idPenggunaLokasi, PendingKedaluarsaService::BATAS_MENIT_DEFAULT, $limit);
+        } catch (Throwable $e) {
+            Log::warning('Sweep pending kedaluwarsa gagal (diabaikan).', [
+                'lok' => $idPenggunaLokasi, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function konfirmasiOutbound($idBarangKeluar, $idPenggunaLokasi, $waktuMulai = null, $durasi = null)
@@ -2224,14 +2253,14 @@ $in = $request->all();
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
             (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, 
-            lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
+            lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi, lk.kategori AS kategori_lokasi,
             COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed', 'Canceled', 'canceled')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') {$scope['sql']} $whereExtra
             ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk, $minBbRelease)}
         ";
 
-        return $this->prosesRencanaDariQuery($sql, array_merge($params, $scope['params']), $jumlahButuh, []);
+        return $this->prosesRencanaDariQuery($sql, array_merge($params, $scope['params']), $jumlahButuh, [], (string) $idPenggunaLokasi, (int) $idProduk);
     }
 
     private function buatRencanaManualBatchPerProduk($idPenggunaLokasi, $idProduk, $jumlahButuh, $idLine, $batch, $bestBeforeManual = '', $tipePengeluaran = 'Primary')
@@ -2274,17 +2303,183 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
         $minBbRelease = $this->minBbReleaseScope($idPenggunaLokasi, $idProduk, $tipePengeluaran, $idLokasi, $kategoriLokasi);
         $sql = "
             SELECT sgd.id_detail_stok, sgd.id_stok_header, sgd.id_deep, sgd.jumlah, sgd.best_before, COALESCE(sgd.batch, sg.batch) AS batch, dp.deep, 
-            (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi,
+            (SELECT MAX(CAST(d2.deep AS UNSIGNED)) FROM deep d2 INNER JOIN level lv2 ON lv2.id_level = d2.id_level WHERE lv2.id_line = ln.id_line AND d2.id_pengguna_lokasi = sgd.id_pengguna_lokasi) AS max_deep_line, lv.level, ln.nomor_line, bl.kode_block, lk.nama_lokasi, lk.kategori AS kategori_lokasi,
             COALESCE((SELECT SUM(rkd.jumlah_rencana) FROM rencana_keluar_deep rkd INNER JOIN barang_keluar bk ON bk.id_barang_keluar = rkd.id_barang_keluar WHERE rkd.id_detail_stok = sgd.id_detail_stok AND rkd.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.id_pengguna_lokasi = sgd.id_pengguna_lokasi AND bk.status NOT IN ('Selesai', 'Confirmed', 'selesai', 'confirmed', 'Canceled', 'canceled')), 0) AS jumlah_booking
             FROM stok_gudang_deep sgd INNER JOIN stok_gudang sg ON sg.id_stok = sgd.id_stok_header INNER JOIN deep dp ON dp.id_deep = sgd.id_deep INNER JOIN level lv ON lv.id_level = dp.id_level INNER JOIN line ln ON ln.id_line = lv.id_line INNER JOIN block bl ON bl.id_block = ln.id_block INNER JOIN lokasi lk ON lk.id_lokasi = bl.id_lokasi
 WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk = ? AND sgd.jumlah > 0 $filterKhusus AND NOT (UPPER(bl.kode_block) LIKE '%HOLD%' OR UPPER(lk.nama_lokasi) LIKE '%HOLD%' OR UPPER(COALESCE(lk.kategori, '')) = 'HOLD') {$scope['sql']}
             ORDER BY {$this->orderRencanaOutbound($idPenggunaLokasi, $idProduk, $minBbRelease)}
         ";
 
-        return $this->prosesRencanaDariQuery($sql, array_merge([$idPenggunaLokasi, $idPenggunaLokasi, $idProduk], $scope['params']), $jumlahButuh, $stokBookingSementara);
+        return $this->prosesRencanaDariQuery($sql, array_merge([$idPenggunaLokasi, $idPenggunaLokasi, $idProduk], $scope['params']), $jumlahButuh, $stokBookingSementara, (string) $idPenggunaLokasi, (int) $idProduk);
     }
 
-    private function prosesRencanaDariQuery($sql, $params, $jumlahButuh, $stokBookingSementara)
+    /**
+     * Kategori blok untuk satu baris stok (disamakan dengan caseUrutanSql):
+     * cocok substring tanpa spasi ke kode_block / nama_lokasi / kategori.
+     * Tidak cocok apa pun = REGULER (catch-all).
+     */
+    private function kategoriBlokOutbound(string $kodeBlock, string $namaLokasi, string $kategoriLokasi, array $urutan): string
+    {
+        $norm = fn (string $v): string => strtoupper(str_replace(' ', '', trim($v)));
+        $b = $norm($kodeBlock);
+        $l = $norm($namaLokasi);
+        $k = $norm($kategoriLokasi);
+        foreach ($urutan as $kat) {
+            $katU = strtoupper(trim((string) $kat));
+            if ($katU === '' || $katU === 'REGULER') {
+                continue;
+            }
+            if (($b !== '' && str_contains($b, $katU)) || ($l !== '' && str_contains($l, $katU)) || ($k !== '' && str_contains($k, $katU))) {
+                return $katU;
+            }
+        }
+
+        return 'REGULER';
+    }
+
+    private function rankBlokOutbound(string $kodeBlock, string $namaLokasi, string $kategoriLokasi, array $urutan): int
+    {
+        $kat = $this->kategoriBlokOutbound($kodeBlock, $namaLokasi, $kategoriLokasi, $urutan);
+        $pos = array_search($kat, array_values($urutan), true);
+
+        return $pos === false ? count($urutan) : (int) $pos;
+    }
+
+    /**
+     * Urutkan baris stok tersedia: rank blok dulu, lalu FEFO (bila ikut),
+     * lalu lokasi/block/line/deep muka dulu (deep besar = muka/release).
+     */
+    private function urutkanBarisOutbound(array $rows, array $urutan, bool $ikutFefo): array
+    {
+        usort($rows, function ($a, $b) use ($urutan, $ikutFefo) {
+            $ra = $this->rankBlokOutbound((string) ($a['kode_block'] ?? ''), (string) ($a['nama_lokasi'] ?? ''), (string) ($a['kategori_lokasi'] ?? ''), $urutan);
+            $rb = $this->rankBlokOutbound((string) ($b['kode_block'] ?? ''), (string) ($b['nama_lokasi'] ?? ''), (string) ($b['kategori_lokasi'] ?? ''), $urutan);
+            if ($ra !== $rb) {
+                return $ra <=> $rb;
+            }
+            if ($ikutFefo) {
+                $ba = $a['best_before'] ?? null;
+                $bb = $b['best_before'] ?? null;
+                $na = ($ba === null || $ba === '') ? 1 : 0;
+                $nb = ($bb === null || $bb === '') ? 1 : 0;
+                if ($na !== $nb) {
+                    return $na <=> $nb;
+                }
+                if ($na === 0 && $ba !== $bb) {
+                    return strcmp((string) $ba, (string) $bb);
+                }
+            }
+            $cmp = strcmp((string) ($a['nama_lokasi'] ?? ''), (string) ($b['nama_lokasi'] ?? ''));
+            if ($cmp !== 0) {
+                return $cmp;
+            }
+            $cmp = strcmp((string) ($a['kode_block'] ?? ''), (string) ($b['kode_block'] ?? ''));
+            if ($cmp !== 0) {
+                return $cmp;
+            }
+            $la = (int) ($a['nomor_line'] ?? 0);
+            $lb = (int) ($b['nomor_line'] ?? 0);
+            if ($la !== $lb) {
+                return $la <=> $lb;
+            }
+            $da = (int) ($a['deep'] ?? 0);
+            $db = (int) ($b['deep'] ?? 0);
+            if ($da !== $db) {
+                return $db <=> $da;
+            }
+            $lva = (int) preg_replace('/[^0-9]/', '', (string) ($a['level'] ?? '0'));
+            $lvb = (int) preg_replace('/[^0-9]/', '', (string) ($b['level'] ?? '0'));
+            if ($lva !== $lvb) {
+                return $lvb <=> $lva;
+            }
+
+            return ((int) ($a['id_detail_stok'] ?? 0)) <=> ((int) ($b['id_detail_stok'] ?? 0));
+        });
+
+        return $rows;
+    }
+
+    /**
+     * Ambil N qty dari baris yang sudah urut (sequential, muka dulu).
+     * Mengembalikan [rencana, sisa].
+     */
+    private function ambilDariBarisUrut(array $barisUrut, int $butuh): array
+    {
+        $out = [];
+        $sisa = $butuh;
+        foreach ($barisUrut as $stok) {
+            if ($sisa <= 0) {
+                break;
+            }
+            $ambil = min($sisa, (int) $stok['jumlah']);
+            if ($ambil <= 0) {
+                continue;
+            }
+            $deepAsli = (int) $stok['deep'];
+            $maxDeepLine = (int) ($stok['max_deep_line'] ?? 0);
+            $deepTampil = $maxDeepLine > 0 ? (($maxDeepLine - $deepAsli) + 1) : $deepAsli;
+            $out[] = [
+                'id_detail_stok' => $stok['id_detail_stok'], 'id_stok_header' => $stok['id_stok_header'], 'id_deep' => $stok['id_deep'],
+                'jumlah_rencana' => $ambil, 'best_before' => $stok['best_before'], 'batch' => $stok['batch'] ?? null,
+                'block' => $stok['kode_block'], 'line' => $stok['nomor_line'], 'level' => $stok['level'],
+                'deep' => $deepTampil, 'deep_asli' => $deepAsli, 'lokasi' => $stok['nama_lokasi'],
+            ];
+            $sisa -= $ambil;
+        }
+
+        return [$out, $sisa];
+    }
+
+    /**
+     * Cari satu grup (BB+batch) yang sendirian cukup menutup $butuh.
+     * Prioritas: BB tertua dulu, lalu rank blok terkecil dalam grup.
+     * Return baris-baris grup itu (sudah urut) atau null.
+     */
+    private function cariGrupBbTunggal(array $baris, int $butuh, array $urutan): ?array
+    {
+        if ($butuh <= 0 || empty($baris)) {
+            return null;
+        }
+        $grup = [];
+        foreach ($baris as $r) {
+            $bb = (string) ($r['best_before'] ?? '');
+            $batch = (string) ($r['batch'] ?? '');
+            $key = ($bb === '' ? '~NULL~' : $bb).'|'.$batch;
+            if (! isset($grup[$key])) {
+                $grup[$key] = ['bb' => $bb, 'batch' => $batch, 'total' => 0, 'rows' => [], 'rank' => PHP_INT_MAX];
+            }
+            $grup[$key]['total'] += (int) $r['jumlah'];
+            $grup[$key]['rows'][] = $r;
+            $rk = $this->rankBlokOutbound((string) ($r['kode_block'] ?? ''), (string) ($r['nama_lokasi'] ?? ''), (string) ($r['kategori_lokasi'] ?? ''), $urutan);
+            if ($rk < $grup[$key]['rank']) {
+                $grup[$key]['rank'] = $rk;
+            }
+        }
+        $kandidat = array_values(array_filter($grup, fn ($g) => $g['total'] >= $butuh));
+        if (empty($kandidat)) {
+            return null;
+        }
+        usort($kandidat, function ($a, $b) {
+            $na = ($a['bb'] === '' ? 1 : 0);
+            $nb = ($b['bb'] === '' ? 1 : 0);
+            if ($na !== $nb) {
+                return $na <=> $nb;
+            }
+            if ($a['bb'] !== $b['bb']) {
+                return strcmp($a['bb'], $b['bb']);
+            }
+            if ($a['rank'] !== $b['rank']) {
+                return $a['rank'] <=> $b['rank'];
+            }
+
+            return strcmp($a['batch'], $b['batch']);
+        });
+        $pilih = $kandidat[0]['rows'];
+
+        return $this->urutkanBarisOutbound($pilih, $urutan, false);
+    }
+
+    private function prosesRencanaDariQuery($sql, $params, $jumlahButuh, $stokBookingSementara, $idPenggunaLokasiCtx = '', $idProdukCtx = 0)
     {
         $rows = DB::select($sql, $params);
         $stokRows = [];
@@ -2300,6 +2495,9 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             if ($stokTersedia > 0) {
                 $rowArray = (array) $row;
                 $rowArray['jumlah'] = $stokTersedia;
+                if (! array_key_exists('kategori_lokasi', $rowArray)) {
+                    $rowArray['kategori_lokasi'] = '';
+                }
                 $stokRows[] = $rowArray;
                 $total += $stokTersedia;
             }
@@ -2309,24 +2507,78 @@ WHERE sg.id_pengguna_lokasi = ? AND sgd.id_pengguna_lokasi = ? AND sg.id_produk 
             throw new Exception("Stok tidak mencukupi, hanya tersedia {$total}");
         }
 
-        $out = [];
-        $sisa = $jumlahButuh;
-        foreach ($stokRows as $stok) {
-            if ($sisa <= 0) {
-                break;
-            }
-            $ambil = min($sisa, $stok['jumlah']);
-            $deepAsli = (int) $stok['deep'];
-            $maxDeepLine = (int) ($stok['max_deep_line'] ?? 0);
-            $deepTampil = $maxDeepLine > 0 ? (($maxDeepLine - $deepAsli) + 1) : $deepAsli;
+        // Jalur manual / tanpa konteks produk: pertahankan urutan SQL apa adanya.
+        $idProdukCtx = (int) $idProdukCtx;
+        if ($idProdukCtx <= 0) {
+            [$outManual, ] = $this->ambilDariBarisUrut($stokRows, (int) $jumlahButuh);
 
-            $out[] = [
-                'id_detail_stok' => $stok['id_detail_stok'], 'id_stok_header' => $stok['id_stok_header'], 'id_deep' => $stok['id_deep'],
-                'jumlah_rencana' => $ambil, 'best_before' => $stok['best_before'], 'batch' => $stok['batch'] ?? null,
-                'block' => $stok['kode_block'], 'line' => $stok['nomor_line'], 'level' => $stok['level'],
-                'deep' => $deepTampil, 'deep_asli' => $deepAsli, 'lokasi' => $stok['nama_lokasi'],
-            ];
-            $sisa -= $ambil;
+            return $outManual;
+        }
+
+        $set = PengaturanProduk::untuk((string) $idPenggunaLokasiCtx, $idProdukCtx);
+        $urutan = PengaturanProduk::normalisasiUrutan($set['urutan_blok'] ?? PengaturanProduk::URUTAN_DEFAULT);
+        $ikutFefo = (bool) ($set['ikut_fefo'] ?? true) && ! PengaturanProduk::isTanpaBatch($idProdukCtx);
+
+        // Produk tanpa FEFO / tanpa batch: urutan blok saja, tanpa kunci release.
+        if (! $ikutFefo) {
+            $urut = $this->urutkanBarisOutbound($stokRows, $urutan, false);
+            [$outNonFefo, ] = $this->ambilDariBarisUrut($urut, (int) $jumlahButuh);
+
+            return $outNonFefo;
+        }
+
+        // FEFO: release = BB tersedia tertua (bukan fisik, agar booking tidak diprioritaskan).
+        $globalMin = null;
+        foreach ($stokRows as $r) {
+            $bb = $r['best_before'] ?? null;
+            if (! is_string($bb) || ! preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $bb)) {
+                continue;
+            }
+            if ($globalMin === null || strcmp($bb, $globalMin) < 0) {
+                $globalMin = $bb;
+            }
+        }
+
+        // Tanpa BB valid: murni urutan blok.
+        if ($globalMin === null) {
+            $urut = $this->urutkanBarisOutbound($stokRows, $urutan, false);
+            [$outNull, ] = $this->ambilDariBarisUrut($urut, (int) $jumlahButuh);
+
+            return $outNull;
+        }
+
+        $release = [];
+        $hold = [];
+        foreach ($stokRows as $r) {
+            if (($r['best_before'] ?? null) === $globalMin) {
+                $release[] = $r;
+            } else {
+                $hold[] = $r;
+            }
+        }
+        $release = $this->urutkanBarisOutbound($release, $urutan, false);
+        $hold = $this->urutkanBarisOutbound($hold, $urutan, true);
+
+        $releaseTotal = array_sum(array_map(fn ($r) => (int) $r['jumlah'], $release));
+
+        // Fase 1: release cukup -> kunci, jangan sentuh hold sama sekali.
+        // Semua release berbagi 1 BB (globalMin) jadi otomatis 1 BB;
+        // urutan dalam release = urutan blok (mis. TRANSIT dulu baru RECEH).
+        if ($releaseTotal >= (int) $jumlahButuh) {
+            [$out, ] = $this->ambilDariBarisUrut($release, (int) $jumlahButuh);
+
+            return $out;
+        }
+
+        // Fase 2: release kurang -> habiskan release dulu (urut blok),
+        // lalu sisa dari hold (urut blok + FEFO).
+        $out = [];
+        [$outRelease, $sisaSetelahRelease] = $this->ambilDariBarisUrut($release, $releaseTotal);
+        $out = array_merge($out, $outRelease);
+        $sisa = (int) $jumlahButuh - $releaseTotal;
+        if ($sisa > 0) {
+            [$outHold, ] = $this->ambilDariBarisUrut($hold, $sisa);
+            $out = array_merge($out, $outHold);
         }
 
         return $out;

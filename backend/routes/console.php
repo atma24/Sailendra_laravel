@@ -30,3 +30,22 @@ Schedule::call(function () {
     ->withoutOverlapping(60)
     ->onSuccess(fn () => Log::info('Scheduler snapshot utilisasi OK.'))
     ->onFailure(fn () => Log::error('Scheduler snapshot utilisasi GAGAL.'));
+
+// Sweep Pending kedaluwarsa (>15 menit sejak submit) -> Draft + lepas booking.
+// Pola sama (Schedule::call + Artisan::call, in-process) karena shared hosting
+// memblokir proc_open sehingga Schedule::command() mati instan.
+// Butuh cron `schedule:run` tiap menit di server (sudah dibutuhkan di atas):
+//   * * * * * php /path/to/artisan schedule:run >> /dev/null 2>&1
+Schedule::call(function () {
+    $exit = Artisan::call('pending:sweep', ['--menit' => 15, '--limit' => 500]);
+    $output = (string) Artisan::output();
+
+    if ($exit !== 0) {
+        throw new RuntimeException('pending:sweep gagal (exit '.$exit.'): '.$output);
+    }
+})->everyMinute()
+    ->timezone('Asia/Jakarta')
+    ->name('sweep-pending-kedaluarsa')
+    ->withoutOverlapping(5)
+    ->onSuccess(fn () => Log::debug('Scheduler sweep pending OK.'))
+    ->onFailure(fn () => Log::error('Scheduler sweep pending GAGAL.'));
