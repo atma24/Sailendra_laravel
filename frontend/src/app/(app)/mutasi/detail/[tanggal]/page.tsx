@@ -9,6 +9,7 @@ import { isMultiRole, lokasiParam, useSession } from "@/lib/auth";
 type MutasiRow = {
   id_mutasi: number;
   id_pengguna_lokasi: string;
+  nama_pengguna_lokasi?: string;
   nama_pengguna: string;
   nama_produk: string;
   jumlah: number;
@@ -47,29 +48,42 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const css = `
-.inbound-page { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
-.inbound-card { background: #FFFFFF; border: 1px solid #e7ebf3; border-radius: 12px; box-shadow: none; padding: 12px; }
-.detail-back-btn { min-height: 30px; border-radius: 8px; padding: 0 10px; background: #fbfcff; border: 1px solid #e2e7f0; color: var(--text-main); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 850; margin-bottom: 15px; }
-.detail-back-btn:hover { color: var(--primary); border-color: rgba(25,25,112,0.25); transform: translateY(-1px); }
-.detail-title { font-size: 14px; font-weight: 900; color: var(--text-main); margin-bottom: 14px; letter-spacing: -0.2px; }
-.header-info { background: #f8fafc; border: 1px solid #e2e7f0; border-radius: 10px; padding: 12px; margin-bottom: 16px; }
-.header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.header-row:last-child { margin-bottom: 0; }
-.header-label { font-size: 11px; font-weight: 750; color: #6b7280; }
-.header-val { font-size: 12px; font-weight: 900; color: var(--primary); }
-.detail-item-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
-.detail-item-card { border: 1px solid #e2e7f0; border-radius: 10px; background: #FFFFFF; padding: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+.mutasi-detail-page { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
+.md-card { background: #FFFFFF; border: 1px solid #e7ebf3; border-radius: 12px; box-shadow: none; }
+.md-head { padding: 12px; }
+.md-back-btn { min-height: 30px; border-radius: 8px; padding: 0 10px; background: #fbfcff; border: 1px solid #e2e7f0; color: var(--text-main); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 850; margin-bottom: 10px; }
+.md-back-btn:hover { color: var(--primary); border-color: rgba(25,25,112,0.25); transform: translateY(-1px); }
+.md-detail-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 9px; }
+.md-section-title { font-size: 13px; font-weight: 900; color: var(--text-main); margin: 0; letter-spacing: -0.15px; }
+.md-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 7px; }
+.md-text-row { border: 1px solid #edf0f6; background: #fbfcff; border-radius: 9px; padding: 8px 10px; min-height: 51px; display: flex; flex-direction: column; justify-content: center; }
+.md-text-wide { grid-column: span 2; }
+.md-text-label { font-size: 9.5px; color: #8b8fa3; font-weight: 850; margin-bottom: 4px; line-height: 1.1; }
+.md-text-value { font-size: 11.5px; color: #111827; font-weight: 900; line-height: 1.25; word-break: break-word; }
+.md-toolbar { padding: 8px; display: flex; gap: 7px; align-items: center; }
+.md-search-wrap { position: relative; flex: 1; min-width: 200px; }
+.md-search-input { width: 100%; height: 31px; border-radius: 8px; border: 1px solid #e2e7f0; background: #fbfcff; padding: 0 31px 0 12px; font-size: 11px; font-weight: 700; color: var(--text-main); outline: none; box-sizing: border-box; }
+.md-search-input:focus { background: #FFFFFF; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(25,25,112,0.07); }
+.md-search-clear { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--text-soft); border: 0; background: transparent; cursor: pointer; }
+.md-item-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.md-item-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; }
+.md-item-card { padding: 11px; border: 1px solid rgba(25,25,112,0.18); border-radius: 11px; background: #fbfcff; }
 .detail-product { font-size: 13px; font-weight: 900; color: var(--text-main); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed #e2e7f0; line-height: 1.3; }
-.detail-info-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 6px; }
+.detail-info-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 6px; gap: 8px; }
 .detail-info-row:last-child { margin-bottom: 0; }
-.detail-info-label { color: #6b7280; font-weight: 750; }
-.detail-info-val { color: #111827; font-weight: 850; text-align: right; }
-.badge-status { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; color: #4b5563; }
+.detail-info-label { color: #6b7280; font-weight: 750; flex-shrink: 0; }
+.detail-info-val { color: #111827; font-weight: 850; text-align: right; word-break: break-word; }
+.badge-status { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; color: #4b5563; white-space: nowrap; }
 .ba-lama { color: #9ca3af; font-weight: 750; margin-right: 4px; }
 .ba-arrow { color: #9ca3af; font-weight: 750; margin-right: 4px; }
 .ba-baru { color: #191970; font-weight: 900; }
-.inbound-empty { padding: 12px 10px; color: var(--text-soft); font-size: 11px; font-weight: 750; text-align: center; }
-@media (max-width: 768px) { .detail-item-list { grid-template-columns: 1fr; } }
+.md-empty { padding: 13px; color: var(--text-soft); font-size: 11px; font-weight: 850; }
+.status-badge { padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 900; white-space: nowrap; }
+@media (max-width: 1100px) { .md-detail-grid, .md-item-list { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 768px) {
+  .md-detail-grid, .md-item-list { grid-template-columns: 1fr; }
+  .md-text-wide { grid-column: span 1; }
+}
 `;
 
 export default function MutasiDetailPage() {
@@ -81,8 +95,10 @@ export default function MutasiDetailPage() {
   const tanggal = decodeURIComponent(params.tanggal || "");
   const user = searchParams.get("user") || "";
   const lok = searchParams.get("lok") || "";
+  const from = searchParams.get("from") || "";
   const [items, setItems] = useState<MutasiRow[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     if (!session || !tanggal || !user) return;
@@ -122,50 +138,111 @@ export default function MutasiDetailPage() {
 
   if (!session || !loaded) return null;
 
-  const backHref = `/mutasi/user/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`;
+  const backHref = from === "user"
+    ? `/mutasi/user/${encodeURIComponent(tanggal)}${lok ? `?lok=${encodeURIComponent(lok)}` : ""}`
+    : "/mutasi";
+
+  const kw = q.trim().toLowerCase();
+  const shown = kw === "" ? items : items.filter((row) => {
+    const hay = `${norm(row.nama_produk)} ${norm(row.jenis_mutasi)} ${norm(row.lokasi_sumber)} ${norm(row.lokasi_tujuan)} ${norm(row.catatan)} ${norm(row.best_before)} ${norm(row.batch_baru)} ${norm(row.batch_lama)}`.toLowerCase();
+    return hay.includes(kw);
+  });
+
+  const totalQty = items.reduce((s, it) => s + angka(it.jumlah), 0);
+  const jenisCount: Record<string, number> = {};
+  items.forEach((it) => {
+    const j = norm(it.jenis_mutasi).toUpperCase();
+    if (j) jenisCount[j] = (jenisCount[j] || 0) + 1;
+  });
+  let jenisDominan = "-";
+  let bestN = 0;
+  Object.entries(jenisCount).forEach(([j, n]) => {
+    if (n > bestN) { bestN = n; jenisDominan = j; }
+  });
 
   return (
-    <div className="inbound-page">
+    <div className="mutasi-detail-page">
       <style>{css}</style>
-      <div className="inbound-card">
-        <Link className="detail-back-btn" href={backHref}>
+      <div className="md-card md-head">
+        <Link className="md-back-btn" href={backHref}>
           <i className="bi bi-arrow-left"></i>
           <span>Kembali</span>
         </Link>
 
-        <div className="detail-title">Detail Riwayat Mutasi</div>
-
-        <div className="header-info">
-          <div className="header-row">
-            <span className="header-label">Dibuat Oleh</span>
-            <span className="header-val"><i className="bi bi-person-fill" style={{ marginRight: 3 }}></i> {user}</span>
-          </div>
-          <div className="header-row">
-            <span className="header-label">Tanggal Mutasi</span>
-            <span className="header-val"><i className="bi bi-calendar-event-fill" style={{ marginRight: 3 }}></i> {tanggal}</span>
-          </div>
+        <div className="md-detail-top">
+          <h3 className="md-section-title">Detail Mutasi</h3>
         </div>
 
-        {items.length === 0 ? (
-          <div className="inbound-empty">Riwayat tidak ditemukan.</div>
-        ) : (
-          <div className="detail-item-list">
-            {items.map((item) => {
-              const jumlahLama = item.jumlah_lama ?? null;
-              const bbLama = norm(item.best_before_lama);
-              const bbBaru = norm(item.best_before);
-              const plantLama = norm(item.plant_lama);
-              const plantBaru = norm(item.plant_baru);
-              const batchLama = norm(item.batch_lama);
-              const batchBaru = norm(item.batch_baru);
-              const jumlahBerubah = jumlahLama !== null && angka(jumlahLama) !== angka(item.jumlah);
-              const bbBerubah = bbLama !== "" && bbBaru !== "" && bbLama !== bbBaru;
-              const plantBerubah = plantLama !== "" && plantBaru !== "" && plantLama !== plantBaru;
-              const batchBerubah = batchLama !== "" && batchBaru !== "" && batchLama !== batchBaru;
-              const adaPlant = plantLama !== "" || plantBaru !== "";
-              const adaBatch = batchLama !== "" || batchBaru !== "";
-              return (
-              <div key={item.id_mutasi} className="detail-item-card">
+        <div className="md-detail-grid">
+          <div className="md-text-row">
+            <div className="md-text-label">Tanggal Mutasi</div>
+            <div className="md-text-value">{tanggal || "-"}</div>
+          </div>
+          <div className="md-text-row">
+            <div className="md-text-label">Dibuat Oleh</div>
+            <div className="md-text-value">{user || "-"}</div>
+          </div>
+          <div className="md-text-row">
+            <div className="md-text-label">Total Item</div>
+            <div className="md-text-value">{items.length}</div>
+          </div>
+          <div className="md-text-row">
+            <div className="md-text-label">Total Qty</div>
+            <div className="md-text-value">{totalQty}</div>
+          </div>
+          <div className="md-text-row">
+            <div className="md-text-label">Jenis Dominan</div>
+            <div className="md-text-value">{jenisDominan}</div>
+          </div>
+          <div className="md-text-row md-text-wide">
+            <div className="md-text-label">Lokasi</div>
+            <div className="md-text-value">{lok || norm(items[0]?.id_pengguna_lokasi) || "-"}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="md-card">
+        <div className="md-toolbar">
+          <div className="md-search-wrap">
+            <input type="text" className="md-search-input" value={q}
+              placeholder="Cari produk, lokasi, jenis, catatan..." autoComplete="off"
+              onChange={(e) => setQ(e.target.value)} />
+            {q.trim() !== "" && (
+              <button type="button" className="md-search-clear" aria-label="Bersihkan pencarian"
+                onClick={() => setQ("")}>
+                <i className="bi bi-x-lg"></i>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="md-item-title-row">
+        <h3 className="md-section-title" style={{ margin: 0 }}>Item</h3>
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="md-card md-empty">
+          {items.length === 0 ? "Riwayat tidak ditemukan." : "Tidak ada item yang cocok dengan pencarian."}
+        </div>
+      ) : (
+        <div className="md-item-list">
+          {shown.map((item) => {
+            const jumlahLama = item.jumlah_lama ?? null;
+            const bbLama = norm(item.best_before_lama);
+            const bbBaru = norm(item.best_before);
+            const plantLama = norm(item.plant_lama);
+            const plantBaru = norm(item.plant_baru);
+            const batchLama = norm(item.batch_lama);
+            const batchBaru = norm(item.batch_baru);
+            const jumlahBerubah = jumlahLama !== null && angka(jumlahLama) !== angka(item.jumlah);
+            const bbBerubah = bbLama !== "" && bbBaru !== "" && bbLama !== bbBaru;
+            const plantBerubah = plantLama !== "" && plantBaru !== "" && plantLama !== plantBaru;
+            const batchBerubah = batchLama !== "" && batchBaru !== "" && batchLama !== batchBaru;
+            const adaPlant = plantLama !== "" || plantBaru !== "";
+            const adaBatch = batchLama !== "" || batchBaru !== "";
+            return (
+              <div key={item.id_mutasi} className="md-item-card">
                 <div className="detail-product">{norm(item.nama_produk) || "Produk Tidak Diketahui"}</div>
                 <div className="detail-info-row">
                   <span className="detail-info-label">Jumlah</span>
@@ -244,11 +321,10 @@ export default function MutasiDetailPage() {
                   </div>
                 )}
               </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

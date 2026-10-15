@@ -70,9 +70,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     setSidebarOpen(false);
   }, [pathname]);
 
-  // Reset filter inbound/outbound saat pengguna membuka halaman lain.
+  // Reset filter inbound/outbound/mutasi saat pengguna membuka halaman lain.
   // Filter tetap bertahan saat bolak-balik /inbound → detail
-  // (dan begitu pula /outbound → detail).
+  // (dan begitu pula /outbound → detail, /mutasi → detail).
   const prevPath = useRef<string | null>(null);
   useEffect(() => {
     const prev = prevPath.current || "";
@@ -85,6 +85,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (prev.startsWith("/outbound") && !cur.startsWith("/outbound")) {
       try {
         sessionStorage.removeItem("sailendra_outbound_filter_v1");
+      } catch { /* abaikan */ }
+    }
+    if (prev.startsWith("/mutasi") && !cur.startsWith("/mutasi")) {
+      try {
+        sessionStorage.removeItem("sailendra_mutasi_filter_v1");
       } catch { /* abaikan */ }
     }
     prevPath.current = pathname;

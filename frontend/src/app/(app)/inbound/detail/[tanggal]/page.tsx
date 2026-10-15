@@ -177,30 +177,9 @@ export default function InboundDetailPage() {
   const driver = searchParams.get("driver") || "";
   const shipment = searchParams.get("shipment") || "";
   const lok = searchParams.get("lok") || "";
-  const sumberFilter = searchParams.get("sumber") || "";
-  const tipeFilter = searchParams.get("tipe") || "";
-  const tipeDetailParam = searchParams.get("tipe_detail") || "";
-  const tipeDetailList = tipeDetailParam.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const tipeNorm = (v: unknown) => String(v ?? "").trim().toUpperCase();
-  const kategoriOf = (x: BmRow): string => {
-    const t = tipeNorm(x.tipe_penerimaan);
-    const auto = (x.catatan || "").includes("Auto dari Outbound");
-    if (t === "SECONDARY") return auto ? "secondary_outbound" : "secondary_manual";
-    if (t === "FOC") return auto ? "foc_outbound" : "foc_manual";
-    if (t === "PRIMARY XWH") return "xwh";
-    if (t === "REJECT") return "reject";
-    return "primary";
-  };
-  const matchTipe = (x: BmRow) => {
-    if (tipeDetailList.length > 0) return tipeDetailList.includes(kategoriOf(x));
-    if (!tipeFilter) return true;
-    const t = tipeNorm(x.tipe_penerimaan);
-    if (tipeFilter === "primary") return t === "PRIMARY" || t === "REJECT" || t === "";
-    if (tipeFilter === "secondary") return t === "SECONDARY";
-    if (tipeFilter === "xwh") return t === "PRIMARY XWH";
-    if (tipeFilter === "foc") return t === "FOC";
-    return true;
-  };
+  // Grup detail = satu shipment (driver + shipment_id). Isi catatan TIDAK BOLEH
+  // memengaruhi keanggotaan grup: item harus tetap stay di shipment-nya
+  // walau catatan diubah lewat autosave draft.
 
   const [rows, setRows] = useState<BmRow[]>([]);
   const [produkList, setProdukList] = useState<Produk[]>([]); // Untuk Tambah Item
@@ -324,9 +303,10 @@ export default function InboundDetailPage() {
           if (norm(row.best_before) && norm(row.best_before) !== "9999-12-31") {
             bbMap[row.id_barang_masuk] = norm(row.best_before).slice(0, 10);
           }
-          // Catatan sistem (Auto dari Outbound / Upload OTM) jangan masuk ke input editable.
+          // Catatan sistem (Auto dari Outbound / Upload OTM / Tambah item susulan)
+          // jangan masuk ke input editable.
           const ct = norm(row.catatan);
-          if (ct && ct !== "Upload OTM Inbound" && !ct.startsWith("Auto dari Outbound")) {
+          if (ct && ct !== "Upload OTM Inbound" && !ct.startsWith("Auto dari Outbound") && !ct.startsWith("Tambah item susulan")) {
             ctMap[row.id_barang_masuk] = ct;
           }
         });
@@ -342,21 +322,7 @@ export default function InboundDetailPage() {
           const rowShip = (x.shipment_id || "").trim();
           const sameDriver = reqDriver === "" ? (rowDriver === "" || rowDriver === "Tanpa nama driver") : rowDriver === reqDriver;
           const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
-          const isAutoOut = (x.catatan || "").includes("Auto dari Outbound");
-          const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
-          const t = String(x.tipe_penerimaan ?? "").trim().toUpperCase();
-          const autoOut = (x.catatan || "").includes("Auto dari Outbound");
-          const kat = t === "SECONDARY" ? (autoOut ? "secondary_outbound" : "secondary_manual")
-            : t === "FOC" ? (autoOut ? "foc_outbound" : "foc_manual")
-            : t === "PRIMARY XWH" ? "xwh" : t === "REJECT" ? "reject" : "primary";
-          const detailArr = tipeDetailParam.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-          const sameTipe = detailArr.length > 0 ? detailArr.includes(kat)
-            : !tipeFilter
-            || (tipeFilter === "primary" && (t === "PRIMARY" || t === "REJECT" || t === ""))
-            || (tipeFilter === "secondary" && t === "SECONDARY")
-            || (tipeFilter === "xwh" && t === "PRIMARY XWH")
-            || (tipeFilter === "foc" && t === "FOC");
-          return sameDriver && sameShip && sameSumber && sameTipe;
+          return sameDriver && sameShip;
         });
 
         const firstRow = filtered[0];
@@ -376,21 +342,22 @@ export default function InboundDetailPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [session, tanggal, lok, driver, shipment, sumberFilter, tipeFilter, tipeDetailParam, multi]);
+  }, [session, tanggal, lok, driver, shipment, multi]);
 
   if (!session || !loaded) return null;
 
   const reqShip = !shipment || shipment === "Tanpa Shipment" ? "" : shipment.trim();
   const reqDriver = !driver || driver === "Tanpa nama driver" ? "" : driver.trim();
 
+  // Grup detail = satu shipment (driver + shipment_id). Catatan tidak boleh
+  // memengaruhi keanggotaan grup: item tetap stay di shipment-nya walau
+  // catatan diubah (autosave draft).
   const items = rows.filter((r) => {
     const rowDriver = (r.nama_driver || "").trim();
     const rowShip = (r.shipment_id || "").trim();
     const sameDriver = reqDriver === "" ? (rowDriver === "" || rowDriver === "Tanpa nama driver") : rowDriver === reqDriver;
     const sameShip = reqShip === "" ? (rowShip === "" || rowShip === "Tanpa Shipment") : rowShip === reqShip;
-    const isAutoOut = (r.catatan || "").includes("Auto dari Outbound");
-    const sameSumber = sumberFilter === "outbound" ? isAutoOut : sumberFilter === "normal" ? !isAutoOut : true;
-    return sameDriver && sameShip && sameSumber && matchTipe(r);
+    return sameDriver && sameShip;
   }).sort((a, b) => angka(b.id_barang_masuk) - angka(a.id_barang_masuk));
 
   const first = items[0];

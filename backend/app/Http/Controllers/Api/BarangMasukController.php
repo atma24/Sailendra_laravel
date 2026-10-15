@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use App\Models\PengaturanProduk;
-use App\Services\PendingKedaluarsaService;
+use App\Services\PendingKedaluarsa\PendingKedaluarsaService;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;
@@ -4239,16 +4239,10 @@ class BarangMasukController extends Controller
 
         if (!$ref) return $this->fail('Referensi Inbound / Truk tidak ditemukan.');
 
-        // Pertahankan grup detail: filter frontend (inbound, driver, detail)
-        // memisahkan auto-inbound vs normal lewat substring
-        // "Auto dari Outbound" pada catatan. Tanpa ini, tambah item dari
-        // detail auto-outbound tersimpan sebagai normal dan "hilang" dari
-        // detail yang sedang dibuka (muncul sebagai inbound baru di luar).
-        $catatanBaru = 'Tambah item susulan';
-        $catatanRef = (string) ($ref->catatan ?? '');
-        if (str_contains($catatanRef, 'Auto dari Outbound')) {
-            $catatanBaru .= ' - '.$catatanRef;
-        }
+        // Keanggotaan grup detail dikunci ke shipment_id (bukan isi catatan),
+        // jadi item susulan tidak perlu marker sistem di kolom catatan.
+        // Catatan dibiarkan kosong agar tidak mengotori input catatan user
+        // dan autosave catatan tidak akan pernah memindahkan item antar grup.
 
         DB::beginTransaction();
         try {
@@ -4267,7 +4261,7 @@ class BarangMasukController extends Controller
                 'no_dn' => $ref->no_dn,
                 'nama_driver' => $ref->nama_driver,
                 'no_mobil' => $ref->no_mobil,
-                'catatan' => $catatanBaru,
+                'catatan' => null,
                 'status' => 'Draft', 
                 'created_at' => now(),
             ]);

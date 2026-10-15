@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\Concerns\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\Concerns\ExcelReader;
 use App\Models\PengaturanProduk;
-use App\Services\PendingKedaluarsaService;
+use App\Services\PendingKedaluarsa\PendingKedaluarsaService;
 use DateTime;
 use Exception;
 use Illuminate\Http\Request;

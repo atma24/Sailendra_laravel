@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Services\PendingKedaluarsaService;
+use App\Services\PendingKedaluarsa\PendingKedaluarsaService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
