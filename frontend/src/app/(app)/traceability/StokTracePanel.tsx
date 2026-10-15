@@ -10,6 +10,7 @@ export type StokTraceRow = {
   satuan: string;
   batch: string | null;
   best_before: string | null;
+  tanggal_masuk: string | null;
   id_plant: string | null;
   nama_plant: string | null;
   asal_pabrik: string | null;
@@ -20,6 +21,7 @@ export type StokTraceRow = {
 export type StokTraceDetailRow = {
   lokasi_detail: string;
   best_before: string | null;
+  tanggal_masuk: string | null;
   jumlah: number;
 };
 
@@ -101,7 +103,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
     const keyword = q.trim().toLowerCase();
     if (!keyword) return rows;
     return rows.filter((r) =>
-      [r.nama_produk, r.batch, r.best_before, plantLabel(r)]
+      [r.nama_produk, r.batch, r.best_before, r.tanggal_masuk, plantLabel(r)]
         .some((v) => norm(v).toLowerCase().includes(keyword))
     );
   }, [rows, q]);
@@ -137,6 +139,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
           <span className="stok-trace-info-item"><span className="stok-trace-info-label">Jumlah:</span><span className="stok-trace-info-value">{nf(selected.jumlah)} {norm(selected.satuan)}</span></span>
           <span className="stok-trace-info-item"><span className="stok-trace-info-label">Batch:</span><span className="stok-trace-info-value">{norm(selected.batch) || "-"}</span></span>
           <span className="stok-trace-info-item"><span className="stok-trace-info-label">BB:</span><span className="stok-trace-info-value">{norm(selected.best_before) || "-"}</span></span>
+          <span className="stok-trace-info-item"><span className="stok-trace-info-label">Tgl Masuk:</span><span className="stok-trace-info-value">{norm(selected.tanggal_masuk) || "-"}</span></span>
           <span className="stok-trace-info-item"><span className="stok-trace-info-label">Plant:</span><span className="stok-trace-info-value">{plantLabel(selected)}</span></span>
         </div>
         {detailErr && <div className="stok-trace-err" style={{ marginTop: 8 }}>{detailErr}</div>}
@@ -153,6 +156,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
                     <th style={{ width: 40 }}>No</th>
                     <th>Lokasi (Block-Line-Level-Deep)</th>
                     <th>BB</th>
+                    <th>Tgl Masuk</th>
                     <th style={{ textAlign: "right" }}>Jumlah</th>
                   </tr>
                 </thead>
@@ -162,6 +166,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
                       <td>{(detailPage - 1) * PAGE_SIZE + i + 1}</td>
                       <td><span style={{ fontWeight: 700 }}>{norm(d.lokasi_detail)}</span></td>
                       <td>{norm(d.best_before) || "-"}</td>
+                      <td>{norm(d.tanggal_masuk) || "-"}</td>
                       <td style={{ textAlign: "right", fontWeight: 800 }}>{nf(d.jumlah)}</td>
                     </tr>
                   ))}
@@ -193,7 +198,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
           <input
             type="text"
             className="stok-trace-search"
-            placeholder="Cari produk, batch, BB, plant..."
+            placeholder="Cari produk, batch, BB, tgl masuk, plant..."
             value={q}
             onChange={(e) => { setQ(e.target.value); setPage(1); }}
           />
@@ -218,6 +223,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
                   <th style={{ textAlign: "right" }}>Jumlah</th>
                   <th>Batch</th>
                   <th>BB</th>
+                  <th>Tgl Masuk</th>
                   <th>Plant</th>
                 </tr>
               </thead>
@@ -229,6 +235,7 @@ export default function StokTracePanel({ lokasiQuery }: { lokasiQuery: string })
                     <td style={{ textAlign: "right", fontWeight: 800 }}>{new Intl.NumberFormat("id-ID").format(r.jumlah)}</td>
                     <td>{norm(r.batch) || "-"}</td>
                     <td>{norm(r.best_before) || "-"}</td>
+                    <td>{norm(r.tanggal_masuk) || "-"}</td>
                     <td>{plantLabel(r)}</td>
                   </tr>
                 ))}

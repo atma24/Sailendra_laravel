@@ -68,6 +68,7 @@ class TraceabilityController extends Controller
         $rows = DB::select(
             "SELECT id_produk, nama_produk, satuan, batch,
                     MIN(best_before) AS best_before,
+                    MIN(tanggal_masuk) AS tanggal_masuk,
                     id_plant, MAX(nama_plant) AS nama_plant, MAX(asal_pabrik) AS asal_pabrik,
                     GROUP_CONCAT(DISTINCT lokasi_detail ORDER BY lokasi_detail ASC SEPARATOR ', ') AS lokasi,
                     SUM(jumlah) AS jumlah
@@ -76,6 +77,7 @@ class TraceabilityController extends Controller
                         UPPER(TRIM(COALESCE(p.satuan, ''))) AS satuan,
                         COALESCE(NULLIF(sg.batch, ''), NULLIF(bm.batch_sekarang, ''), NULLIF(bm.batch, ''), NULLIF(sd.batch, '')) AS batch,
                         sd.best_before AS best_before,
+                        bm.tanggal_masuk AS tanggal_masuk,
                         UPPER(RIGHT(COALESCE(NULLIF(sg.batch, ''), NULLIF(bm.batch_sekarang, ''), NULLIF(bm.batch, ''), NULLIF(sd.batch, '')), 4)) AS id_plant,
                         pl.nama_plant AS nama_plant,
                         bm.asal_pabrik AS asal_pabrik,
@@ -140,10 +142,11 @@ class TraceabilityController extends Controller
         $bind[] = $batch;
 
         $rows = DB::select(
-            "SELECT lokasi_detail, best_before, SUM(jumlah) AS jumlah
+            "SELECT lokasi_detail, best_before, MIN(tanggal_masuk) AS tanggal_masuk, SUM(jumlah) AS jumlah
              FROM (
                  SELECT CONCAT(b.kode_block, '-', ln.nomor_line, '-', lv.level, '-', d.deep) AS lokasi_detail,
                         sd.best_before AS best_before,
+                        bm.tanggal_masuk AS tanggal_masuk,
                         sd.jumlah AS jumlah
                  FROM stok_gudang_deep sd
                  JOIN stok_gudang sg ON sg.id_stok = sd.id_stok_header AND sg.id_pengguna_lokasi = sd.id_pengguna_lokasi
